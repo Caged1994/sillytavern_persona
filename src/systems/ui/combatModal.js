@@ -265,7 +265,7 @@ function cardHtml(c, actor) {
             <div class="dcb-card-name"><span>${escapeHtml(c.name)}</span><button type="button" class="dcb-info" data-action="inspect" data-id="${escapeHtml(c.id)}" title="Stats and abilities" aria-label="Inspect ${escapeHtml(c.name)}"><i class="fa-solid fa-circle-info"></i></button></div>
             <div class="dcb-card-meta">${tier}<span class="dcb-lv">Lv ${c.level}</span>${c.persona && c.side === 'party' ? `<span class="dcb-persona" title="Equipped Persona">${escapeHtml(c.persona)}</span>` : ''}${c.knocked && !c.down ? '<span class="dcb-knocked">DOWN</span>' : ''}${c.baton ? `<span class="dcb-baton">🤝+${c.baton * 50}%</span>` : ''}</div>
             ${barHtml('is-hp', c.hp, c.maxHp, c.down ? 'Down' : `${c.hp} / ${c.maxHp}`)}
-            ${c.mana !== null && c.side === 'party' ? barHtml('is-mana', c.mana, 100, `SP ${c.mana}`) : ''}
+            ${c.mana !== null && c.side === 'party' ? barHtml('is-mana', c.mana, 100, M.spPoints(c) ? `SP ${M.spPoints(c).cur} / ${M.spPoints(c).max}` : `SP ${Math.round(c.mana)}%`) : ''}
             ${statusesHtml(c)}
             ${affinityStripHtml(c)}
         </div>
@@ -295,7 +295,7 @@ function affinityStripHtml(c) {
 function actionButton(actor, a) {
     const check = M.canUse(actor, a);
     const bits = [];
-    if (a.manaCost > 0 && actor.mana !== null) bits.push(`<span class="dcb-chip is-mana">💧${a.manaCost}</span>`);
+    if (a.manaCost > 0 && actor.mana !== null) bits.push(`<span class="dcb-chip is-mana">💧${a.spPoints ?? Math.round(a.manaCost * (actor.spMax || 100) / 100)}</span>`);
     if (a.hpCost > 0) bits.push(`<span class="dcb-chip is-hpcost">❤️${a.hpCost}%</span>`);
     if (a.kind === 'item') bits.push(`<span class="dcb-chip">×${a.qty}</span>`);
     const cd = actor.cooldowns[a.id] || 0;
@@ -406,7 +406,7 @@ function actionDetail(c, a, foe) {
     if (p.status && p.type === 'damage') what += `, may cause ${(M.STATUSES[p.status]?.name || p.status).toLowerCase()} ${M.STATUSES[p.status]?.icon || ''}`;
     const extra = [];
     if (TARGET_LABELS[p.target]) extra.push(`targets ${TARGET_LABELS[p.target]}`);
-    if (a.manaCost > 0 && c.mana !== null) extra.push(`💧${a.manaCost} SP`);
+    if (a.manaCost > 0 && c.mana !== null) extra.push(`💧${a.spPoints ?? Math.round(a.manaCost * (c.spMax || 100) / 100)} SP`);
     if (a.hpCost > 0) extra.push(`❤️ ${a.hpCost}% HP`);
     if (a.cooldown > 0 && !(a.manaCost > 0 && c.mana !== null)) extra.push(`cooldown ${a.cooldown} turn${a.cooldown === 1 ? '' : 's'}`);
     if (a.kind === 'item') extra.push(`×${a.qty}`);
@@ -426,7 +426,7 @@ function inspectHtml() {
     const tier = c.tier ? `<span class="dcb-tier is-${c.tier}">${M.TUNING.tiers[c.tier]?.label || c.tier}</span>` : '';
     const stats = [
         `❤️ ${c.hp} / ${c.maxHp}`,
-        c.mana !== null ? `💧 ${c.mana}` : '',
+        c.mana !== null ? `💧 ${M.spPoints(c) ? `${M.spPoints(c).cur} / ${M.spPoints(c).max}` : Math.round(c.mana) + '%'} SP` : '',
         `🛡️ Armor ${c.armor} — blocks ${Math.round(red.physical * 100)}% of physical, ${Math.round(red.magic * 100)}% of magic`,
         c.atkBonus > 0 ? `⚔️ Weapon bonus +${c.atkBonus}` : '',
     ].filter(Boolean).map(t => `<li>${t}</li>`).join('');
@@ -480,7 +480,7 @@ function endHtml() {
     if (r.moneyAdded) rewards.push(`<li><i class="fa-solid fa-coins"></i> ${r.moneyAdded}${cur ? ' ' + escapeHtml(cur.symbol || cur.name) : ''} found</li>`);
     for (const it of r.lootAdded || []) rewards.push(`<li><i class="fa-solid fa-box-open"></i> ${escapeHtml(it)}</li>`);
     for (const a of r.affinity || []) rewards.push(`<li><i class="fa-solid fa-heart"></i> ${escapeHtml(a.name)} ${a.delta > 0 ? 'likes you more' : 'is a little cooler toward you'}</li>`);
-    const party = (r.party || []).map(p => `<li>${escapeHtml(p.name)} — ${p.down ? 'knocked out' : `HP ${p.healthPct}%`}</li>`).join('');
+    const party = (r.party || []).map(p => `<li>${escapeHtml(p.name)} — ${p.down ? 'knocked out' : `HP ${Math.round(p.healthPct)}%`}</li>`).join('');
     let story = '';
     if (ui.narrationState === 'working') story = '<p class="dcb-note"><i class="fa-solid fa-spinner fa-spin"></i> The AI is writing the story of the fight into the chat…</p>';
     else if (ui.narrationState === 'done') story = '<p class="dcb-note"><i class="fa-solid fa-check"></i> The story of the fight was added to the chat.</p>';

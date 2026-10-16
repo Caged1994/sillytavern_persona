@@ -57,7 +57,8 @@ export const TUNING = {
     hpBase: 30, hpPerEn: 3, hpPerLevel: 6,
     // Hit and flee chances compare the two sides' Agility as a ratio, so they
     // mean the same at level 1 and at level 99.
-    hitBase: 0.75, hitSpread: 0.4, hitMin: 0.10, hitMax: 0.95, spellAccuracy: 0.10,
+    // As in the games, most attacks land: ~90% between equals, magic a bit more.
+    hitBase: 0.9, hitSpread: 0.3, hitMin: 0.25, hitMax: 0.98, spellAccuracy: 0.05,
     critChance: 0.05, critPerLu: 0.15, critMax: 0.25, critMult: 1.5,
     dmgBase: 5, dmgPerAttr: 1.0, dmgPerLevel: 1.5,
     varMin: 0.85, varMax: 1.15,
@@ -331,7 +332,8 @@ export function makeCombatant(spec) {
         isUser: !!spec.isUser,
         icon: spec.icon || (spec.side === 'enemy' ? '👹' : '🙂'),
         level, attrs, maxHp, hp,
-        mana: isNum(spec.mana) ? clamp(Math.round(spec.mana), 0, 100) : null,
+        mana: isNum(spec.mana) ? clamp(Math.round(spec.mana * 100) / 100, 0, 100) : null,
+        spMax: isNum(spec.spMax) ? spec.spMax : null,
         armor: Math.max(0, Math.round(spec.armor || 0)),
         atkBonus: Math.max(0, Math.round(spec.atkBonus || 0)),
         actions: [],
@@ -698,7 +700,7 @@ function resolveTargets(state, actor, action, chosen) {
 }
 
 function spend(actor, action) {
-    if (action.manaCost > 0 && actor.mana !== null) actor.mana = Math.max(0, actor.mana - action.manaCost);
+    if (action.manaCost > 0 && actor.mana !== null) actor.mana = Math.max(0, Math.round((actor.mana - action.manaCost) * 100) / 100);
     if (action.hpCost > 0) actor.hp = Math.max(1, actor.hp - Math.ceil(actor.maxHp * action.hpCost / 100));
     if (action.cooldown > 0) actor.cooldowns[action.id] = action.cooldown;
     if (action.kind === 'item') action.qty = Math.max(0, (action.qty || 0) - 1);
@@ -1291,8 +1293,14 @@ export function runEnemyTurn(state) {
 
 /** hit points → the HP bar (0–100); the fallen keep 1%. */
 export function hpToHealthPct(c) {
-    if (c.down || c.hp <= 0) return 1;
-    return clamp(Math.round((c.hp / c.maxHp) * 100), 1, 100);
+    if (c.down || c.hp <= 0) return Math.min(1, Math.round(100 / Math.max(1, c.maxHp) * 100) / 100);
+    return clamp(Math.round((c.hp / c.maxHp) * 10000) / 100, 0.01, 100);
+}
+
+/** SP in points for display ({ cur, max }), or null when SP is not tracked. */
+export function spPoints(c) {
+    if (c.mana === null || !isNum(c.spMax)) return null;
+    return { cur: Math.round(c.mana * c.spMax / 100), max: c.spMax };
 }
 
 /** What each party member carries out of the fight. */

@@ -1720,3 +1720,12 @@ input.dsp-xp-big { width: 3em; font-size: 20px; text-align: center; }
 .dsp-pr-add .dsp-pr-in-name { flex: 1; }
 .dsp-pr-add .dsp-pr-in-level { width: 64px; }
 .dsp-pr-refresh { padding: 0 6px; }
+
+/* HP / SP in points: current big, max small. */
+.dsp-p-valcell { display: inline-flex; align-items: baseline; gap: 1px; justify-self: start; white-space: nowrap; }
+.dsp-p-max-of {
+    font-family: "Arial Black", "Arial Bold", Impact, sans-serif;
+    font-size: 12px; font-style: italic; color: #f4f8ff;
+    paint-order: stroke fill; -webkit-text-stroke: 3px var(--p5-ink);
+}
+.dsp-p-row.is-points { grid-template-columns: 50px minmax(84px, auto) minmax(60px, 1fr) auto; }

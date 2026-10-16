@@ -42,7 +42,7 @@ import { activeStats, attrLabel } from '../../utils/statsModel.js';
 import { itemKey } from '../../utils/equipmentModel.js';
 import { formatEffects } from '../../utils/effectsModel.js';
 import * as M from '../../utils/combatModel.js';
-import { findSkill, isCombatSkill, profileFromSkill, skillCost, passiveAffinity } from '../../utils/skillModel.js';
+import { findSkill, isCombatSkill, profileFromSkill, skillCost, passiveAffinity, spPointsAt } from '../../utils/skillModel.js';
 import { getActivePersona, isPersonasEnabled } from './characterPersonas.js';
 import { findInCompendium, getCompendium } from './personaCompendium.js';
 import { normalizeAffinities as normalizePersonaAffinities } from '../../utils/personaModel.js';
@@ -193,7 +193,7 @@ function abilityAction(owner, a, tiers, level = 1) {
             labelled: true,
             action: {
                 id: `ab:${a.id}`, label: a.name, icon: a.icon || '✨', kind,
-                profile, manaCost, hpCost: cost.hp,
+                profile, manaCost, hpCost: cost.hp, spPoints: rec.k === 'sp' && tiers ? rec.c : undefined,
                 // Without the SP bar, SP skills are paced by a pause instead.
                 cooldown: !tiers && cost.sp ? M.TUNING.cooldown[profile.power] || 0 : 0,
             },
@@ -280,6 +280,7 @@ export function buildPartyMember(name, isUser, id = combatId('p', name)) {
         healthPct: hasHealth ? cur.health : 100,
         mana: hasMana ? cur.mana : null,
         armor, atkBonus, actions, affinities,
+        spMax: hasMana ? spPointsAt(level) : null,
         persona: persona ? persona.name : undefined,
     });
     return { combatant, unlabelled };

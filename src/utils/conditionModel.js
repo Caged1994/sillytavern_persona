@@ -7,7 +7,7 @@
  * effects (Wounded leg: Ag −3) that apply while it lasts.
  *
  * Condition shape: { id, icon, name, desc, effects, source: 'ai'|'user'|'auto', autoId?, createdAt }
- * 'auto' conditions follow the stat bars (consequenceModel.js): only the
+ * 'auto' conditions (no longer created) followed the stat bars: only the
  * consequence rules add and remove them, never the AI.
  */
 import { cleanIcon, splitLeadingEmoji, itemKey } from './equipmentModel.js';

@@ -86,7 +86,10 @@ export function clampStatValue(stat, value) {
     const kind = STAT_KINDS[stat?.kind] || STAT_KINDS.attribute;
     const min = isFiniteNumber(stat?.min) ? stat.min : kind.min;
     const max = isFiniteNumber(stat?.max) ? stat.max : kind.max;
-    return Math.min(max, Math.max(min, Math.round(n)));
+    // States (HP, SP… as a share of their maximum) keep two decimals so a
+    // value set in points comes back exactly; attributes are whole numbers.
+    const r = stat?.kind === 'state' ? Math.round(n * 100) / 100 : Math.round(n);
+    return Math.min(max, Math.max(min, r));
 }
 
 /** "st" -> "St": the short label of an attribute id, for places that only have the id. */
@@ -443,13 +446,13 @@ export function buildStatsPrompt(entries, { compact = true, standalone = false }
                 bonus.push(`${s.abbr || s.name} ${m > 0 ? '+' : '−'}${Math.abs(m)}${from ? ` (${from})` : ''}`);
             }
             if (s.ai) {
-                values[s.name] = v;
+                values[s.name] = s.kind === 'state' ? Math.round(v) : v;
                 addDescription(e, s);
             } else if (m) {
                 const eff = clampStatValue(s, v + m);
                 fixed.push(`${label} ${eff} (${v} ${m > 0 ? '+' : '−'} ${Math.abs(m)})`);
             } else {
-                fixed.push(`${label} ${v}${s.kind === 'state' ? '%' : ''}`);
+                fixed.push(`${label} ${s.kind === 'state' ? `${Math.round(v)}%` : v}`);
                 if (s.kind === 'attribute') plainAttrs.push(v);
             }
         }

@@ -13,6 +13,7 @@
  * window or reloading the page does not lose it.
  */
 import { executeSlashCommandsOnChatInput } from '../../../../../../../scripts/slash-commands.js';
+import { getResource } from './characterResources.js';
 import { extensionSettings } from '../../core/state.js';
 import { saveSettings } from '../../core/persistence.js';
 import { safeGenerateRaw } from '../../utils/responseExtractor.js';
@@ -137,7 +138,15 @@ function pctOf(name, isUser, id) {
 
 /** Each member's HP and SP (percent, null when there is no such bar). */
 export function partyStatus(state) {
-    return state.party.map(p => ({ ...p, health: pctOf(p.name, p.isUser, 'health'), mana: pctOf(p.name, p.isUser, 'mana') }));
+    return state.party.map(p => {
+        const health = pctOf(p.name, p.isUser, 'health');
+        const mana = pctOf(p.name, p.isUser, 'mana');
+        return {
+            ...p, health, mana,
+            hp: health === null ? null : getResource(p.name, p.isUser, 'health', health),
+            sp: mana === null ? null : getResource(p.name, p.isUser, 'mana', mana),
+        };
+    });
 }
 
 function changeBar(name, isUser, id, delta, { floor = 0 } = {}) {

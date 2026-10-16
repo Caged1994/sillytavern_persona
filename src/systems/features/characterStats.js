@@ -55,7 +55,7 @@ export function setModifierProvider(fn) {
     modifierProvider = typeof fn === 'function' ? fn : null;
 }
 // Whatever must follow the stat values (automatic consequences, in
-// characterConsequences.js) registers here, for the same reason.
+// nothing at the moment) registers here, for the same reason.
 let valuesHook = null;
 export function setStatValuesHook(fn) {
     valuesHook = typeof fn === 'function' ? fn : null;
@@ -544,7 +544,7 @@ export function buildStatsContextSummary() {
     const lines = getStatCharacters().filter(c => !isStatGenerationPending(c.name, c.isUser)).map(({ name, isUser }) => {
         const stats = activeStats(getStatSheet(name, isUser));
         const cur = getCurrentStatValues(name, isUser, stats);
-        const states = stats.filter(s => s.kind === 'state').map(s => `${s.name} ${cur[s.id]}%`);
+        const states = stats.filter(s => s.kind === 'state').map(s => `${s.name} ${Math.round(cur[s.id])}%`);
         const mods = modifiersFor(name, isUser);
         const attrs = stats.filter(s => s.kind === 'attribute').map(s => {
             const m = mods[s.id]?.total || 0;

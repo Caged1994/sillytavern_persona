@@ -69,7 +69,10 @@ function listByKey(key, create = false) {
 /** The character's conditions in the open chat (live array). */
 export function getConditions(name, isUser = false) {
     const list = listByKey(statKey(name, isUser));
-    return Array.isArray(list) ? list : [];
+    if (!Array.isArray(list)) return [];
+    // Automatic conditions from low bars no longer exist: drop old ones.
+    for (let i = list.length - 1; i >= 0; i--) if (list[i] && list[i].source === 'auto') list.splice(i, 1);
+    return list;
 }
 
 function changed(detail) {
@@ -118,8 +121,9 @@ export function removeCondition(name, isUser, id) {
 }
 
 /**
- * Makes the character's automatic conditions match `rules` (from
- * consequenceModel): adds the missing ones, removes the ones no longer due.
+ * Makes the character's automatic conditions match `rules`: adds the missing
+ * ones, removes the ones no longer due. (Unused since the automatic
+ * consequences were removed; kept for callers that pass an empty list.)
  * A condition of the same name the AI or the user added is left alone.
  * Returns true when something changed (the caller saves).
  */

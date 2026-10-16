@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- Hit chances raised (about 90% between equals, as in the games).
+- HP and SP shown and edited as points (current / max) in the Stats panel, fights and dungeons; max HP from En and level, max SP from level; SP costs are the game's points.
+- Removed the automatic conditions from low bars (Badly wounded, Hungry…); old ones are cleared from chats.
 - Persona skill database (P5R + P3R + P4G, 1199 skills) used by fights.
 - Persona combat: elements and affinities, knock-downs, 1 More, Baton Pass, All-Out Attack, HP/SP costs, ailments and technicals, buffs, walls, mirrors; Shadows from the Compendium; fixed the inspect panel's attribute labels.
 - Compendium entries say how each Persona is obtained: special fusion ingredients, requirements and unlock conditions.

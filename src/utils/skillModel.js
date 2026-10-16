@@ -56,7 +56,8 @@ export function skillCost(rec, level = 1) {
     if (!rec || !rec.c) return { sp: 0, hp: 0 };
     if (rec.k === 'hp') return { sp: 0, hp: rec.c };
     if (rec.k === 'spp') return { sp: rec.c, hp: 0 };
-    return { sp: Math.max(1, Math.round((rec.c * 100) / spPointsAt(level))), hp: 0 };
+    // Two decimals: the share of the bar that is exactly the game's SP cost.
+    return { sp: Math.max(0.01, Math.round((rec.c * 10000) / spPointsAt(level)) / 100), hp: 0 };
 }
 
 /** Whether the combat can use it (passives and field skills cannot). */

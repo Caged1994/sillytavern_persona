@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Money, affinity, SP costs and automatic consequences test.
+ * Money, affinity, social stats and SP costs test.
  * party-shared awards and level-ups, attribute points, NPC levels from the
  * AI, quest XP, swipe undo, chats and the RPG mode switch.
  *
@@ -68,14 +68,12 @@ const check = (label, cond, extra = '') => {
     else { console.error(`FAIL  ${label}${extra ? '\n      ' + extra : ''}`); failures++; }
 };
 const Cd = await import(`${DES}/src/systems/features/characterConditions.js`);
-const Cq = await import(`${DES}/src/systems/features/characterConsequences.js`);
 const Mo = await import(`${DES}/src/systems/features/characterMoney.js`);
 const Af = await import(`${DES}/src/systems/features/characterAffinity.js`);
 const So = await import(`${DES}/src/systems/features/characterSocial.js`);
 const MoM = await import(`${DES}/src/utils/moneyModel.js`);
 const AfM = await import(`${DES}/src/utils/affinityModel.js`);
 const AbM = await import(`${DES}/src/utils/abilityModel.js`);
-const CqM = await import(`${DES}/src/utils/consequenceModel.js`);
 const Mod = await import(`${DES}/src/systems/features/characterModifiers.js`);
 
 extensionSettings.enabled = true;
@@ -119,38 +117,12 @@ instr = pb.generateTrackerInstructions(false, false);
 check('SP switched off: spells are free, no cost sent', instr.includes('Fireball') && !instr.includes('SP 5') && !instr.includes('Spells cost SP'));
 S.setStatEnabled('mana', true);
 
-// ── 2. Automatic consequences ──
-check('rule choice with hysteresis', CqM.desiredRule('satiety', 25)?.id === 'hungry' && CqM.desiredRule('satiety', 33, 'hungry')?.id === 'hungry' && CqM.desiredRule('satiety', 36, 'hungry') === null);
-check('a worse rule takes over', CqM.desiredRule('satiety', 5, 'hungry')?.id === 'starving' && CqM.desiredRule('satiety', 13, 'starving')?.id === 'starving');
-S.setCurrentStatValue('Mastera', true, 'satiety', 25);
-let conds = Cd.getConditions('Mastera', true);
-check('a low bar adds its condition', conds.some(c => c.name === 'Hungry' && c.source === 'auto'));
-check('...with its malus', Mod.getEffectiveStatValues('Mastera', true).modifiers.st?.total === -2);
+// ── 2. No automatic consequences ──
 S.setCurrentStatValue('Mastera', true, 'satiety', 5);
-conds = Cd.getConditions('Mastera', true);
-check('it worsens to Starving (one per bar)', conds.some(c => c.name === 'Starving') && !conds.some(c => c.name === 'Hungry'));
-S.setCurrentStatValue('Mastera', true, 'satiety', 14);
-check('recovering a little keeps it (no flicker)', Cd.getConditions('Mastera', true).some(c => c.name === 'Starving'));
-S.setCurrentStatValue('Mastera', true, 'satiety', 60);
-check('a full bar ends it', !Cd.getConditions('Mastera', true).some(c => c.source === 'auto'));
-S.applyAIStatUpdates({ Elena: { HP: 0 } }, last());
-check('AI stat updates trigger them too', Cd.getConditions('Elena').some(c => c.name === 'Unconscious'));
-Cd.applyAIConditions({ Elena: { remove: ['Unconscious'] } }, last());
-check('the AI cannot remove an automatic condition', Cd.getConditions('Elena').some(c => c.name === 'Unconscious'));
-instr = pb.generateTrackerInstructions(false, false);
-check('the AI sees them marked [auto]', instr.includes('Unconscious [auto]') && instr.includes('never add or remove those yourself'));
-S.revertAIStatsForReplacedMessage(last());
-check('a swipe that restores the bar ends it', !Cd.getConditions('Elena').some(c => c.name === 'Unconscious'));
-S.setCurrentStatValue('Mastera', true, 'energy', 5);
-Cq.setConsequencesEnabled(false);
-check('switching the feature off removes them', !Cd.getConditions('Mastera', true).some(c => c.source === 'auto'));
-Cq.setConsequencesEnabled(true);
-check('...and on again brings them back', Cd.getConditions('Mastera', true).some(c => c.name === 'Exhausted'));
-S.setCurrentStatValue('Mastera', true, 'energy', 100);
-S.setStatEnabled('hygiene', false);
-S.setCurrentStatValue('Mastera', true, 'satiety', 60);
-check('switched-off bars bring nothing', !Cd.getConditions('Mastera', true).some(c => c.name === 'Filthy'));
-S.setStatEnabled('hygiene', true);
+S.setCurrentStatValue('Mastera', true, 'health', 0);
+check('low bars bring no automatic condition', !Cd.getConditions('Mastera', true).some(c => c.source === 'auto'));
+S.setCurrentStatValue('Mastera', true, 'satiety', 80);
+S.setCurrentStatValue('Mastera', true, 'health', 100);
 
 // ── 3. Affinity ──
 check('tiers', AfM.affinityTier(-80).id === 'hostile' && AfM.affinityTier(0).id === 'neutral' && AfM.affinityTier(35).id === 'friendly' && AfM.affinityTier(90).id === 'close');
@@ -225,7 +197,6 @@ backToChat();
 R.setCardRpgMode(false);
 instr = pb.generateTrackerInstructions(false, false);
 check('RPG off: no money or affinity sent', !instr.includes('MONEY') && !instr.includes('AFFINITY'));
-check('RPG off: no automatic conditions', (S.setCurrentStatValue('Mastera', true, 'satiety', 5), !Cd.getConditions('Mastera', true).some(c => c.name === 'Starving')));
 R.setCardRpgMode(null);
 
 if (failures) { console.error(`\n${failures} check(s) failed`); process.exit(1); }

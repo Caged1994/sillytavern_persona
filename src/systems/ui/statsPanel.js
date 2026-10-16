@@ -52,6 +52,7 @@ import { isMoneyEnabled, getMoney, setMoney, hasPurse, formatAmount, getCurrency
 import { isAffinityEnabled, getAffinityRecord, setAffinity } from '../features/characterAffinity.js';
 import { isDungeonEnabled, hasLiveDungeon } from '../features/dungeon.js';
 import { isSocialEnabled, getSocialView, setSocialPoints } from '../features/characterSocial.js';
+import { isResource, getResource, setResourcePoints } from '../features/characterResources.js';
 import {
     isPersonasEnabled, getPersonaRecord, getActivePersona, addPersona, equipPersona, removePersona,
     setPersonaLevel, setPersonaStat, cyclePersonaAffinity, addPersonaSkill, removePersonaSkill, setWildCard,
@@ -207,22 +208,23 @@ function aiBadge(stat) {
  * slanted bar (as on the Persona 5 status screen). HP, SP and the other
  * states fill over 0–100%, attributes over 1–99; "MAX" sits on a full bar.
  */
-function barRowHtml(stat, { value, base = value, mod = null, prog = null, index = 0, count = 1 }) {
+function barRowHtml(stat, { value, base = value, mod = null, prog = null, index = 0, count = 1, res = null }) {
     const isState = stat.kind === 'state';
     const max = stat.max || (isState ? 100 : 99);
     const pct = Math.max(0, Math.min(100, (value / max) * 100));
     const total = mod?.total || 0;
     const from = total ? (mod.parts || []).map(p => `${p.label} ${p.value > 0 ? '+' : '−'}${Math.abs(p.value)}`).join(', ') : '';
-    const tip = `${stat.name} ${value}${isState ? '%' : ''}${total ? ` = ${base} base, ${from}` : ''}${stat.description ? ` — ${stat.description}` : ''}`;
+    const shown = res ? `${res.cur} / ${res.max}` : `${isState ? Math.round(value) + '%' : value}`;
+    const tip = `${stat.name} ${shown}${total ? ` = ${base} base, ${from}` : ''}${stat.description ? ` — ${stat.description}` : ''}`;
     const label = isState ? stat.name : (stat.abbr || stat.name);
     const color = isState ? ringColor(stat, value) : '';
     const low = isState && color !== stat.color ? ' is-low' : '';
     const full = value >= max;
     return `
-        <div class="dsp-p-row${isState ? ' is-state' : ''}${low}${full ? ' is-max' : ''}${label.length > 3 ? ' is-long' : ''}" data-stat="${escapeHtml(stat.id)}"
+        <div class="dsp-p-row${isState ? ' is-state' : ''}${res ? ' is-points' : ''}${low}${full ? ' is-max' : ''}${label.length > 3 ? ' is-long' : ''}" data-stat="${escapeHtml(stat.id)}"
             style="--dsp-i:${index};--dsp-n:${count}${color ? `;--dsp-fill:${escapeHtml(color)}` : ''}" title="${escapeHtml(tip)}">
             <span class="dsp-p-abbr">${escapeHtml(label)}</span>
-            <button type="button" class="dsp-value dsp-p-value" data-stat="${escapeHtml(stat.id)}" title="${total ? `Base ${base} — click to edit the base value` : 'Click to edit'}">${value}</button>
+            <span class="dsp-p-valcell"><button type="button" class="dsp-value dsp-p-value" data-stat="${escapeHtml(stat.id)}" title="${total ? `Base ${base} — click to edit the base value` : 'Click to edit'}">${res ? res.cur : (isState ? Math.round(value) : value)}</button>${res ? `<span class="dsp-p-max-of">/${res.max}</span>` : ''}</span>
             <span class="dsp-p-barcell">
                 <span class="dsp-p-bar"><span class="dsp-p-fill" style="width:${pct.toFixed(1)}%"></span></span>
                 ${full ? '<span class="dsp-p-max" aria-hidden="true">MAX</span>' : ''}
@@ -237,7 +239,10 @@ function barRowHtml(stat, { value, base = value, mod = null, prog = null, index 
 
 /** HP, SP (and any state switched on) above the attributes, one block. */
 function statBlockHtml(states, attrs, cur, eff, prog) {
-    const stateRows = states.map((s, i) => barRowHtml(s, { value: cur[s.id], index: i, count: states.length }));
+    const stateRows = states.map((s, i) => barRowHtml(s, {
+        value: cur[s.id], index: i, count: states.length,
+        res: isResource(s.id) ? getResource(selected.name, selected.isUser, s.id, cur[s.id]) : null,
+    }));
     const attrRows = attrs.map((s, i) => barRowHtml(s, {
         value: eff.values[s.id], base: cur[s.id], mod: eff.modifiers[s.id], prog, index: i, count: attrs.length,
     }));
@@ -1324,12 +1329,15 @@ function startEdit(button) {
     const id = button.getAttribute('data-stat');
     const stat = getStatSheet(selected.name, selected.isUser).find(s => s.id === id);
     if (!stat) return;
-    const cur = getCurrentStatValues(selected.name, selected.isUser)[id];
+    const pct = getCurrentStatValues(selected.name, selected.isUser)[id];
+    // HP and SP are edited in points; other bars in percent.
+    const res = isResource(id) ? getResource(selected.name, selected.isUser, id, pct) : null;
+    const cur = res ? res.cur : (stat.kind === 'state' ? Math.round(pct) : pct);
     const doc = button.ownerDocument;
     const input = doc.createElement('input');
     input.type = 'number';
-    input.min = String(stat.min);
-    input.max = String(stat.max);
+    input.min = res ? '0' : String(stat.min);
+    input.max = res ? String(res.max) : String(stat.max);
     input.step = '1';
     input.value = String(cur);
     input.className = 'dsp-value-input';
@@ -1342,7 +1350,10 @@ function startEdit(button) {
     const finish = (commit) => {
         if (done) return;
         done = true;
-        if (commit && selected) setCurrentStatValue(selected.name, selected.isUser, id, input.value);
+        if (commit && selected && input.value !== '' && Number(input.value) !== cur) {
+            if (res) setResourcePoints(selected.name, selected.isUser, id, input.value);
+            else setCurrentStatValue(selected.name, selected.isUser, id, input.value);
+        }
         input.blur();
         renderAll();
     };

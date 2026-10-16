@@ -174,7 +174,7 @@ function setupHtml() {
 function partyBarsHtml() {
     const rows = G.partyStatus(st).map(p => {
         const bar = (cls, v, label) => (v === null ? '' : `<div class="dcb-bar ${cls}${cls === 'is-hp' && v <= 30 ? ' is-low' : ''}" title="${escapeHtml(label)}"><span style="width:${Math.max(0, Math.min(100, v))}%"></span><em>${escapeHtml(label)}</em></div>`);
-        return `<div class="ddg-member">${avatarHtml(p.name)}<div class="ddg-member-main"><span class="ddg-member-name">${escapeHtml(p.name)}</span>${bar('is-hp', p.health, `HP ${p.health}`)}${bar('is-mana', p.mana, `SP ${p.mana}`)}</div></div>`;
+        return `<div class="ddg-member">${avatarHtml(p.name)}<div class="ddg-member-main"><span class="ddg-member-name">${escapeHtml(p.name)}</span>${bar('is-hp', p.health, p.hp ? `HP ${p.hp.cur} / ${p.hp.max}` : `HP ${Math.round(p.health)}%`)}${bar('is-mana', p.mana, p.sp ? `SP ${p.sp.cur} / ${p.sp.max}` : `SP ${Math.round(p.mana ?? 0)}%`)}</div></div>`;
     });
     return `<div class="ddg-party">${rows.join('')}</div>`;
 }

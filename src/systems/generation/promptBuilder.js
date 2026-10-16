@@ -27,8 +27,6 @@ import { buildPersonaPromptForGeneration, buildPersonaContextSummary } from '../
 import { buildChecksPromptForGeneration, buildChecksContextSummary } from '../features/characterChecks.js';
 // Registers the attribute-modifier provider the stats prompt uses.
 import '../features/characterModifiers.js';
-// Automatic consequences register on the stat values here.
-import '../features/characterConsequences.js';
 // NOTE: InventoryV2 type import removed — inventory system removed (see git history)
 /**
  * Default HTML prompt text

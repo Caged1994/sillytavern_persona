@@ -70,14 +70,12 @@ const check = (label, cond, extra = '') => {
     else { console.error(`FAIL  ${label}${extra ? '\n      ' + extra : ''}`); failures++; }
 };
 const Cd = await import(`${DES}/src/systems/features/characterConditions.js`);
-const Cq = await import(`${DES}/src/systems/features/characterConsequences.js`);
 const Mo = await import(`${DES}/src/systems/features/characterMoney.js`);
 const Af = await import(`${DES}/src/systems/features/characterAffinity.js`);
 const So = await import(`${DES}/src/systems/features/characterSocial.js`);
 const MoM = await import(`${DES}/src/utils/moneyModel.js`);
 const AfM = await import(`${DES}/src/utils/affinityModel.js`);
 const AbM = await import(`${DES}/src/utils/abilityModel.js`);
-const CqM = await import(`${DES}/src/utils/consequenceModel.js`);
 const Mod = await import(`${DES}/src/systems/features/characterModifiers.js`);
 
 extensionSettings.enabled = true;
@@ -104,6 +102,8 @@ const last = () => chat.length - 1;
 
 
 const PM = await import(`${DES}/src/utils/personaModel.js`);
+const CM = await import(`${DES}/src/utils/combatModel.js`);
+const SK = await import(`${DES}/src/utils/skillModel.js`);
 const Pe = await import(`${DES}/src/systems/features/characterPersonas.js`);
 const Comp = await import(`${DES}/src/systems/features/personaCompendium.js`);
 const Mods = await import(`${DES}/src/systems/features/characterModifiers.js`);
@@ -199,6 +199,26 @@ check('otherwise the AI\'s affinities and real skill names are used', made.affin
 const st = Cb.buildEncounter([{ name: 'Mastera', isUser: true }], [{ name: 'Pixie', tier: 'normal' }], { seed: 1 });
 const e1 = st.combatants.find(c => c.side === 'enemy');
 check('the encounter builds it with the Pixie shape (Ma above St)', e1.affinities.curse === 'wk' && e1.attrs.ma > e1.attrs.st);
+
+// ── 4c. HP and SP in points ──
+const Rs = await import(`${DES}/src/systems/features/characterResources.js`);
+const hpMax = Rs.resourceMax('Mastera', true, 'health');
+check('max HP follows the Persona\'s En and the level', hpMax > 30 && hpMax === CM.maxHpFor(Pe.getActivePersona('Mastera', true).stats.en, P.getProgress('Mastera', true).level));
+Rs.setResourcePoints('Mastera', true, 'health', hpMax - 7);
+check('HP set in points comes back exactly', Rs.getResource('Mastera', true, 'health').cur === hpMax - 7);
+const spMax = Rs.resourceMax('Mastera', true, 'mana');
+Rs.setResourcePoints('Mastera', true, 'mana', spMax - 3);
+check('SP too', Rs.getResource('Mastera', true, 'mana').cur === spMax - 3 && spMax === SK.spPointsAt(P.getProgress('Mastera', true).level));
+const f2 = Cb.buildPartyMember('Mastera', true).combatant;
+check('a fighter starts with the same HP and SP points', f2.hp === hpMax - 7 && CM.spPoints(f2).cur === spMax - 3);
+const eiha2 = f2.actions.find(x => x.label === 'Eiha');
+const spBefore = CM.spPoints(f2).cur;
+const st2 = CM.createCombat({ combatants: [f2, CM.makeCombatant({ id: 'x', name: 'X', side: 'enemy' })] });
+st2.phase = 'active'; st2.order = [f2.id, 'x'];
+CM.performAction(st2, f2.id, eiha2.id, 'x');
+check('a skill costs its SP in points', CM.spPoints(f2).cur === spBefore - 4 && eiha2.spPoints === 4);
+Rs.setResourcePoints('Mastera', true, 'health', hpMax);
+Rs.setResourcePoints('Mastera', true, 'mana', spMax);
 
 // ── 5. Switch off ──
 Pe.setPersonasEnabled(false);

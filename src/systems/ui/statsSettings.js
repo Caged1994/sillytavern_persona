@@ -60,7 +60,6 @@ function renderCompendiumSetting() {
         count.textContent = info.at ? `${info.count} Persona${info.count === 1 ? '' : 's'} found.` : '';
     }
 }
-import { setConsequencesEnabled } from '../features/characterConsequences.js';
 import { setCombatEnabled, setCombatNarration } from '../features/combat.js';
 import { setDungeonEnabled, setDungeonNarration } from '../features/dungeon.js';
 import { setChecksEnabled } from '../features/characterChecks.js';
@@ -145,7 +144,6 @@ export function initStatsSettings() {
     document.getElementById('rpg-persona-compendium')?.addEventListener('focus', renderCompendiumSetting);
     window.addEventListener(COMPENDIUM_CHANGED_EVENT, renderCompendiumSetting);
     refreshCompendium().catch(() => {});
-    flag('rpg-consequences-enabled', 'autoConsequences');
     flag('rpg-checks-enabled', 'checksEnabled');
     flag('rpg-combat-enabled', 'combatEnabled');
     flag('rpg-combat-narration', 'combatNarration');
@@ -183,7 +181,6 @@ export function initStatsSettings() {
             savePersonaSettings();
             refreshCompendium({ force: true }).catch(() => {});
         }
-        else if (el.id === 'rpg-consequences-enabled') setConsequencesEnabled(el.checked);
         else if (el.id === 'rpg-checks-enabled') setChecksEnabled(el.checked);
         else if (el.id === 'rpg-combat-enabled') setCombatEnabled(el.checked);
         else if (el.id === 'rpg-combat-narration') setCombatNarration(el.checked);

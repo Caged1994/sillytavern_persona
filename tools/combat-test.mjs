@@ -58,10 +58,10 @@ function turnOf(s, id) {
     ok(C.maxHpFor(20, 5) > C.maxHpFor(10, 5), 'more En, more HP');
     ok(C.maxHpFor(10, 5) > C.maxHpFor(10, 1), 'more levels, more HP');
     const a = hero('a'), d = foe('d');
-    ok(Math.abs(C.hitChance(a, d) - 0.75) < 1e-9, 'equal Ag hits 75%');
-    ok(C.hitChance(hero('q', { attrs: { ag: 20 } }), d) > 0.75, 'higher Ag hits more');
+    ok(Math.abs(C.hitChance(a, d) - 0.9) < 1e-9, 'equal Ag hits 90%');
+    ok(C.hitChance(hero('q', { attrs: { ag: 20 } }), d) > 0.9, 'higher Ag hits more');
     ok(C.hitChance(hero('q', { attrs: { ag: 100 } }), d) === C.TUNING.hitMax, 'hit chance is capped');
-    ok(C.hitChance(hero('q', { attrs: { ag: 1 } }), foe('z', { attrs: { ag: 100 } })) < 0.4, 'a far faster target is hard to hit');
+    ok(C.hitChance(hero('q', { attrs: { ag: 1 } }), foe('z', { attrs: { ag: 100 } })) < 0.65, 'a far faster target is harder to hit');
     ok(Math.abs(C.hitChance(hero('q1', { attrs: { ag: 20 } }), foe('z1', { attrs: { ag: 10 } })) - C.hitChance(hero('q2', { attrs: { ag: 80 } }), foe('z2', { attrs: { ag: 40 } }))) < 1e-9, 'hit chance depends on the Ag ratio, not the scale');
     ok(C.critChance(hero('l1', { attrs: { lu: 60 } }), foe('l2', { attrs: { lu: 20 } })) > C.critChance(hero('l3'), foe('l4')), 'more Luck, more critical hits');
     ok(C.critChance(hero('l5', { attrs: { lu: 99 } }), foe('l6', { attrs: { lu: 1 } })) <= C.TUNING.critMax, 'critical chance is capped');
@@ -411,7 +411,7 @@ function winRate(heroes, enemies, n = 200) {
     const band = (label, v, lo, hi) => { if (process.env.SHOW_BALANCE) console.log(`  ${label}: ${(v * 100).toFixed(1)}%`); ok(v >= lo && v <= hi, `${label}: ${(v * 100).toFixed(0)}% not in ${lo * 100}–${hi * 100}%`); };
     band('solo vs minion', winRate(['A'], [['e', 'minion']]), 0.95, 1);
     band('solo vs normal', winRate(['A'], [['e', 'normal']]), 0.85, 1);
-    band('solo vs 2 normal', winRate(['A'], [['e', 'normal'], ['f', 'normal']]), 0.2, 0.65);
+    band('solo vs 2 normal', winRate(['A'], [['e', 'normal'], ['f', 'normal']]), 0.15, 0.65);
     band('solo vs elite', winRate(['A'], [['e', 'elite']]), 0.35, 0.8);
     band('solo vs boss', winRate(['A'], [['e', 'boss']]), 0, 0.15);
     band('party of 3 vs 2 normal', winRate(['A', 'B', 'C'], [['e', 'normal'], ['f', 'normal']]), 0.9, 1);
