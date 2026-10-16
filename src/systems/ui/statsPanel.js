@@ -52,6 +52,12 @@ import { isMoneyEnabled, getMoney, setMoney, hasPurse, formatAmount, getCurrency
 import { isAffinityEnabled, getAffinityRecord, setAffinity } from '../features/characterAffinity.js';
 import { isDungeonEnabled, hasLiveDungeon } from '../features/dungeon.js';
 import { isSocialEnabled, getSocialView, setSocialPoints } from '../features/characterSocial.js';
+import {
+    isPersonasEnabled, getPersonaRecord, getActivePersona, addPersona, equipPersona, removePersona,
+    setPersonaLevel, setPersonaStat, cyclePersonaAffinity, addPersonaSkill, removePersonaSkill, setWildCard,
+} from '../features/characterPersonas.js';
+import { getCompendium, getCompendiumInfo, findInCompendium, refreshCompendium, COMPENDIUM_CHANGED_EVENT } from '../features/personaCompendium.js';
+import { ELEMENTS, AFFINITIES, ARCANA, STAT_IDS as P_STATS, STAT_LABELS as P_LABELS, MAX_SKILLS, MAX_STOCK } from '../../utils/personaModel.js';
 import { MAX_SOCIAL_POINTS } from '../../utils/socialModel.js';
 import { isCombatEnabled, getLiveEncounter, getActionProfile, setActionProfile, describeProfile } from '../features/combat.js';
 import {
@@ -79,6 +85,7 @@ const checkForm = { open: false, stat: '', difficulty: 'medium', bonus: '0', rea
 // Section tabs inside the panel. The last one used is remembered.
 const SECTIONS = [
     { id: 'stats', label: 'Stats', icon: 'fa-chart-simple' },
+    { id: 'persona', label: 'Persona', icon: 'fa-masks-theater' },
     { id: 'social', label: 'Social', icon: 'fa-star' },
     { id: 'equipment', label: 'Equipment', icon: 'fa-shield-halved' },
     { id: 'abilities', label: 'Abilities', icon: 'fa-wand-sparkles' },
@@ -100,6 +107,10 @@ function setSection(id) {
 function resetForm() { Object.assign(itemForm, FORM_DEFAULTS); }
 // The manual XP form (XP tab), kept across repaints.
 const xpForm = { amount: '', reason: '' };
+// The Persona tab: which Persona is shown, and the "add" form.
+const personaView = { id: null };
+const PERSONA_FORM = { name: '', arcana: '', focus: '', level: '', skill: '', error: '' };
+const personaForm = { ...PERSONA_FORM };
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -234,6 +245,155 @@ function statBlockHtml(states, attrs, cur, eff, prog) {
         ${stateRows.length ? `<div class="dsp-p-group is-states">${stateRows.join('')}</div>` : ''}
         ${attrRows.length ? `<div class="dsp-p-group is-attrs">${attrRows.join('')}</div>` : ''}
     </div>`;
+}
+
+// ─── Personas ───────────────────────────────────────────────────────────────
+
+/** The equipped Persona's name over the stat bars, as a P5 tag. */
+function personaBannerHtml(p) {
+    return `<button type="button" class="dsp-pr-banner" data-section-go="persona" title="Open the Persona tab">
+        <span class="dsp-pr-banner-label">Persona</span>
+        <span class="dsp-pr-banner-name">${escapeHtml(p.name)}</span>
+        ${p.arcana ? `<span class="dsp-pr-banner-arc">${escapeHtml(p.arcana)}</span>` : ''}
+        <span class="dsp-pr-banner-lv">Lv ${p.level}</span>
+    </button>`;
+}
+
+function affinityGridHtml(p) {
+    return `<div class="dsp-pr-aff" role="group" aria-label="Affinities">${ELEMENTS.map(e => {
+        const a = AFFINITIES[p.affinities[e.id] || ''];
+        return `<button type="button" class="dsp-pr-aff-cell is-${a.id || 'none'}" data-pr-aff="${e.id}" title="${escapeHtml(`${e.name}: ${a.name} — click to change`)}">
+            <span class="dsp-pr-aff-icon">${e.icon}</span><span class="dsp-pr-aff-el">${e.name}</span><span class="dsp-pr-aff-val">${a.label}</span></button>`;
+    }).join('')}</div>`;
+}
+
+function personaDetailHtml(p, rec) {
+    const isActive = rec.active === p.id;
+    const next = p.learns.filter(l => l.level > p.level).slice(0, 3);
+    return `<div class="dsp-pr-detail" data-persona-id="${escapeHtml(p.id)}">
+        <div class="dsp-pr-head">
+            <div class="dsp-pr-title">
+                <span class="dsp-pr-name">${escapeHtml(p.name)}</span>
+                <span class="dsp-pr-arc">${escapeHtml(p.arcana || 'Arcana ?')}</span>
+            </div>
+            <div class="dsp-pr-level">
+                <button type="button" class="dsp-icon-btn" data-pr-level="-1" title="One level down"><i class="fa-solid fa-minus"></i></button>
+                <span>Lv <b>${p.level}</b></span>
+                <button type="button" class="dsp-icon-btn" data-pr-level="1" title="One level up (+3 stat points)"><i class="fa-solid fa-plus"></i></button>
+            </div>
+        </div>
+        <div class="dsp-pr-actions">
+            ${isActive ? '<span class="dsp-pr-eq">Equipped</span>' : (rec.wildCard ? '<button type="button" class="dsp-text-btn is-primary" data-action="pr-equip"><i class="fa-solid fa-masks-theater"></i> Equip</button>' : '')}
+            <span class="dsp-spacer"></span>
+            <button type="button" class="dsp-text-btn" data-action="pr-remove" title="Remove this Persona"><i class="fa-solid fa-trash"></i> Remove</button>
+        </div>
+        <div class="dsp-pr-stats">${P_STATS.map(id => `
+            <div class="dsp-pr-stat"><span>${P_LABELS[id]}</span><button type="button" class="dsp-pr-stat-val" data-pr-stat="${id}" title="Click to edit">${p.stats[id]}</button></div>`).join('')}
+        </div>
+        <div class="dsp-subhead"><i class="fa-solid fa-shield-halved"></i> Affinities <span>click to change</span></div>
+        ${affinityGridHtml(p)}
+        <div class="dsp-subhead"><i class="fa-solid fa-wand-sparkles"></i> Skills <span>${p.skills.length}/${MAX_SKILLS}</span></div>
+        <div class="dsp-pr-skills">
+            ${p.skills.map(sk => `<span class="dsp-pr-skill">${escapeHtml(sk)}<button type="button" class="dsp-pr-skill-del" data-pr-skill-del="${escapeHtml(sk)}" title="Forget ${escapeHtml(sk)}">×</button></span>`).join('')}
+            ${p.skills.length < MAX_SKILLS ? `<input type="text" class="dsp-pr-skill-in" data-pr-field="skill" value="${escapeHtml(personaForm.skill)}" placeholder="+ skill" maxlength="40" aria-label="New skill">` : ''}
+        </div>
+        ${next.length ? `<p class="dsp-section-hint">Next: ${next.map(l => `Lv ${l.level} ${escapeHtml(l.name)}`).join(' · ')}</p>` : ''}
+        ${p.desc ? `<p class="dsp-pr-desc">${escapeHtml(p.desc)}</p>` : ''}
+    </div>`;
+}
+
+function personaHtml() {
+    const rec = getPersonaRecord(selected.name, selected.isUser);
+    if (!rec.list.some(p => p.id === personaView.id)) personaView.id = rec.active;
+    const viewed = rec.list.find(p => p.id === personaView.id) || null;
+    const comp = getCompendium();
+    const info = getCompendiumInfo();
+    const known = personaForm.name.trim() ? findInCompendium(personaForm.name) : null;
+    const canAdd = rec.wildCard ? rec.list.length < MAX_STOCK : true;
+    const stock = rec.list.length > 1 || rec.wildCard ? `
+        <div class="dsp-pr-stock">${rec.list.map(p => `
+            <button type="button" class="dsp-pr-card${p.id === rec.active ? ' is-active' : ''}${viewed && p.id === viewed.id ? ' is-viewed' : ''}" data-persona="${escapeHtml(p.id)}">
+                <span class="dsp-pr-card-name">${escapeHtml(p.name)}</span>
+                <span class="dsp-pr-card-sub">${escapeHtml(p.arcana || '?')} · Lv ${p.level}</span>
+            </button>`).join('')}
+        </div>` : '';
+    return `<section class="dsp-section dsp-persona">
+        <label class="dsp-check dsp-pr-wild" title="A Wild Card holds up to ${MAX_STOCK} Personas and switches between them; anyone else has one, and a new one replaces it.">
+            <input type="checkbox" class="dsp-pr-wild-toggle"${rec.wildCard ? ' checked' : ''}> Wild Card${rec.wildCard ? ` <span class="dsp-scale">${rec.list.length}/${MAX_STOCK}</span>` : ''}</label>
+        ${stock}
+        ${viewed ? personaDetailHtml(viewed, rec) : `<div class="dsp-items-empty">${escapeHtml(selected.name)} has no Persona yet. The AI adds one when it awakens in the story — or add it here. Without one, the attributes are the character's own.</div>`}
+        ${canAdd ? `<div class="dsp-pr-add">
+            <div class="dsp-subhead"><i class="fa-solid fa-plus"></i> ${rec.wildCard || !rec.list.length ? 'Add a Persona' : 'Replace the Persona (evolution)'}</div>
+            <div class="dsp-item-form-row">
+                <input type="text" class="dsp-pr-in-name" data-pr-field="name" list="dsp-pr-compendium" value="${escapeHtml(personaForm.name)}" placeholder="Name${comp.length ? ' (from the Compendium or new)' : ''}" maxlength="40" aria-label="Persona name">
+                <datalist id="dsp-pr-compendium">${comp.map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(`${p.arcana} · Lv ${p.level}`)}</option>`).join('')}</datalist>
+                <input type="number" class="dsp-pr-in-level" data-pr-field="level" value="${escapeHtml(personaForm.level)}" placeholder="Lv" min="1" max="99" aria-label="Level" title="Level (empty: the Compendium's, or the character's)">
+            </div>
+            ${personaForm.name.trim() && !known ? `<div class="dsp-item-form-row">
+                <select data-pr-field="arcana" aria-label="Arcana"><option value="">Arcana…</option>${ARCANA.map(a => `<option${a === personaForm.arcana ? ' selected' : ''}>${a}</option>`).join('')}</select>
+                <select data-pr-field="focus" aria-label="Strongest stat"><option value="">Even stats</option>${P_STATS.map(id => `<option value="${id}"${id === personaForm.focus ? ' selected' : ''}>Leans on ${P_LABELS[id]}</option>`).join('')}</select>
+            </div>` : ''}
+            ${known ? `<p class="dsp-section-hint">From the Compendium: ${escapeHtml(known.arcana)} · Lv ${known.level}</p>` : (personaForm.name.trim() ? '<p class="dsp-section-hint">Not in the Compendium: the extension sets its stats from the level.</p>' : '')}
+            <div class="dsp-item-form-row">
+                <span class="dsp-item-error" role="alert">${escapeHtml(personaForm.error)}</span>
+                <button type="button" class="dsp-text-btn is-primary" data-action="pr-add">Add</button>
+            </div>
+        </div>` : ''}
+        <p class="dsp-section-hint">Compendium: ${info.at ? `${info.count} Persona${info.count === 1 ? '' : 's'} from ${info.books.length ? escapeHtml(info.books.join(', ')) : 'no active lorebook'}` : 'loading…'}
+            <button type="button" class="dsp-text-btn dsp-pr-refresh" data-action="pr-refresh" title="Read the lorebooks again"><i class="fa-solid fa-rotate"></i></button></p>
+    </section>`;
+}
+
+/** Inline number edit for a Persona stat (any Persona, equipped or not). */
+function startPersonaStatEdit(button) {
+    if (!selected) return;
+    const statId = button.getAttribute('data-pr-stat');
+    const id = button.closest('[data-persona-id]')?.getAttribute('data-persona-id');
+    const doc = button.ownerDocument;
+    const input = doc.createElement('input');
+    input.type = 'number';
+    input.min = '1';
+    input.max = '99';
+    input.step = '1';
+    input.value = button.textContent.trim();
+    input.className = 'dsp-value-input dsp-pr-stat-in';
+    button.replaceWith(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const who = { ...selected };
+    const finish = (commit) => {
+        if (done) return;
+        done = true;
+        if (commit && input.value !== '') setPersonaStat(who.name, who.isUser, id, statId, input.value);
+        input.blur();
+        renderAll();
+    };
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener('blur', () => finish(true));
+}
+
+function submitPersonaForm() {
+    if (!selected) return;
+    const name = personaForm.name.trim();
+    if (!name) { personaForm.error = 'Give it a name.'; renderAll(); return; }
+    const res = addPersona(selected.name, selected.isUser, {
+        name, arcana: personaForm.arcana, focus: personaForm.focus, level: personaForm.level ? Number(personaForm.level) : undefined,
+    });
+    if (res.error) { personaForm.error = res.error; renderAll(); return; }
+    Object.assign(personaForm, PERSONA_FORM);
+    personaView.id = res.persona.id;
+    renderAll();
+}
+
+function submitPersonaSkill() {
+    if (!selected || !personaView.id || !personaForm.skill.trim()) return;
+    addPersonaSkill(selected.name, selected.isUser, personaView.id, personaForm.skill.trim());
+    personaForm.skill = '';
+    renderAll();
 }
 
 // Where each circle of the social block sits (centre, in % of the block),
@@ -448,11 +608,15 @@ function buildHtml({ popout }) {
     // Which sections exist for this character, with a count where useful.
     const sections = [];
     if (states.length || attrs.length) sections.push({ id: 'stats' });
+    if (isPersonasEnabled()) sections.push({ id: 'persona', count: getPersonaRecord(selected.name, selected.isUser).list.length });
     if (selected.isUser && isSocialEnabled()) sections.push({ id: 'social' });
     if (isEquipmentEnabled()) sections.push({ id: 'equipment', count: getEquipment(selected.name, selected.isUser).length });
     if (isAbilitiesEnabled()) sections.push({ id: 'abilities', count: getAbilities(selected.name, selected.isUser).length });
     if (!selected.isUser && isMemoriesEnabled()) sections.push({ id: 'memories', count: getMemories(selected.name).length });
     const prog = levelsOn ? getProgress(selected.name, selected.isUser) : null;
+    // With a Persona equipped, its stats grow by themselves on level-up: no points to assign.
+    const activePersona = isPersonasEnabled() ? getActivePersona(selected.name, selected.isUser) : null;
+    const pointsProg = activePersona ? null : prog;
     if (levelsOn) sections.push({ id: 'xp', dot: prog.points > 0 });
     let section = getSection();
     if (!sections.some(x => x.id === section)) section = sections[0]?.id || 'stats';
@@ -465,7 +629,7 @@ function buildHtml({ popout }) {
                 const def = SECTIONS.find(x => x.id === sec.id);
                 const on = sec.id === section;
                 const badge = sec.dot ? '<span class="dsp-sec-dot is-up" title="Points to assign"></span>'
-                    : sec.id === 'stats' && prog?.points ? '<span class="dsp-sec-dot is-up" title="Points to assign"></span>'
+                    : sec.id === 'stats' && pointsProg?.points ? '<span class="dsp-sec-dot is-up" title="Points to assign"></span>'
                     : sec.id === 'stats' && boosted ? '<span class="dsp-sec-dot" title="Bonuses in effect"></span>'
                     : (sec.count ? `<span class="dsp-sec-count">${sec.count}</span>` : '');
                 return `<button type="button" role="tab" class="dsp-sec${on ? ' is-active' : ''}" aria-selected="${on}" data-section="${sec.id}" title="${def.label}">
@@ -476,12 +640,15 @@ function buildHtml({ popout }) {
     let content = '';
     if (section === 'stats') {
         content = `<section class="dsp-section">
-            ${prog && prog.points ? `<div class="dsp-levelup"><i class="fa-solid fa-arrow-up"></i><span>Level up! <b>${prog.points}</b> point${prog.points === 1 ? '' : 's'} to assign — press + on an attribute.</span></div>` : ''}
-            ${statBlockHtml(states, attrs, cur, eff, prog)}
+            ${pointsProg && pointsProg.points ? `<div class="dsp-levelup"><i class="fa-solid fa-arrow-up"></i><span>Level up! <b>${pointsProg.points}</b> point${pointsProg.points === 1 ? '' : 's'} to assign — press + on an attribute.</span></div>` : ''}
+            ${activePersona ? personaBannerHtml(activePersona) : ''}
+            ${statBlockHtml(states, attrs, cur, eff, pointsProg)}
             ${boosted ? '<p class="dsp-section-hint">+N: bonuses from equipped items, conditions and passive abilities</p>' : ''}
         </section>`;
     } else if (section === 'social') {
         content = socialHtml();
+    } else if (section === 'persona') {
+        content = personaHtml();
     } else if (section === 'equipment') {
         content = equipmentHtml();
     } else if (section === 'abilities') {
@@ -512,7 +679,7 @@ function buildHtml({ popout }) {
             ${isStatGenerationPending(selected.name, selected.isUser) ? `
             <div class="dsp-pending"><i class="fa-solid fa-wand-magic-sparkles"></i>
                 The AI will generate ${escapeHtml(selected.name)}'s stats to fit who they are in their next reply. Until then these are placeholders.</div>` : ''}
-            ${prog && prog.points && section !== 'stats' ? `<button type="button" class="dsp-levelup is-link" data-section-go="stats"><i class="fa-solid fa-arrow-up"></i><span>Level up! <b>${prog.points}</b> point${prog.points === 1 ? '' : 's'} to assign</span></button>` : ''}
+            ${pointsProg && pointsProg.points && section !== 'stats' ? `<button type="button" class="dsp-levelup is-link" data-section-go="stats"><i class="fa-solid fa-arrow-up"></i><span>Level up! <b>${pointsProg.points}</b> point${pointsProg.points === 1 ? '' : 's'} to assign</span></button>` : ''}
             ${isConditionsEnabled() ? conditionsHtml() : ''}
             ${sectionBar}
             <div class="dsp-section-body" data-section="${section}">${content}</div>
@@ -1226,6 +1393,8 @@ function bindRootListeners(root) {
         if (tab) {
             selected = { name: tab.getAttribute('data-name'), isUser: tab.getAttribute('data-user') === '1' };
             resetForm();
+            personaView.id = null;
+            Object.assign(personaForm, PERSONA_FORM);
             renderAll();
             return;
         }
@@ -1298,6 +1467,20 @@ function bindRootListeners(root) {
             removeLogEntry(selected.name, selected.isUser, logRow.getAttribute('data-id'));
             return;
         }
+        const prCard = e.target.closest('.dsp-pr-card');
+        if (prCard) { personaView.id = prCard.getAttribute('data-persona'); renderAll(); return; }
+        const prStat = e.target.closest('button.dsp-pr-stat-val');
+        if (prStat) { startPersonaStatEdit(prStat); return; }
+        const prAff = e.target.closest('[data-pr-aff]');
+        if (prAff && selected && personaView.id) { cyclePersonaAffinity(selected.name, selected.isUser, personaView.id, prAff.getAttribute('data-pr-aff')); return; }
+        const prLvl = e.target.closest('[data-pr-level]');
+        if (prLvl && selected && personaView.id) {
+            const p = getPersonaRecord(selected.name, selected.isUser).list.find(x => x.id === personaView.id);
+            if (p) setPersonaLevel(selected.name, selected.isUser, p.id, p.level + Number(prLvl.getAttribute('data-pr-level')));
+            return;
+        }
+        const prSkillDel = e.target.closest('[data-pr-skill-del]');
+        if (prSkillDel && selected && personaView.id) { removePersonaSkill(selected.name, selected.isUser, personaView.id, prSkillDel.getAttribute('data-pr-skill-del')); return; }
         const socBtn = e.target.closest('button.dsp-soc-rank');
         if (socBtn) { startSocialEdit(socBtn); return; }
         const progEdit = e.target.closest('button.dsp-value[data-edit], button.dsp-chip[data-edit]');
@@ -1317,6 +1500,14 @@ function bindRootListeners(root) {
         if (action === 'item-cancel') { resetForm(); renderAll(); return; }
         if (action === 'item-add') { submitItemForm(); return; }
         if (action === 'xp-add') { submitXpForm(); return; }
+        if (action === 'pr-add') { submitPersonaForm(); return; }
+        if (action === 'pr-refresh') { refreshCompendium({ force: true }).then(() => renderAll()).catch(() => {}); return; }
+        if (action === 'pr-equip' && selected && personaView.id) { equipPersona(selected.name, selected.isUser, personaView.id); return; }
+        if (action === 'pr-remove' && selected && personaView.id) {
+            const p = getPersonaRecord(selected.name, selected.isUser).list.find(x => x.id === personaView.id);
+            if (p && (root.ownerDocument.defaultView || window).confirm(`Remove ${p.name}?`)) { removePersona(selected.name, selected.isUser, p.id); personaView.id = null; }
+            return;
+        }
         if (action === 'check-toggle') { checkForm.open = !checkForm.open; if (!checkForm.open) checkForm.last = null; renderAll(); return; }
         if (action === 'check-roll' && selected) {
             // Some browsers do not focus a button on click: leave the text field so the repaint is not held back.
@@ -1362,6 +1553,15 @@ function bindRootListeners(root) {
     });
     // Add-item form fields live in itemForm so a repaint keeps them.
     root.addEventListener('input', (e) => {
+        const prField = e.target.getAttribute && e.target.getAttribute('data-pr-field');
+        if (prField) {
+            const wasKnown = !!findInCompendium(personaForm.name);
+            personaForm[prField] = e.target.value;
+            personaForm.error = '';
+            // Show or hide the Arcana / stat pickers as the name matches the Compendium or not.
+            if (prField === 'name' && (wasKnown !== !!findInCompendium(personaForm.name) || !personaForm.name.trim() !== !e.target.value.trim())) pendingRender = true;
+            return;
+        }
         const xpField = e.target.getAttribute && e.target.getAttribute('data-xp-field');
         if (xpField) { xpForm[xpField] = e.target.value; return; }
         const chk = e.target.getAttribute && e.target.getAttribute('data-chk');
@@ -1386,8 +1586,19 @@ function bindRootListeners(root) {
         }
         if (e.target.classList && e.target.classList.contains('dsp-item-in-cost')) { itemForm.cost = e.target.value; }
         if (e.target.classList && e.target.classList.contains('dsp-party-toggle') && selected && !selected.isUser) setPartyMember(selected.name, e.target.checked);
+        if (e.target.classList && e.target.classList.contains('dsp-pr-wild-toggle') && selected) {
+            const rec = getPersonaRecord(selected.name, selected.isUser);
+            if (e.target.checked || rec.list.length <= 1 || (root.ownerDocument.defaultView || window).confirm('Without the Wild Card only the equipped Persona is kept. Continue?')) setWildCard(selected.name, selected.isUser, e.target.checked);
+            else e.target.checked = true;
+            renderAll();
+        }
+        const prSel = e.target.getAttribute && e.target.getAttribute('data-pr-field');
+        if (prSel && e.target.tagName === 'SELECT') personaForm[prSel] = e.target.value;
+        if (prSel === 'name') renderAll();
     });
     root.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && e.target.matches && e.target.matches('.dsp-pr-skill-in')) { e.preventDefault(); submitPersonaSkill(); return; }
+        if (e.key === 'Enter' && e.target.closest && e.target.closest('.dsp-pr-add')) { e.preventDefault(); submitPersonaForm(); return; }
         if (e.key === 'Enter' && e.target.closest && e.target.closest('.dsp-xp-add')) {
             e.preventDefault();
             submitXpForm();
@@ -1406,6 +1617,7 @@ function bindGlobalListeners() {
     if (listenersBound) return;
     listenersBound = true;
     window.addEventListener(MEMORIES_CHANGED_EVENT, () => requestAnimationFrame(() => renderAll()));
+    window.addEventListener(COMPENDIUM_CHANGED_EVENT, () => requestAnimationFrame(() => renderAll()));
     window.addEventListener(STATS_CHANGED_EVENT, () => {
         // Collapse bursts (an AI update changes many values) into one paint.
         requestAnimationFrame(() => renderAll());

@@ -39,6 +39,27 @@ import { getManaTiers, setManaTier } from '../features/characterAbilities.js';
 import { setMoneyEnabled, getCurrency, setCurrency } from '../features/characterMoney.js';
 import { setAffinityEnabled } from '../features/characterAffinity.js';
 import { setSocialEnabled } from '../features/characterSocial.js';
+import { setPersonasEnabled } from '../features/characterPersonas.js';
+import { refreshCompendium, getCompendiumInfo, COMPENDIUM_CHANGED_EVENT } from '../features/personaCompendium.js';
+import { getAllWorldNames } from '../lorebook/lorebookAPI.js';
+import { saveSettings as savePersonaSettings } from '../../core/persistence.js';
+
+/** Fills the Compendium lorebook list and shows how many Personas it holds. */
+function renderCompendiumSetting() {
+    const sel = document.getElementById('rpg-persona-compendium');
+    if (sel) {
+        const cur = extensionSettings.personaCompendiumBook || '';
+        const names = [...getAllWorldNames()];
+        if (cur && !names.includes(cur)) names.unshift(cur);
+        sel.innerHTML = '<option value="">Active lorebooks</option>' + names.map(n => `<option value="${String(n).replace(/"/g, '&quot;')}">${String(n).replace(/</g, '&lt;')}</option>`).join('');
+        sel.value = cur;
+    }
+    const count = document.getElementById('rpg-persona-compendium-count');
+    if (count) {
+        const info = getCompendiumInfo();
+        count.textContent = info.at ? `${info.count} Persona${info.count === 1 ? '' : 's'} found.` : '';
+    }
+}
 import { setConsequencesEnabled } from '../features/characterConsequences.js';
 import { setCombatEnabled, setCombatNarration } from '../features/combat.js';
 import { setDungeonEnabled, setDungeonNarration } from '../features/dungeon.js';
@@ -119,6 +140,11 @@ export function initStatsSettings() {
     flag('rpg-money-enabled', 'characterMoneyEnabled');
     flag('rpg-affinity-enabled', 'characterAffinityEnabled');
     flag('rpg-social-enabled', 'characterSocialEnabled');
+    flag('rpg-personas-enabled', 'personasEnabled');
+    renderCompendiumSetting();
+    document.getElementById('rpg-persona-compendium')?.addEventListener('focus', renderCompendiumSetting);
+    window.addEventListener(COMPENDIUM_CHANGED_EVENT, renderCompendiumSetting);
+    refreshCompendium().catch(() => {});
     flag('rpg-consequences-enabled', 'autoConsequences');
     flag('rpg-checks-enabled', 'checksEnabled');
     flag('rpg-combat-enabled', 'combatEnabled');
@@ -151,6 +177,12 @@ export function initStatsSettings() {
         else if (el.id === 'rpg-money-enabled') setMoneyEnabled(el.checked);
         else if (el.id === 'rpg-affinity-enabled') setAffinityEnabled(el.checked);
         else if (el.id === 'rpg-social-enabled') setSocialEnabled(el.checked);
+        else if (el.id === 'rpg-personas-enabled') setPersonasEnabled(el.checked);
+        else if (el.id === 'rpg-persona-compendium') {
+            extensionSettings.personaCompendiumBook = el.value || '';
+            savePersonaSettings();
+            refreshCompendium({ force: true }).catch(() => {});
+        }
         else if (el.id === 'rpg-consequences-enabled') setConsequencesEnabled(el.checked);
         else if (el.id === 'rpg-checks-enabled') setChecksEnabled(el.checked);
         else if (el.id === 'rpg-combat-enabled') setCombatEnabled(el.checked);

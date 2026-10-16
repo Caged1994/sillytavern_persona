@@ -117,10 +117,22 @@ function readByKey(key) {
     return normalizeRecord(k !== undefined ? b[k] : null);
 }
 
+// Whatever follows a character's level (the equipped Persona, in
+// characterPersonas.js) registers here: fn(key, fromLevel, toLevel).
+let levelHook = null;
+export function setLevelHook(fn) {
+    levelHook = typeof fn === 'function' ? fn : null;
+}
+
 function writeByKey(key, record) {
     const b = bucket(true);
     const k = findKey(b, key);
-    b[k !== undefined ? k : key] = normalizeRecord(record);
+    const before = normalizeRecord(k !== undefined ? b[k] : null).level;
+    const next = normalizeRecord(record);
+    b[k !== undefined ? k : key] = next;
+    if (levelHook && next.level !== before) {
+        try { levelHook(key, before, next.level); } catch (e) { console.warn('[Dooms Tracker] XP: level hook failed', e); }
+    }
 }
 
 function storedRaw(key) {

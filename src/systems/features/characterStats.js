@@ -63,6 +63,17 @@ export function setStatValuesHook(fn) {
 function afterValuesChanged() {
     try { if (valuesHook) valuesHook(); } catch (e) { console.warn('[Dooms Tracker] Stats: values hook failed', e); }
 }
+// The equipped Persona supplies the built-in attributes (St, Ma, En, Ag,
+// Lu) of whoever has one: characterPersonas.js registers here.
+//   get(name, isUser) -> { st, ma, en, ag, lu } | null
+//   set(name, isUser, statId, value) -> true when the Persona took the value
+let attributeSource = null;
+export function setAttributeSource(src) {
+    attributeSource = src && typeof src.get === 'function' ? src : null;
+}
+function personaAttributes(name, isUser) {
+    try { return attributeSource ? attributeSource.get(name, isUser) : null; } catch (e) { return null; }
+}
 function modifiersFor(name, isUser) {
     try { return (modifierProvider && modifierProvider(name, isUser)) || {}; } catch (e) { return {}; }
 }
@@ -337,7 +348,19 @@ function storedValues(name, isUser) {
 /** { statId: value } for the open chat, base filling the gaps. */
 export function getCurrentStatValues(name, isUser = false, stats = null) {
     const list = stats || getStatSheet(name, isUser);
-    return resolveCurrentValues(list, storedValues(name, isUser));
+    const out = resolveCurrentValues(list, storedValues(name, isUser));
+    const fromPersona = personaAttributes(name, isUser);
+    if (fromPersona) {
+        for (const s of list) {
+            if (s.kind === 'attribute' && s.builtin && typeof fromPersona[s.id] === 'number') out[s.id] = clampStatValue(s, fromPersona[s.id]);
+        }
+    }
+    return out;
+}
+
+/** Whether the character's St/Ma/En/Ag/Lu come from an equipped Persona. */
+export function hasPersonaAttributes(name, isUser = false) {
+    return !!personaAttributes(name, isUser);
 }
 
 /** Sets one current value in the open chat. Returns the stored value. */
@@ -346,6 +369,10 @@ export function setCurrentStatValue(name, isUser, statId, value, { persist = tru
     if (!stat) return null;
     const v = clampStatValue(stat, value);
     if (v === null) return null;
+    // A Persona's stat is edited on the Persona.
+    if (stat.kind === 'attribute' && stat.builtin && personaAttributes(name, isUser)) {
+        try { if (attributeSource.set && attributeSource.set(name, isUser, statId, v)) return v; } catch (e) { /* fall through */ }
+    }
     const bucket = valueBucket(true);
     if (!bucket) return null;
     const key = statKey(name, isUser);

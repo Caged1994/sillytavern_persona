@@ -12,10 +12,28 @@ Persona Stats is a modified version of [Better Stats](https://github.com/Caged19
 - Optional bars (satiety, energy, hygiene, morale) are **off by default**; the user can switch them on in the Stats panel.
 - The Stats panel shows HP, SP and the attributes together as slanted bars in the style of the Persona 5 status screen ("MAX" on a full bar).
 - **Social stats** (Persona 5): Knowledge, Guts, Proficiency, Kindness and Charm for the player's character, with ranks 1–5 and their titles, drawn as overlapping circles in the Social tab. The AI adds 1–5 points when the character does something that builds a stat; points never go down. Can be switched off in Settings.
+- **Personas**: as in the games, St/Ma/En/Ag/Lu come from the equipped Persona. Each Persona has an Arcana, a level, the five stats, an affinity to each element (Phys, Gun, Fire, Ice, Elec, Wind, Psy, Nuke, Bless, Curse: Weak / Resist / Null / Drain / Repel) and up to 8 skills. The player's character is a Wild Card (up to 12 Personas, switch any time); others have one, and a new one replaces it. The equipped Persona levels up with its owner (+3 stat points a level, spread like the stats it has) and learns the skills of its list. The AI can awaken new Personas; the extension always sets the numbers. Owned Personas live in the chat; the Persona tab of the Stats panel shows and edits them.
 - Combat rebalanced for the 1–99 scale: HP, damage and healing grow with level, hit/flee chances compare Agility as a ratio, Luck raises critical hits; a fight between equals takes about five hits at any level. Condition maluses and the AI's guidance for item/condition effects scaled up to match.
 - Combat, dungeon, checks, effects and conditions remapped to the new attributes.
 - Removed: Bunny Mo integration, the human-scale (average/peak) tiers, the Character Sheet feature and the sphere grid.
 - Kept: weather, Lore Library, portrait bar, scene headers, chat bubbles, themes.
+
+## Persona Compendium (lorebook)
+
+The catalogue of Personas is a lorebook: any entry whose title (or first line) starts with `Persona:` is read as one. Choose the lorebook in Settings → RPG & Stats → Persona Compendium, or leave "Active lorebooks". One field per line, in any order:
+
+```
+Persona: Arsène
+Arcana: Fool
+Level: 1
+St 2 · Ma 2 · En 2 · Ag 3 · Lu 1
+Phys - · Gun - · Fire - · Ice Wk · Elec - · Wind - · Psy - · Nuke - · Bless Wk · Curse Rs
+Skills: Eiha, Cleave
+Learns: Lv2 Rakukaja, Lv4 Sukunda
+Description: The gentleman thief of the Fool Arcana.
+```
+
+Affinities accept `Wk`/`Weak`, `Rs`/`Resist`, `Nu`/`Null`, `Dr`/`Drain`, `Rp`/`Repel` and `-` for normal. An entry without a stats line gets an even spread for its level. When a character obtains a Persona whose name is in the Compendium, a copy is made for that chat; levelling it up never changes the lorebook.
 
 ## Installation
 

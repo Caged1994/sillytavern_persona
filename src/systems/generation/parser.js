@@ -93,8 +93,8 @@ function debugLog(message, data = null) {
     }
 }
 /** Keys of the unified tracker object that are not trackers of their own. */
-const EXTRA_KEYS = ['stats', 'memories', 'equipment', 'inventory', 'conditions', 'abilities', 'skills', 'spells', 'xp', 'experience', 'levels', 'money', 'currency', 'affinity', 'social', 'check'];
-const EXTRA_RESULT_KEYS = ['stats', 'memories', 'equipment', 'conditions', 'abilities', 'xp', 'levels', 'money', 'currency', 'affinity', 'social', 'check'];
+const EXTRA_KEYS = ['stats', 'memories', 'equipment', 'inventory', 'conditions', 'abilities', 'skills', 'spells', 'xp', 'experience', 'levels', 'money', 'currency', 'affinity', 'social', 'personas', 'persona', 'check'];
+const EXTRA_RESULT_KEYS = ['stats', 'memories', 'equipment', 'conditions', 'abilities', 'xp', 'levels', 'money', 'currency', 'affinity', 'social', 'personas', 'check'];
 
 /**
  * Copies the Better Stats keys of a parsed tracker object into `result` as
@@ -117,6 +117,7 @@ function extractExtraKeys(parsed, result) {
         currency: parsed.currency,
         affinity: parsed.affinity,
         social: parsed.social,
+        personas: pick('personas', 'persona'),
         check: parsed.check,
     };
     for (const key of EXTRA_RESULT_KEYS) {
@@ -167,6 +168,8 @@ export function parseResponse(responseText) {
         affinity: null,
         // Social stats (characterSocial.js): points the player gained.
         social: null,
+        // Personas (characterPersonas.js): awakened / obtained / equipped.
+        personas: null,
         // Checks (characterChecks.js): the AI's suggested "check".
         check: null
     };

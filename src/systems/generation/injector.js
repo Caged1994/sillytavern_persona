@@ -25,6 +25,7 @@ import { revertAIProgressForReplacedMessage } from '../features/characterProgres
 import { revertAIMoneyForReplacedMessage } from '../features/characterMoney.js';
 import { revertAIAffinityForReplacedMessage } from '../features/characterAffinity.js';
 import { revertAISocialForReplacedMessage } from '../features/characterSocial.js';
+import { revertAIPersonasForReplacedMessage } from '../features/characterPersonas.js';
 import { revertAIChecksForReplacedMessage } from '../features/characterChecks.js';
 import { getPendingTwist, isPendingTwistAKnife, getPendingKnifeCharacter, clearPendingTwist, buildDoomTensionInstruction, DOOM_TWIST_SLOT, DOOM_TENSION_SLOT } from './doomCounter.js';
 import {
@@ -686,6 +687,7 @@ export async function onGenerationStarted(type, data, dryRun) {
             revertAIMoneyForReplacedMessage(last);
             revertAIAffinityForReplacedMessage(last);
             revertAISocialForReplacedMessage(last);
+            revertAIPersonasForReplacedMessage(last);
             revertAIChecksForReplacedMessage(last);
         } catch (e) { /* best-effort */ }
     }

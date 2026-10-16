@@ -23,6 +23,7 @@ import { buildProgressPromptForGeneration, buildProgressContextSummary } from '.
 import { buildMoneyPromptForGeneration, buildMoneyContextSummary } from '../features/characterMoney.js';
 import { buildAffinityPromptForGeneration, buildAffinityContextSummary } from '../features/characterAffinity.js';
 import { buildSocialPromptForGeneration, buildSocialContextSummary } from '../features/characterSocial.js';
+import { buildPersonaPromptForGeneration, buildPersonaContextSummary } from '../features/characterPersonas.js';
 import { buildChecksPromptForGeneration, buildChecksContextSummary } from '../features/characterChecks.js';
 // Registers the attribute-modifier provider the stats prompt uses.
 import '../features/characterModifiers.js';
@@ -353,6 +354,9 @@ export function generateTrackerInstructions(includeHtmlPrompt = true, includeCon
         // Social stats (Persona 5).
         const socialSection = buildSocialPromptForGeneration({ compact });
         if (socialSection) instructions += '\n\n' + socialSection;
+        // Personas: who has which, and how to awaken / switch.
+        const personaSection = buildPersonaPromptForGeneration({ compact });
+        if (personaSection) instructions += '\n\n' + personaSection;
         // Checks: when to ask for a roll, and the outcome of the last one.
         const checksSection = buildChecksPromptForGeneration({ compact });
         if (checksSection) instructions += '\n\n' + checksSection;
@@ -381,8 +385,9 @@ export function generateTrackerInstructions(includeHtmlPrompt = true, includeCon
         const moneySection = buildMoneyPromptForGeneration({ compact, standalone: !earlier });
         const affinitySection = buildAffinityPromptForGeneration({ compact, standalone: !earlier && !moneySection });
         const socialSection = buildSocialPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection });
-        const checksSection = buildChecksPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection });
-        const all = [statsSection, memoriesSection, equipmentSection, conditionsSection, abilitiesSection, progressSection, moneySection, affinitySection, socialSection, checksSection].filter(Boolean);
+        const personaSection = buildPersonaPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection });
+        const checksSection = buildChecksPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection && !personaSection });
+        const all = [statsSection, memoriesSection, equipmentSection, conditionsSection, abilitiesSection, progressSection, moneySection, affinitySection, socialSection, personaSection, checksSection].filter(Boolean);
         if (all.length) {
             instructions += '\n' + all.join('\n\n');
             if (includeContinuation) {
@@ -851,6 +856,8 @@ export function generateContextualSummary() {
         if (affinity) summary += affinity + '\n';
         const social = buildSocialContextSummary();
         if (social) summary += social + '\n';
+        const personas = buildPersonaContextSummary();
+        if (personas) summary += personas + '\n';
         const checks = buildChecksContextSummary();
         if (checks) summary += checks + '\n';
     } catch (e) {

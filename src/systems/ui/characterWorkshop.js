@@ -88,6 +88,7 @@ import { deleteConditionsEverywhere } from '../features/characterConditions.js';
 import { deleteProgressEverywhere, requestLevelGeneration } from '../features/characterProgress.js';
 import { deleteMoney } from '../features/characterMoney.js';
 import { deleteAffinity } from '../features/characterAffinity.js';
+import { deletePersonasEverywhere } from '../features/characterPersonas.js';
 import { deleteAbilitiesEverywhere } from '../features/characterAbilities.js';
 
 /**
@@ -3325,6 +3326,7 @@ function deleteCharacter(name) {
     deleteProgressEverywhere(name, false);
     deleteMoney(name, false);
     deleteAffinity(name);
+    deletePersonasEverywhere(name, false);
     deleteAbilitiesEverywhere(name, false);
     // When perChatCharacterTracking is on, knownCharacters/characterColors
     // live on chat_metadata. Without wiping those, the Roster grid (which

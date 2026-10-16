@@ -37,6 +37,7 @@ import { applyAIProgress } from '../features/characterProgress.js';
 import { applyAIMoney, applyAICurrency } from '../features/characterMoney.js';
 import { applyAIAffinity } from '../features/characterAffinity.js';
 import { applyAISocial } from '../features/characterSocial.js';
+import { applyAIPersonas } from '../features/characterPersonas.js';
 import { settleChecks } from '../features/characterChecks.js';
 import { renderThoughts, updateChatThoughts } from '../rendering/thoughts.js';
 import { renderQuests } from '../rendering/quests.js';
@@ -375,6 +376,10 @@ export async function updateRPGData(renderInfoBox, renderThoughts) {
                 try { if (parsedData.affinity) applyAIAffinity(parsedData.affinity, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Affinity: applying AI update failed', e); }
             }
             // Social stats (Persona 5): points the player's character gained.
+            // Personas: before stats, so new attributes are in place.
+            if (parsedData.personas) {
+                try { applyAIPersonas(parsedData.personas, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Personas: applying AI update failed', e); }
+            }
             if (parsedData.social) {
                 try { applyAISocial(parsedData.social, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Social: applying AI update failed', e); }
             }

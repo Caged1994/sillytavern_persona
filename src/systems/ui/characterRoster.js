@@ -50,6 +50,7 @@ import { deleteConditionsEverywhere } from '../features/characterConditions.js';
 import { deleteProgressEverywhere } from '../features/characterProgress.js';
 import { deleteMoney } from '../features/characterMoney.js';
 import { deleteAffinity } from '../features/characterAffinity.js';
+import { deletePersonasEverywhere } from '../features/characterPersonas.js';
 import { deleteAbilitiesEverywhere } from '../features/characterAbilities.js';
 
 let contextMenuTarget = ''; // character name currently under right-click
@@ -1140,6 +1141,7 @@ function purgeCharacter(name) {
     deleteProgressEverywhere(name, false);
     deleteMoney(name, false);
     deleteAffinity(name);
+    deletePersonasEverywhere(name, false);
     deleteAbilitiesEverywhere(name, false);
     // When perChatCharacterTracking is on, knownCharacters/characterColors
     // live on chat_metadata, not extensionSettings. Wipe those too or the

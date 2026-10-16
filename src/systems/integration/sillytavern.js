@@ -45,6 +45,7 @@ import { applyAIProgress, revertAIProgressForReplacedMessage } from '../features
 import { applyAIMoney, applyAICurrency, revertAIMoneyForReplacedMessage } from '../features/characterMoney.js';
 import { applyAIAffinity, revertAIAffinityForReplacedMessage } from '../features/characterAffinity.js';
 import { applyAISocial } from '../features/characterSocial.js';
+import { applyAIPersonas } from '../features/characterPersonas.js';
 import { settleChecks, revertAIChecksForReplacedMessage } from '../features/characterChecks.js';
 // Expression classification
 import { classifyAllCharacterExpressions, classifyActiveUserExpression, isExpressionSpritesModeEnabled } from './expressionSync.js';
@@ -236,6 +237,10 @@ export async function onMessageReceived(data) {
                 try { if (parsedData.affinity) applyAIAffinity(parsedData.affinity, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Affinity: applying AI update failed', e); }
             }
             // Social stats (Persona 5): points the player's character gained.
+            // Personas: before stats, so new attributes are in place.
+            if (parsedData.personas && isAwaitingNewMessage) {
+                try { applyAIPersonas(parsedData.personas, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Personas: applying AI update failed', e); }
+            }
             if (parsedData.social && isAwaitingNewMessage) {
                 try { applyAISocial(parsedData.social, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Social: applying AI update failed', e); }
             }

@@ -31,6 +31,7 @@ export const CHAT_ROOTS = [
     'characterProgress',
     'characterAffinity',
     'characterSocial',
+    'characterPersonas',
     'characterMoney',
 ];
 

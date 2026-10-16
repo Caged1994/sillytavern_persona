@@ -1513,3 +1513,210 @@ input.dsp-xp-big { width: 3em; font-size: 20px; text-align: center; }
 }
 .dsp-soc-row-bar span { display: block; height: 100%; transition: width 0.4s ease; }
 .dsp-soc-row-pts { color: var(--dsp-muted); font-variant-numeric: tabular-nums; }
+
+/* ══ Personas ═══════════════════════════════════════════════════════════ */
+/* The equipped Persona over the stat bars: a black and red P5 tag. */
+.dsp-pr-banner {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    width: 100%;
+    margin: 0 0 8px;
+    padding: 6px 14px 7px;
+    font: inherit;
+    text-align: left;
+    color: #fff;
+    cursor: pointer;
+    border: none;
+    background: linear-gradient(100deg, #05060c 0 72%, #d7192e 72% 100%);
+    clip-path: polygon(0 8%, 100% 0, 98% 100%, 1% 92%);
+}
+.dsp-pr-banner:hover { filter: brightness(1.15); }
+.dsp-pr-banner-label {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #d7192e;
+}
+.dsp-pr-banner-name {
+    font-family: "Arial Black", "Arial Bold", Impact, sans-serif;
+    font-size: 20px;
+    font-style: italic;
+    letter-spacing: -0.03em;
+}
+.dsp-pr-banner-arc { font-size: 12px; font-style: italic; color: rgba(255, 255, 255, 0.75); }
+.dsp-pr-banner-lv {
+    margin-left: auto;
+    font-family: "Arial Black", "Arial Bold", Impact, sans-serif;
+    font-size: 16px;
+    font-style: italic;
+    color: #fff;
+}
+
+.dsp-pr-wild { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.dsp-pr-stock {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    gap: 6px;
+    margin-bottom: 10px;
+}
+.dsp-pr-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 7px 9px;
+    font: inherit;
+    text-align: left;
+    color: var(--dsp-text);
+    cursor: pointer;
+    border: 1px solid var(--dsp-border);
+    border-radius: 8px;
+    background: var(--dsp-card);
+}
+.dsp-pr-card:hover { background: var(--dsp-card-hover); }
+.dsp-pr-card.is-viewed { border-color: color-mix(in srgb, var(--dsp-accent) 70%, transparent); }
+.dsp-pr-card.is-active::after {
+    content: "E";
+    position: absolute;
+    top: 5px;
+    right: 6px;
+    width: 16px;
+    height: 16px;
+    font-size: 10px;
+    font-weight: 900;
+    line-height: 16px;
+    text-align: center;
+    color: #fff;
+    border-radius: 50%;
+    background: #d7192e;
+}
+.dsp-pr-card-name { font-weight: 800; font-style: italic; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 16px; }
+.dsp-pr-card-sub { font-size: 11px; color: var(--dsp-muted); }
+
+.dsp-pr-detail {
+    padding: 10px;
+    border: 1px solid var(--dsp-border);
+    border-radius: 10px;
+    background: linear-gradient(160deg, rgba(23, 57, 214, 0.18), rgba(255, 255, 255, 0.02));
+}
+.dsp-pr-head { display: flex; align-items: center; gap: 10px; }
+.dsp-pr-title { display: flex; flex-direction: column; min-width: 0; }
+.dsp-pr-name {
+    font-family: "Arial Black", "Arial Bold", Impact, sans-serif;
+    font-size: 24px;
+    font-style: italic;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    color: #fff;
+    paint-order: stroke fill;
+    -webkit-text-stroke: 3px #05060c;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.dsp-pr-arc {
+    align-self: flex-start;
+    margin-top: 3px;
+    padding: 1px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    background: #05060c;
+    transform: skewX(-12deg);
+}
+.dsp-pr-level { margin-left: auto; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.dsp-pr-level b { font-size: 18px; color: #fff23a; font-style: italic; }
+.dsp-pr-actions { display: flex; align-items: center; gap: 6px; margin: 8px 0; }
+.dsp-pr-eq {
+    padding: 2px 8px;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #fff;
+    background: #d7192e;
+    border-radius: 4px;
+}
+.dsp-pr-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; margin-bottom: 4px; }
+.dsp-pr-stat {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 4px 0 2px;
+    border-radius: 6px;
+    background: rgba(5, 6, 12, 0.45);
+}
+.dsp-pr-stat > span { font-size: 11px; font-weight: 800; font-style: italic; color: #f4f8ff; }
+.dsp-pr-stat-val {
+    font-family: "Arial Black", "Arial Bold", Impact, sans-serif;
+    font-size: 18px;
+    font-style: italic;
+    color: #fff23a;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+}
+.dsp-pr-stat .dsp-value-input { width: 3em; font-size: 15px; }
+
+.dsp-pr-aff { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; }
+.dsp-pr-aff-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    padding: 4px 0;
+    font: inherit;
+    color: var(--dsp-text);
+    cursor: pointer;
+    border: 1px solid var(--dsp-border);
+    border-radius: 6px;
+    background: var(--dsp-card);
+}
+.dsp-pr-aff-cell:hover { background: var(--dsp-card-hover); }
+.dsp-pr-aff-icon { font-size: 14px; line-height: 1; }
+.dsp-pr-aff-el { font-size: 10px; color: var(--dsp-muted); }
+.dsp-pr-aff-val { font-size: 12px; font-weight: 900; font-style: italic; color: var(--dsp-muted); }
+.dsp-pr-aff-cell.is-wk { border-color: #e5484d; background: rgba(229, 72, 77, 0.16); }
+.dsp-pr-aff-cell.is-wk .dsp-pr-aff-val { color: #ff8a8d; }
+.dsp-pr-aff-cell.is-rs { border-color: #4c8dff; background: rgba(76, 141, 255, 0.16); }
+.dsp-pr-aff-cell.is-rs .dsp-pr-aff-val { color: #8fb6ff; }
+.dsp-pr-aff-cell.is-nu { border-color: #a8a8b3; background: rgba(168, 168, 179, 0.16); }
+.dsp-pr-aff-cell.is-nu .dsp-pr-aff-val { color: #e6e6ee; }
+.dsp-pr-aff-cell.is-dr { border-color: #2fbf71; background: rgba(47, 191, 113, 0.16); }
+.dsp-pr-aff-cell.is-dr .dsp-pr-aff-val { color: #7ee2a8; }
+.dsp-pr-aff-cell.is-rp { border-color: #f5b301; background: rgba(245, 179, 1, 0.16); }
+.dsp-pr-aff-cell.is-rp .dsp-pr-aff-val { color: #ffd45c; }
+
+.dsp-pr-skills { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.dsp-pr-skill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 4px 2px 9px;
+    font-size: 12px;
+    font-weight: 700;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.08);
+}
+.dsp-pr-skill-del {
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    font-size: 12px;
+    line-height: 1;
+    color: var(--dsp-muted);
+    cursor: pointer;
+    border: none;
+    border-radius: 50%;
+    background: none;
+}
+.dsp-pr-skill-del:hover { color: #fff; background: rgba(229, 72, 77, 0.5); }
+.dsp-pr-skill-in { width: 90px; font-size: 12px; }
+.dsp-pr-desc { margin: 8px 0 0; font-size: 12px; font-style: italic; color: var(--dsp-muted); }
+.dsp-pr-add { margin-top: 10px; }
+.dsp-pr-add .dsp-pr-in-name { flex: 1; }
+.dsp-pr-add .dsp-pr-in-level { width: 64px; }
+.dsp-pr-refresh { padding: 0 6px; }
