@@ -53,15 +53,36 @@ function turnOf(s, id) {
 
 // ─── Hit points and hit chance ──────────────────────────────────────────────
 {
-    ok(C.maxHpFor(10, 1) === 75, `max HP at En 10, level 1 is 75 (got ${C.maxHpFor(10, 1)})`);
+    ok(C.maxHpFor(10, 1) === 66, `max HP at En 10, level 1 is 66 (got ${C.maxHpFor(10, 1)})`);
+    ok(C.maxHpFor(70, 99) > 700 && C.maxHpFor(70, 99) < 1000, `max HP at En 70, level 99 is Persona-sized (got ${C.maxHpFor(70, 99)})`);
     ok(C.maxHpFor(20, 5) > C.maxHpFor(10, 5), 'more En, more HP');
     ok(C.maxHpFor(10, 5) > C.maxHpFor(10, 1), 'more levels, more HP');
     const a = hero('a'), d = foe('d');
     ok(Math.abs(C.hitChance(a, d) - 0.75) < 1e-9, 'equal Ag hits 75%');
     ok(C.hitChance(hero('q', { attrs: { ag: 20 } }), d) > 0.75, 'higher Ag hits more');
     ok(C.hitChance(hero('q', { attrs: { ag: 100 } }), d) === C.TUNING.hitMax, 'hit chance is capped');
-    ok(C.hitChance(hero('q', { attrs: { ag: 1 } }), foe('z', { attrs: { ag: 100 } })) === C.TUNING.hitMin, 'hit chance has a floor');
+    ok(C.hitChance(hero('q', { attrs: { ag: 1 } }), foe('z', { attrs: { ag: 100 } })) < 0.4, 'a far faster target is hard to hit');
+    ok(Math.abs(C.hitChance(hero('q1', { attrs: { ag: 20 } }), foe('z1', { attrs: { ag: 10 } })) - C.hitChance(hero('q2', { attrs: { ag: 80 } }), foe('z2', { attrs: { ag: 40 } }))) < 1e-9, 'hit chance depends on the Ag ratio, not the scale');
+    ok(C.critChance(hero('l1', { attrs: { lu: 60 } }), foe('l2', { attrs: { lu: 20 } })) > C.critChance(hero('l3'), foe('l4')), 'more Luck, more critical hits');
+    ok(C.critChance(hero('l5', { attrs: { lu: 99 } }), foe('l6', { attrs: { lu: 1 } })) <= C.TUNING.critMax, 'critical chance is capped');
     ok(C.hitChance(a, d, prof({ type: 'damage', stat: 'ma' })) > C.hitChance(a, d, prof({ type: 'damage', stat: 'st' })), 'spells are more accurate');
+}
+
+// ─── Balance on the 1–99 scale ──────────────────────────────────────────────
+{
+    // Equals at level L (attributes ~10 + 0.6 per level): a light hit should
+    // take a similar share of HP at level 1, 50 and 99.
+    const share = (L) => {
+        const x = Math.round(10 + (L - 1) * 0.6);
+        const attrs = { st: x, ma: x, en: x, ag: x, lu: x };
+        const a = hero('ba' + L, { level: L, attrs }), d = foe('bd' + L, { level: L, attrs });
+        const hp = C.maxHpFor(x, L);
+        return C.damageAgainst(a, { profile: prof({ type: 'damage', stat: 'st', power: 'light' }) }, d) / hp;
+    };
+    const s1 = share(1), s50 = share(50), s99 = share(99);
+    ok(s1 > 0.1 && s1 < 0.3 && s50 > 0.1 && s50 < 0.3 && s99 > 0.1 && s99 < 0.3, `a light hit between equals takes 10–30% HP at any level (${s1.toFixed(2)}, ${s50.toFixed(2)}, ${s99.toFixed(2)})`);
+    const e = C.buildEnemy({ name: 'Shadow', tier: 'normal' }, { partyLevel: 50, id: 'e50' });
+    ok(e.attrs.st >= 30 && e.attrs.st <= 45, `a level 50 normal enemy has attributes around 40 (got ${e.attrs.st})`);
 }
 
 // ─── Damage ─────────────────────────────────────────────────────────────────

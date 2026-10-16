@@ -31,18 +31,27 @@
 // ─── Tuning ─────────────────────────────────────────────────────────────────
 
 export const TUNING = {
-    hpBase: 30, hpPerEn: 4, hpPerLevel: 5,
-    hitBase: 0.75, hitPerAg: 0.015, hitMin: 0.10, hitMax: 0.95, spellAccuracy: 0.10,
-    critChance: 0.05, critMult: 1.5,
-    dmgBase: 5, dmgPerAttr: 1.2,
+    // Calibrated for the 1–99 Persona scale: a character starts around 10 in
+    // every attribute and gains about 0.6 per attribute per level (3 points
+    // a level over five attributes), so ~40 at level 50 and ~70 at level 99.
+    // HP, damage and healing all grow with level as well as attributes, so a
+    // fight between equals takes 4–6 hits at any level.
+    hpBase: 30, hpPerEn: 3, hpPerLevel: 6,
+    // Hit and flee chances compare the two sides' Agility as a ratio, so they
+    // mean the same at level 1 and at level 99.
+    hitBase: 0.75, hitSpread: 0.4, hitMin: 0.10, hitMax: 0.95, spellAccuracy: 0.10,
+    critChance: 0.05, critPerLu: 0.15, critMax: 0.25, critMult: 1.5,
+    dmgBase: 5, dmgPerAttr: 1.0, dmgPerLevel: 1.5,
     varMin: 0.85, varMax: 1.15,
-    defPerEn: 0.5, defK: 20, magicArmorShare: 0.5,
+    // Armour is weighed against the attacker's own attribute; gear grows
+    // with the wearer's level (+5% per level) so a good weapon still counts later.
+    defPerEn: 0.5, defPerAtk: 1.0, defK: 10, magicArmorShare: 0.5, gearPerLevel: 0.05,
     aoeMult: 0.65,
     powerMult: { light: 1, medium: 1.5, heavy: 2.2 },
-    healBase: 5, healPerAttr: 1.0, healMult: 1.5,
+    healBase: 5, healPerAttr: 1.0, healPerLevel: 1.5, healMult: 1.5,
     itemHealPct: { light: 0.25, medium: 0.45, heavy: 0.7 },
     itemMana: { light: 15, medium: 30, heavy: 50 },
-    itemBomb: { light: 12, medium: 22, heavy: 38 },
+    itemBomb: { light: 12, medium: 22, heavy: 38 }, bombPerLevel: 2,
     revivePct: { light: 0.2, medium: 0.35, heavy: 0.5 },
     cooldown: { light: 0, medium: 1, heavy: 3 },
     statusChance: 0.6,
@@ -51,7 +60,7 @@ export const TUNING = {
     regenPct: 0.06,
     weakenMult: 0.75, empowerMult: 1.3,
     vulnerableMult: 1.25, shieldMult: 0.6, guardMult: 0.5,
-    fleeBase: 0.5, fleePerAg: 0.02, fleeMin: 0.2, fleeMax: 0.9, fleeBossPenalty: 0.3,
+    fleeBase: 0.5, fleeSpread: 0.6, fleeMin: 0.2, fleeMax: 0.9, fleeBossPenalty: 0.3,
     // Enemy strength by category: attribute scale, hit points scale, XP tier, money.
     tiers: {
         minion: { attr: 0.8, hp: 0.5, xp: 'small', money: 3, moneyCap: 20, label: 'Minion' },
@@ -266,7 +275,8 @@ export function buildEnemy(spec, { partyLevel = 1, partySize = 1, id }) {
     const tier = TUNING.tiers[tierId];
     const delta = clamp(Math.round(Number(spec.levelDelta) || 0), -2, 3);
     const level = Math.max(1, partyLevel + delta);
-    const base = (8 + level * 1.2) * tier.attr;
+    // Same growth as a character: ~10 at level 1, ~0.6 per level after.
+    const base = (10 + (level - 1) * 0.6) * tier.attr;
     const attrs = {};
     for (const a of ATTRIBUTE_IDS) attrs[a] = Math.round(base);
     const focus = ATTRIBUTE_IDS.includes(String(spec.focus).toLowerCase()) ? String(spec.focus).toLowerCase() : null;
@@ -397,8 +407,25 @@ function takeDamage(state, events, c, amount, text, extra = {}) {
 
 // ─── Numbers ────────────────────────────────────────────────────────────────
 
+/** (a − b) / (a + b): −1…1, the same at any point of the 1–99 scale. */
+function ratioDiff(a, b) {
+    const sum = Math.max(1, a) + Math.max(1, b);
+    return (Math.max(1, a) - Math.max(1, b)) / sum;
+}
+
+/** Gear (weapon attack, armour) scaled by the owner's level. */
+function gearValue(c, n) {
+    return (n || 0) * (1 + Math.max(0, (c.level || 1) - 1) * TUNING.gearPerLevel);
+}
+
+/** Critical hit chance: higher Luck than the target's raises it. */
+export function critChance(attacker, defender) {
+    const edge = Math.max(0, ratioDiff(attrValue(attacker, 'lu'), attrValue(defender, 'lu')));
+    return Math.min(TUNING.critMax, TUNING.critChance + edge * TUNING.critPerLu);
+}
+
 export function hitChance(attacker, defender, profile = null) {
-    let p = TUNING.hitBase + (attrValue(attacker, 'ag') - attrValue(defender, 'ag')) * TUNING.hitPerAg;
+    let p = TUNING.hitBase + ratioDiff(attrValue(attacker, 'ag'), attrValue(defender, 'ag')) * TUNING.hitSpread;
     if (profile && profile.stat && !PHYSICAL.has(profile.stat) && profile.stat !== 'none') p += TUNING.spellAccuracy;
     return clamp(p, TUNING.hitMin, TUNING.hitMax);
 }
@@ -409,10 +436,10 @@ function rawDamage(attacker, action, roll, aoe) {
     const power = powerOf(p);
     let base;
     if (p.stat === 'none') {
-        base = TUNING.itemBomb[power] + attacker.level * 1.5;
+        base = TUNING.itemBomb[power] + attacker.level * TUNING.bombPerLevel;
     } else {
-        base = TUNING.dmgBase + attrValue(attacker, p.stat) * TUNING.dmgPerAttr;
-        if (PHYSICAL.has(p.stat)) base += attacker.atkBonus;
+        base = TUNING.dmgBase + attrValue(attacker, p.stat) * TUNING.dmgPerAttr + (attacker.level || 1) * TUNING.dmgPerLevel;
+        if (PHYSICAL.has(p.stat)) base += gearValue(attacker, attacker.atkBonus);
         base *= TUNING.powerMult[power];
     }
     base *= atkMult(attacker) * roll;
@@ -422,19 +449,26 @@ function rawDamage(attacker, action, roll, aoe) {
 
 function defenceOf(defender, profile) {
     const physical = !profile || profile.stat === 'none' || PHYSICAL.has(profile.stat);
-    return attrValue(defender, 'en') * TUNING.defPerEn + defender.armor * (physical ? 1 : TUNING.magicArmorShare);
+    return attrValue(defender, 'en') * TUNING.defPerEn + gearValue(defender, defender.armor) * (physical ? 1 : TUNING.magicArmorShare);
+}
+
+/** What armour is weighed against: the attacker's attribute (a fixed 10 for items). */
+function pierceOf(attacker, profile) {
+    const stat = profile && profile.stat && profile.stat !== 'none' ? profile.stat : null;
+    return TUNING.defK + (stat ? attrValue(attacker, stat) : 10) * TUNING.defPerAtk;
 }
 
 /** How much of the damage a defender shrugs off, as 0–1: { physical, magic }. For the inspect panel. */
 export function damageReduction(defender) {
-    const f = (profile) => { const d = defenceOf(defender, profile); return d / (d + TUNING.defK); };
+    // Against an attacker as strong as the defender.
+    const f = (profile) => { const d = defenceOf(defender, profile); return d / (d + TUNING.defK + attrValue(defender, profile?.stat === 'ma' ? 'ma' : 'st') * TUNING.defPerAtk); };
     return { physical: f(null), magic: f({ stat: 'ma' }) };
 }
 
 export function damageAgainst(attacker, action, defender, { roll = 1, crit = false, aoe = false } = {}) {
     let d = rawDamage(attacker, action, roll, aoe) * (crit ? TUNING.critMult : 1);
     const def = defenceOf(defender, action.profile);
-    d = d * (1 - def / (def + TUNING.defK)) * inMult(defender);
+    d = d * (1 - def / (def + pierceOf(attacker, action.profile))) * inMult(defender);
     return Math.max(1, Math.round(d));
 }
 
@@ -442,7 +476,7 @@ export function healAmount(actor, action, target) {
     const p = action.profile;
     const power = powerOf(p);
     if (action.kind === 'item' || p.stat === 'none') return Math.max(1, Math.round(target.maxHp * TUNING.itemHealPct[power]));
-    return Math.max(1, Math.round((TUNING.healBase + attrValue(actor, p.stat) * TUNING.healPerAttr) * TUNING.powerMult[power] * TUNING.healMult));
+    return Math.max(1, Math.round((TUNING.healBase + attrValue(actor, p.stat) * TUNING.healPerAttr + (actor.level || 1) * TUNING.healPerLevel) * TUNING.powerMult[power] * TUNING.healMult));
 }
 
 /** What the action would do, for a tooltip: { min, max, hit } or { amount }. */
@@ -536,7 +570,7 @@ export function performAction(state, actorId, actionId, targetId = null) {
                 push(state, events, { type: 'miss', actor: actor.id, target: t.id, text: `${t.name} avoids it.` });
                 continue;
             }
-            const crit = nextRandom(state) < TUNING.critChance;
+            const crit = nextRandom(state) < critChance(actor, t);
             const roll = TUNING.varMin + nextRandom(state) * (TUNING.varMax - TUNING.varMin);
             const dmg = damageAgainst(actor, action, t, { roll, crit, aoe });
             takeDamage(state, events, t, dmg, `${t.name} takes ${dmg} damage${crit ? ' (critical!)' : ''}.`, { actor: actor.id, crit });
@@ -600,7 +634,7 @@ export function defend(state, actorId) {
 
 export function fleeChance(state) {
     const avg = (side) => { const l = alive(state, side); return l.length ? l.reduce((s, c) => s + attrValue(c, 'ag'), 0) / l.length : 10; };
-    let p = TUNING.fleeBase + (avg('party') - avg('enemy')) * TUNING.fleePerAg;
+    let p = TUNING.fleeBase + ratioDiff(avg('party'), avg('enemy')) * TUNING.fleeSpread;
     if (state.combatants.some(c => c.side === 'enemy' && !c.down && c.tier === 'boss')) p -= TUNING.fleeBossPenalty;
     return clamp(p, TUNING.fleeMin, TUNING.fleeMax);
 }

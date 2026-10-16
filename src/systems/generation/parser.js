@@ -93,8 +93,8 @@ function debugLog(message, data = null) {
     }
 }
 /** Keys of the unified tracker object that are not trackers of their own. */
-const EXTRA_KEYS = ['stats', 'memories', 'equipment', 'inventory', 'conditions', 'abilities', 'skills', 'spells', 'xp', 'experience', 'levels', 'money', 'currency', 'affinity', 'check'];
-const EXTRA_RESULT_KEYS = ['stats', 'memories', 'equipment', 'conditions', 'abilities', 'xp', 'levels', 'money', 'currency', 'affinity', 'check'];
+const EXTRA_KEYS = ['stats', 'memories', 'equipment', 'inventory', 'conditions', 'abilities', 'skills', 'spells', 'xp', 'experience', 'levels', 'money', 'currency', 'affinity', 'social', 'check'];
+const EXTRA_RESULT_KEYS = ['stats', 'memories', 'equipment', 'conditions', 'abilities', 'xp', 'levels', 'money', 'currency', 'affinity', 'social', 'check'];
 
 /**
  * Copies the Better Stats keys of a parsed tracker object into `result` as
@@ -116,6 +116,7 @@ function extractExtraKeys(parsed, result) {
         money: parsed.money,
         currency: parsed.currency,
         affinity: parsed.affinity,
+        social: parsed.social,
         check: parsed.check,
     };
     for (const key of EXTRA_RESULT_KEYS) {
@@ -164,6 +165,8 @@ export function parseResponse(responseText) {
         money: null,
         currency: null,
         affinity: null,
+        // Social stats (characterSocial.js): points the player gained.
+        social: null,
         // Checks (characterChecks.js): the AI's suggested "check".
         check: null
     };

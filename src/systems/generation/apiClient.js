@@ -36,6 +36,7 @@ import { applyAIAbilities } from '../features/characterAbilities.js';
 import { applyAIProgress } from '../features/characterProgress.js';
 import { applyAIMoney, applyAICurrency } from '../features/characterMoney.js';
 import { applyAIAffinity } from '../features/characterAffinity.js';
+import { applyAISocial } from '../features/characterSocial.js';
 import { settleChecks } from '../features/characterChecks.js';
 import { renderThoughts, updateChatThoughts } from '../rendering/thoughts.js';
 import { renderQuests } from '../rendering/quests.js';
@@ -372,6 +373,10 @@ export async function updateRPGData(renderInfoBox, renderThoughts) {
                 try { if (parsedData.currency) applyAICurrency(parsedData.currency); } catch (e) { console.warn('[Dooms Tracker] Money: currency failed', e); }
                 try { if (parsedData.money) applyAIMoney(parsedData.money, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Money: applying AI update failed', e); }
                 try { if (parsedData.affinity) applyAIAffinity(parsedData.affinity, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Affinity: applying AI update failed', e); }
+            }
+            // Social stats (Persona 5): points the player's character gained.
+            if (parsedData.social) {
+                try { applyAISocial(parsedData.social, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Social: applying AI update failed', e); }
             }
             // Checks: the AI's suggested roll; the outcome of the last one has been answered.
             try { settleChecks(parsedData.check, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Checks: applying AI update failed', e); }

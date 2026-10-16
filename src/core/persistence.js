@@ -595,6 +595,8 @@ export function saveChatData({ immediate = false } = {}) {
         // Undo for the money and affinity changes of the last reply.
         moneyUndo: chat_metadata.dooms_tracker?.moneyUndo || null,
         affinityUndo: chat_metadata.dooms_tracker?.affinityUndo || null,
+        // Undo for the social stat points of the last reply (characterSocial.js).
+        socialUndo: chat_metadata.dooms_tracker?.socialUndo || null,
         // Persona Stats data that belongs to this chat — current stat values,
         // memories, equipment, conditions, abilities, XP (chatScope.js).
         betterStats: chat_metadata.dooms_tracker?.betterStats || {},

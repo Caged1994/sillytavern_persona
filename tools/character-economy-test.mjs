@@ -71,6 +71,7 @@ const Cd = await import(`${DES}/src/systems/features/characterConditions.js`);
 const Cq = await import(`${DES}/src/systems/features/characterConsequences.js`);
 const Mo = await import(`${DES}/src/systems/features/characterMoney.js`);
 const Af = await import(`${DES}/src/systems/features/characterAffinity.js`);
+const So = await import(`${DES}/src/systems/features/characterSocial.js`);
 const MoM = await import(`${DES}/src/utils/moneyModel.js`);
 const AfM = await import(`${DES}/src/utils/affinityModel.js`);
 const AbM = await import(`${DES}/src/utils/abilityModel.js`);
@@ -124,7 +125,7 @@ check('a worse rule takes over', CqM.desiredRule('satiety', 5, 'hungry')?.id ===
 S.setCurrentStatValue('Mastera', true, 'satiety', 25);
 let conds = Cd.getConditions('Mastera', true);
 check('a low bar adds its condition', conds.some(c => c.name === 'Hungry' && c.source === 'auto'));
-check('...with its malus', Mod.getEffectiveStatValues('Mastera', true).modifiers.st?.total === -1);
+check('...with its malus', Mod.getEffectiveStatValues('Mastera', true).modifiers.st?.total === -2);
 S.setCurrentStatValue('Mastera', true, 'satiety', 5);
 conds = Cd.getConditions('Mastera', true);
 check('it worsens to Starving (one per bar)', conds.some(c => c.name === 'Starving') && !conds.some(c => c.name === 'Hungry'));
@@ -171,6 +172,21 @@ Af.applyAIAffinity({ Elena: -10 }, last());
 check('swipe undoes the change', Af.revertAIAffinityForReplacedMessage(last()) === 1 && Af.getAffinity('Elena') === 40);
 check('set by hand, clamped', Af.setAffinity('Elena', 250) === 100);
 check('separate-mode context', pb.generateContextualSummary().includes('Affinity toward Mastera: Elena +100 (close), Bram -29 (wary)'));
+
+// ── 3b. Social stats (Persona 5) ──
+instr = pb.generateTrackerInstructions(false, false);
+check('social stats are sent for the persona', instr.includes('SOCIAL STATS of Mastera') && instr.includes('Knowledge 1 (Oblivious)'));
+So.applyAISocial({ Knowledge: 3, Guts: 9, Kindness: -2, Elena: 4 }, last());
+check('AI gains are added (capped, never down)', So.getSocialPoints().knowledge === 3 && So.getSocialPoints().guts === 5 && So.getSocialPoints().kindness === 0);
+check('set by hand', So.setSocialPoints('Mastera', 'charm', 52) === 52 && So.getSocialView().find(s => s.id === 'charm').title === 'Suave');
+chat.push({ is_user: true, mes: 'e' }, { is_user: false, mes: 'f' });
+So.applyAISocial({ Knowledge: 2 }, last());
+{ const n = So.revertAISocialForReplacedMessage(last()); check('swipe takes back the gain', n === 1 && So.getSocialPoints().knowledge === 3, `n=${n} k=${So.getSocialPoints().knowledge}`); }
+check('parser extracts social', (() => { const r = parseResponse('{"social":{"Guts":2}}'); return !!r.social && !r.parsingFailed; })());
+check('separate-mode context lists social ranks', pb.generateContextualSummary().includes("Mastera's social stats: Knowledge 1 (Oblivious), Guts 1 (Milquetoast)"));
+So.setSocialEnabled(false);
+check('switched off: not sent', !pb.generateTrackerInstructions(false, false).includes('SOCIAL STATS'));
+So.setSocialEnabled(true);
 
 // ── 4. Money ──
 check('amounts parse', MoM.roundMoney('+5.50') === 5.5 && MoM.roundMoney('1,250.75') === 1250.75 && MoM.roundMoney('abc') === null);

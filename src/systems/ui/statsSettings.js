@@ -38,10 +38,10 @@ import { XP_SIZES } from '../../utils/xpModel.js';
 import { getManaTiers, setManaTier } from '../features/characterAbilities.js';
 import { setMoneyEnabled, getCurrency, setCurrency } from '../features/characterMoney.js';
 import { setAffinityEnabled } from '../features/characterAffinity.js';
+import { setSocialEnabled } from '../features/characterSocial.js';
 import { setConsequencesEnabled } from '../features/characterConsequences.js';
 import { setCombatEnabled, setCombatNarration } from '../features/combat.js';
 import { setDungeonEnabled, setDungeonNarration } from '../features/dungeon.js';
-import { setSphereEnabled } from '../features/sphereGrid.js';
 import { setChecksEnabled } from '../features/characterChecks.js';
 
 function sixDigit(color) {
@@ -118,12 +118,12 @@ export function initStatsSettings() {
     flag('rpg-xp-enabled', 'characterXpEnabled');
     flag('rpg-money-enabled', 'characterMoneyEnabled');
     flag('rpg-affinity-enabled', 'characterAffinityEnabled');
+    flag('rpg-social-enabled', 'characterSocialEnabled');
     flag('rpg-consequences-enabled', 'autoConsequences');
     flag('rpg-checks-enabled', 'checksEnabled');
     flag('rpg-combat-enabled', 'combatEnabled');
     flag('rpg-combat-narration', 'combatNarration');
     flag('rpg-dungeon-enabled', 'dungeonEnabled');
-    { const el = document.getElementById('rpg-sphere-enabled'); if (el) el.checked = extensionSettings.sphereGridEnabled === true; }
     flag('rpg-dungeon-narration', 'dungeonNarration');
     const memRecent = document.getElementById('rpg-memories-recent');
     if (memRecent) memRecent.value = String(getRecentLimit());
@@ -150,12 +150,12 @@ export function initStatsSettings() {
         else if (el.id && el.id.startsWith('rpg-xp-') && XP_SIZES.includes(el.id.slice(7))) { setXpSetting(el.id.slice(7), el.value); renderXpSettings(); }
         else if (el.id === 'rpg-money-enabled') setMoneyEnabled(el.checked);
         else if (el.id === 'rpg-affinity-enabled') setAffinityEnabled(el.checked);
+        else if (el.id === 'rpg-social-enabled') setSocialEnabled(el.checked);
         else if (el.id === 'rpg-consequences-enabled') setConsequencesEnabled(el.checked);
         else if (el.id === 'rpg-checks-enabled') setChecksEnabled(el.checked);
         else if (el.id === 'rpg-combat-enabled') setCombatEnabled(el.checked);
         else if (el.id === 'rpg-combat-narration') setCombatNarration(el.checked);
         else if (el.id === 'rpg-dungeon-enabled') setDungeonEnabled(el.checked);
-        else if (el.id === 'rpg-sphere-enabled') setSphereEnabled(el.checked);
         else if (el.id === 'rpg-dungeon-narration') setDungeonNarration(el.checked);
         else if (el.id && el.id.startsWith('rpg-mana-')) { setManaTier(el.id.slice(9), el.value); renderXpSettings(); }
         else if (el.id === 'rpg-currency-name' || el.id === 'rpg-currency-symbol') {

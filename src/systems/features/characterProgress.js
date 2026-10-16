@@ -314,7 +314,7 @@ export function refundPoint(name, isUser, statId) {
     return true;
 }
 
-/** Spends `n` unspent points on something other than an attribute (the sphere grid). */
+/** Spends `n` unspent points on something other than an attribute. */
 export function spendPointsOn(name, isUser, n) {
     const cost = Math.max(0, Math.round(Number(n) || 0));
     const key = statKey(name, isUser);

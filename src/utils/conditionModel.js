@@ -154,7 +154,7 @@ export function buildConditionsPrompt(entries, { compact = true, standalone = fa
     if (!list.length) return '';
     const withAny = list.filter(e => e.conditions.length);
     const example = JSON.stringify({ conditions: { [list[0].name]: {
-        add: [{ icon: '🤢', name: 'Poisoned', desc: 'Weak and feverish', effects: { En: -2 } }],
+        add: [{ icon: '🤢', name: 'Poisoned', desc: 'Weak and feverish', effects: { En: -4 } }],
         remove: ['Tipsy'],
     } } });
     const where = standalone ? 'start your reply with ONE JSON code block' : 'add a "conditions" key to the same tracker JSON object';
@@ -170,7 +170,7 @@ export function buildConditionsPrompt(entries, { compact = true, standalone = fa
             : 'Conditions marked [auto] follow a low stat bar (hunger, exhaustion, wounds…) and end by themselves when the bar recovers; never add or remove them yourself — change the stat instead.\n';
     }
     out += compact
-        ? `When a temporary condition (poisoned, wounded, drunk, blessed…) starts or ends, ${where}: ${example} — one emoji, short name, desc under 8 words, "effects" only for real attribute changes (applied while it lasts). Omit the key when nothing changes.`
-        : `CONDITION CHANGES: when a temporary condition starts for one of the characters in the scene — poisoned, wounded, sick, exhausted, drunk, frightened, enraged, blessed, cursed and so on — or when one ends, ${where}, like ${example}. Each condition has one emoji, a short name, a description under 8 words and, only when it genuinely affects an attribute, "effects" (e.g. {"Ag": -3}); DES applies them automatically while the condition lasts, so never raise or lower attributes yourself because of it. Remove a condition as soon as it ends (healed, sobered up, rested). Leave the key out entirely when nothing changes.`;
+        ? `When a temporary condition (poisoned, wounded, drunk, blessed…) starts or ends, ${where}: ${example} — one emoji, short name, desc under 8 words, "effects" only for real attribute changes (applied while it lasts; scale 1–99, light ±2–3, severe ±5–8). Omit the key when nothing changes.`
+        : `CONDITION CHANGES: when a temporary condition starts for one of the characters in the scene — poisoned, wounded, sick, exhausted, drunk, frightened, enraged, blessed, cursed and so on — or when one ends, ${where}, like ${example}. Each condition has one emoji, a short name, a description under 8 words and, only when it genuinely affects an attribute, "effects" (e.g. {"Ag": -4}; attributes run 1–99, so a light effect is ±2–3 and a severe one ±5–8); DES applies them automatically while the condition lasts, so never raise or lower attributes yourself because of it. Remove a condition as soon as it ends (healed, sobered up, rested). Leave the key out entirely when nothing changes.`;
     return out.trim();
 }

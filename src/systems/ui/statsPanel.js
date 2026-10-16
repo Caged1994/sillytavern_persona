@@ -1,9 +1,10 @@
 /**
  * Stats Panel — live view of a character's stats.
  *
- * Opened from the portrait right-click menu ("Stats"). Shows the states as
- * rings and the attributes as score tiles for the open chat's current
- * values, with a tab per character in the scene (the player's persona
+ * Opened from the portrait right-click menu ("Stats"). Shows HP, SP and the
+ * attributes as slanted bars in the style of the Persona 5 status screen,
+ * and the player's social stats as overlapping circles, for the open chat's
+ * current values, with a tab per character in the scene (the player's persona
  * first). Values can be edited by clicking them.
  *
  * The panel floats over SillyTavern and can be popped out into its own
@@ -50,7 +51,8 @@ import { isRpgModeActive, toggleRpgModeHere, rpgModeSource } from '../features/r
 import { isMoneyEnabled, getMoney, setMoney, hasPurse, formatAmount, getCurrency } from '../features/characterMoney.js';
 import { isAffinityEnabled, getAffinityRecord, setAffinity } from '../features/characterAffinity.js';
 import { isDungeonEnabled, hasLiveDungeon } from '../features/dungeon.js';
-import { isSphereEnabled } from '../features/sphereGrid.js';
+import { isSocialEnabled, getSocialView, setSocialPoints } from '../features/characterSocial.js';
+import { MAX_SOCIAL_POINTS } from '../../utils/socialModel.js';
 import { isCombatEnabled, getLiveEncounter, getActionProfile, setActionProfile, describeProfile } from '../features/combat.js';
 import {
     isChecksEnabled, getCheckAttributes, checkChance, rollCheckFor, getPendingCheck, dismissPendingCheck, pendingActor, getRecentChecks,
@@ -61,8 +63,6 @@ import { affinityTier } from '../../utils/affinityModel.js';
 
 const PANEL_ID = 'dooms-stats-panel';
 const POPOUT_NAME = 'dooms-stats-popout';
-const RING_R = 34;
-const RING_C = 2 * Math.PI * RING_R;
 
 let selected = null;          // { name, isUser }
 let popoutWin = null;         // Window | null
@@ -78,8 +78,8 @@ const checkForm = { open: false, stat: '', difficulty: 'medium', bonus: '0', rea
 
 // Section tabs inside the panel. The last one used is remembered.
 const SECTIONS = [
-    { id: 'stats', label: 'Stats', icon: 'fa-heart-pulse' },
-    { id: 'attributes', label: 'Attributes', icon: 'fa-dumbbell' },
+    { id: 'stats', label: 'Stats', icon: 'fa-chart-simple' },
+    { id: 'social', label: 'Social', icon: 'fa-star' },
     { id: 'equipment', label: 'Equipment', icon: 'fa-shield-halved' },
     { id: 'abilities', label: 'Abilities', icon: 'fa-wand-sparkles' },
     { id: 'memories', label: 'Memories', icon: 'fa-brain' },
@@ -88,6 +88,8 @@ const SECTIONS = [
 const FORM_SECTION = { item: 'equipment', ability: 'abilities' };
 function getSection() {
     const s = extensionSettings.statsPanelSection;
+    // "attributes" was its own tab before HP/SP and the attributes were joined.
+    if (s === 'attributes') return 'stats';
     return SECTIONS.some(x => x.id === s) ? s : 'stats';
 }
 function setSection(id) {
@@ -189,47 +191,85 @@ function aiBadge(stat) {
         : '<span class="dsp-ai is-manual" title="Changed by hand only — the AI just reads it"><i class="fa-solid fa-lock"></i></span>';
 }
 
-function ringHtml(stat, value) {
-    const pct = Math.max(0, Math.min(100, value));
-    const color = ringColor(stat, value);
-    const offset = RING_C * (1 - pct / 100);
-    const low = color !== stat.color ? ' is-low' : '';
-    const tip = stat.description ? `${stat.name}: ${stat.description}` : stat.name;
+/**
+ * One row of the Persona-style stat block: the short name, the value and a
+ * slanted bar (as on the Persona 5 status screen). HP, SP and the other
+ * states fill over 0–100%, attributes over 1–99; "MAX" sits on a full bar.
+ */
+function barRowHtml(stat, { value, base = value, mod = null, prog = null, index = 0, count = 1 }) {
+    const isState = stat.kind === 'state';
+    const max = stat.max || (isState ? 100 : 99);
+    const pct = Math.max(0, Math.min(100, (value / max) * 100));
+    const total = mod?.total || 0;
+    const from = total ? (mod.parts || []).map(p => `${p.label} ${p.value > 0 ? '+' : '−'}${Math.abs(p.value)}`).join(', ') : '';
+    const tip = `${stat.name} ${value}${isState ? '%' : ''}${total ? ` = ${base} base, ${from}` : ''}${stat.description ? ` — ${stat.description}` : ''}`;
+    const label = isState ? stat.name : (stat.abbr || stat.name);
+    const color = isState ? ringColor(stat, value) : '';
+    const low = isState && color !== stat.color ? ' is-low' : '';
+    const full = value >= max;
     return `
-        <div class="dsp-ring${low}" data-stat="${escapeHtml(stat.id)}" style="--dsp-color:${escapeHtml(color)}" title="${escapeHtml(tip)}">
-            <svg viewBox="0 0 84 84" aria-hidden="true">
-                <circle class="dsp-ring-track" cx="42" cy="42" r="${RING_R}"></circle>
-                <circle class="dsp-ring-fill" cx="42" cy="42" r="${RING_R}"
-                    stroke-dasharray="${RING_C.toFixed(2)}" stroke-dashoffset="${offset.toFixed(2)}"></circle>
-            </svg>
-            <div class="dsp-ring-center">
-                <span class="dsp-ring-name">${escapeHtml(stat.name)}</span>
-                <button type="button" class="dsp-value" data-stat="${escapeHtml(stat.id)}" title="Click to edit">${value}%</button>
-            </div>
-            ${aiBadge(stat)}
+        <div class="dsp-p-row${isState ? ' is-state' : ''}${low}${full ? ' is-max' : ''}${label.length > 3 ? ' is-long' : ''}" data-stat="${escapeHtml(stat.id)}"
+            style="--dsp-i:${index};--dsp-n:${count}${color ? `;--dsp-fill:${escapeHtml(color)}` : ''}" title="${escapeHtml(tip)}">
+            <span class="dsp-p-abbr">${escapeHtml(label)}</span>
+            <button type="button" class="dsp-value dsp-p-value" data-stat="${escapeHtml(stat.id)}" title="${total ? `Base ${base} — click to edit the base value` : 'Click to edit'}">${value}</button>
+            <span class="dsp-p-barcell">
+                <span class="dsp-p-bar"><span class="dsp-p-fill" style="width:${pct.toFixed(1)}%"></span></span>
+                ${full ? '<span class="dsp-p-max" aria-hidden="true">MAX</span>' : ''}
+            </span>
+            <span class="dsp-p-side">
+                ${total ? `<span class="dsp-mod ${total > 0 ? 'is-up' : 'is-down'}" title="${escapeHtml(from)}">${total > 0 ? '+' : '−'}${Math.abs(total)}</span>` : ''}
+                ${isState ? '' : pointButtons(stat, base, prog)}
+                ${aiBadge(stat)}
+            </span>
         </div>`;
 }
 
-function attrHtml(stat, base, value = base, mod = null, prog = null) {
-    const total = mod?.total || 0;
-    const from = total ? (mod.parts || []).map(p => `${p.label} ${p.value > 0 ? '+' : '−'}${Math.abs(p.value)}`).join(', ') : '';
-    const tip = `${stat.name} ${value}${total ? ` = ${base} base, ${from}` : ''}${stat.description ? ` — ${stat.description}` : ''}`;
-    // The bar fills over the whole 1–99 range.
-    const width = Math.max(3, Math.min(100, (value / stat.max) * 100));
-    return `
-        <div class="dsp-attr" data-stat="${escapeHtml(stat.id)}" title="${escapeHtml(tip)}">
-            <div class="dsp-attr-head">
-                <span class="dsp-attr-abbr">${escapeHtml(stat.abbr || stat.name)}</span>
-                ${aiBadge(stat)}
-            </div>
-            <div class="dsp-attr-line">
-                <button type="button" class="dsp-value dsp-attr-value" data-stat="${escapeHtml(stat.id)}" title="${total ? `Base ${base} — click to edit the base value` : 'Click to edit'}">${value}</button>
-                ${total ? `<span class="dsp-mod ${total > 0 ? 'is-up' : 'is-down'}" title="${escapeHtml(from)}">${total > 0 ? '+' : '−'}${Math.abs(total)}</span>` : ''}
-                ${pointButtons(stat, base, prog)}
-            </div>
-            <div class="dsp-attr-bar"><span style="width:${width.toFixed(1)}%"></span></div>
-            ${stat.abbr ? `<span class="dsp-attr-name">${escapeHtml(stat.name)}</span>` : ''}
-        </div>`;
+/** HP, SP (and any state switched on) above the attributes, one block. */
+function statBlockHtml(states, attrs, cur, eff, prog) {
+    const stateRows = states.map((s, i) => barRowHtml(s, { value: cur[s.id], index: i, count: states.length }));
+    const attrRows = attrs.map((s, i) => barRowHtml(s, {
+        value: eff.values[s.id], base: cur[s.id], mod: eff.modifiers[s.id], prog, index: i, count: attrs.length,
+    }));
+    return `<div class="dsp-pstats">
+        ${stateRows.length ? `<div class="dsp-p-group is-states">${stateRows.join('')}</div>` : ''}
+        ${attrRows.length ? `<div class="dsp-p-group is-attrs">${attrRows.join('')}</div>` : ''}
+    </div>`;
+}
+
+// Where each circle of the social block sits (centre, in % of the block),
+// a pentagon of overlapping circles as on the Persona social stats screen.
+const SOCIAL_POS = [[50, 25], [80, 45], [70, 77], [30, 77], [20, 45]];
+
+/** The player's social stats: five overlapping circles with rank and title. */
+function socialHtml() {
+    const view = getSocialView(selected.name);
+    const circles = view.map((s, i) => {
+        const [x, y] = SOCIAL_POS[i] || [50, 50];
+        const tip = `${s.name}: rank ${s.rank} — ${s.title}. ${s.points} points${s.next !== null ? `, ${s.next - s.points} to the next rank` : ' (max rank)'}. Grows with ${s.grows}.`;
+        return `
+            <div class="dsp-soc${s.rank >= 5 ? ' is-max' : ''}" data-social="${s.id}" style="--x:${x}%;--y:${y}%;--soc:${s.color};--pct:${s.pct}" title="${escapeHtml(tip)}">
+                <span class="dsp-soc-ring" aria-hidden="true"></span>
+                <span class="dsp-soc-line">
+                    <button type="button" class="dsp-soc-rank" data-social="${s.id}" title="Click to set the points (${s.points})">${s.rank}</button>
+                    <span class="dsp-soc-name">${escapeHtml(s.name)}</span>
+                </span>
+                <span class="dsp-soc-title">${escapeHtml(s.title)}</span>
+            </div>`;
+    }).join('');
+    return `<section class="dsp-section dsp-social">
+        <div class="dsp-soc-board">
+            <svg class="dsp-soc-star" viewBox="0 0 100 100" aria-hidden="true"><polygon points="50,6 61,38 95,38 67,58 78,92 50,71 22,92 33,58 5,38 39,38"/></svg>
+            ${circles}
+        </div>
+        <div class="dsp-soc-list">${view.map(s => `
+            <div class="dsp-soc-row" title="${escapeHtml(s.title)}">
+                <span class="dsp-soc-row-name" style="--soc:${s.color}">${escapeHtml(s.name)}</span>
+                <span class="dsp-soc-row-bar"><span style="width:${s.pct}%;background:${s.color}"></span></span>
+                <span class="dsp-soc-row-pts">${s.points}${s.next !== null ? ` / ${s.next}` : ''}</span>
+            </div>`).join('')}
+        </div>
+        <p class="dsp-section-hint">Points toward the next rank. The AI adds 1–5 points when your character does something that builds a stat; click a rank to set the points.</p>
+    </section>`;
 }
 
 /** The + (spend a level point) and ↶ (take it back) buttons of an attribute tile. */
@@ -407,8 +447,8 @@ function buildHtml({ popout }) {
 
     // Which sections exist for this character, with a count where useful.
     const sections = [];
-    if (states.length) sections.push({ id: 'stats' });
-    if (attrs.length) sections.push({ id: 'attributes' });
+    if (states.length || attrs.length) sections.push({ id: 'stats' });
+    if (selected.isUser && isSocialEnabled()) sections.push({ id: 'social' });
     if (isEquipmentEnabled()) sections.push({ id: 'equipment', count: getEquipment(selected.name, selected.isUser).length });
     if (isAbilitiesEnabled()) sections.push({ id: 'abilities', count: getAbilities(selected.name, selected.isUser).length });
     if (!selected.isUser && isMemoriesEnabled()) sections.push({ id: 'memories', count: getMemories(selected.name).length });
@@ -416,7 +456,7 @@ function buildHtml({ popout }) {
     if (levelsOn) sections.push({ id: 'xp', dot: prog.points > 0 });
     let section = getSection();
     if (!sections.some(x => x.id === section)) section = sections[0]?.id || 'stats';
-    // Modifiers in effect, shown as a hint on the Attributes tab.
+    // Modifiers in effect, shown as a hint under the stat bars.
     const boosted = attrs.filter(s => eff.modifiers[s.id]?.total).length;
 
     const sectionBar = sections.length > 1 ? `
@@ -425,8 +465,8 @@ function buildHtml({ popout }) {
                 const def = SECTIONS.find(x => x.id === sec.id);
                 const on = sec.id === section;
                 const badge = sec.dot ? '<span class="dsp-sec-dot is-up" title="Points to assign"></span>'
-                    : sec.id === 'attributes' && prog?.points ? '<span class="dsp-sec-dot is-up" title="Points to assign"></span>'
-                    : sec.id === 'attributes' && boosted ? '<span class="dsp-sec-dot" title="Bonuses in effect"></span>'
+                    : sec.id === 'stats' && prog?.points ? '<span class="dsp-sec-dot is-up" title="Points to assign"></span>'
+                    : sec.id === 'stats' && boosted ? '<span class="dsp-sec-dot" title="Bonuses in effect"></span>'
                     : (sec.count ? `<span class="dsp-sec-count">${sec.count}</span>` : '');
                 return `<button type="button" role="tab" class="dsp-sec${on ? ' is-active' : ''}" aria-selected="${on}" data-section="${sec.id}" title="${def.label}">
                     <i class="fa-solid ${def.icon}"></i><span class="dsp-sec-label">${def.label}</span>${badge}</button>`;
@@ -436,14 +476,12 @@ function buildHtml({ popout }) {
     let content = '';
     if (section === 'stats') {
         content = `<section class="dsp-section">
-            <div class="dsp-rings">${states.map(s => ringHtml(s, cur[s.id])).join('')}</div>
-        </section>`;
-    } else if (section === 'attributes') {
-        content = `<section class="dsp-section">
-            <p class="dsp-section-hint">bonuses from equipped items, conditions and passive abilities are shown as +N</p>
             ${prog && prog.points ? `<div class="dsp-levelup"><i class="fa-solid fa-arrow-up"></i><span>Level up! <b>${prog.points}</b> point${prog.points === 1 ? '' : 's'} to assign — press + on an attribute.</span></div>` : ''}
-            <div class="dsp-attrs">${attrs.map(s => attrHtml(s, cur[s.id], eff.values[s.id], eff.modifiers[s.id], prog)).join('')}</div>
+            ${statBlockHtml(states, attrs, cur, eff, prog)}
+            ${boosted ? '<p class="dsp-section-hint">+N: bonuses from equipped items, conditions and passive abilities</p>' : ''}
         </section>`;
+    } else if (section === 'social') {
+        content = socialHtml();
     } else if (section === 'equipment') {
         content = equipmentHtml();
     } else if (section === 'abilities') {
@@ -474,7 +512,7 @@ function buildHtml({ popout }) {
             ${isStatGenerationPending(selected.name, selected.isUser) ? `
             <div class="dsp-pending"><i class="fa-solid fa-wand-magic-sparkles"></i>
                 The AI will generate ${escapeHtml(selected.name)}'s stats to fit who they are in their next reply. Until then these are placeholders.</div>` : ''}
-            ${prog && prog.points && section !== 'attributes' ? `<button type="button" class="dsp-levelup is-link" data-section-go="attributes"><i class="fa-solid fa-arrow-up"></i><span>Level up! <b>${prog.points}</b> point${prog.points === 1 ? '' : 's'} to assign</span></button>` : ''}
+            ${prog && prog.points && section !== 'stats' ? `<button type="button" class="dsp-levelup is-link" data-section-go="stats"><i class="fa-solid fa-arrow-up"></i><span>Level up! <b>${prog.points}</b> point${prog.points === 1 ? '' : 's'} to assign</span></button>` : ''}
             ${isConditionsEnabled() ? conditionsHtml() : ''}
             ${sectionBar}
             <div class="dsp-section-body" data-section="${section}">${content}</div>
@@ -515,7 +553,6 @@ function xpHtml(prog) {
                 </div>
             </div>
             ${partyRow}
-            ${isSphereEnabled() ? `<div class="dsp-xp-add"><button type="button" class="dsp-text-btn" data-action="sphere" title="Spend points on ${escapeHtml(who.name)}'s growth grid"><i class="fa-solid fa-diagram-project"></i> Sphere grid${prog.points ? ` — ${prog.points} point${prog.points === 1 ? '' : 's'} to spend` : ''}</button></div>` : ''}
             ${xpOn && party ? `
             <div class="dsp-xp-add">
                 <input type="number" class="dsp-xp-in-amount" data-xp-field="amount" value="${escapeHtml(xpForm.amount)}" placeholder="XP" step="1" aria-label="XP to add (negative to take away)">
@@ -1149,6 +1186,40 @@ function startEdit(button) {
     input.addEventListener('blur', () => finish(true));
 }
 
+/** Inline edit of a social stat's points. */
+function startSocialEdit(button) {
+    if (!selected) return;
+    const id = button.getAttribute('data-social');
+    const cur = getSocialView(selected.name).find(s => s.id === id);
+    if (!cur) return;
+    const doc = button.ownerDocument;
+    const input = doc.createElement('input');
+    input.type = 'number';
+    input.min = '0';
+    input.max = String(MAX_SOCIAL_POINTS);
+    input.step = '1';
+    input.value = String(cur.points);
+    input.className = 'dsp-value-input dsp-soc-input';
+    input.setAttribute('aria-label', `${cur.name} points`);
+    button.replaceWith(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const who = selected.name;
+    const finish = (commit) => {
+        if (done) return;
+        done = true;
+        if (commit && input.value !== '' && Number(input.value) !== cur.points) setSocialPoints(who, id, input.value);
+        input.blur();
+        renderAll();
+    };
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener('blur', () => finish(true));
+}
+
 function bindRootListeners(root) {
     root.addEventListener('click', (e) => {
         const tab = e.target.closest('.dsp-tab');
@@ -1227,6 +1298,8 @@ function bindRootListeners(root) {
             removeLogEntry(selected.name, selected.isUser, logRow.getAttribute('data-id'));
             return;
         }
+        const socBtn = e.target.closest('button.dsp-soc-rank');
+        if (socBtn) { startSocialEdit(socBtn); return; }
         const progEdit = e.target.closest('button.dsp-value[data-edit], button.dsp-chip[data-edit]');
         if (progEdit) { startProgressEdit(progEdit); return; }
         const value = e.target.closest('button.dsp-value');
@@ -1260,7 +1333,6 @@ function bindRootListeners(root) {
             return;
         }
         if (action === 'check-dismiss') { dismissPendingCheck(); renderAll(); return; }
-        if (action === 'sphere') { import('./sphereModal.js').then(m => m.openSphereGrid(selected?.name, !!selected?.isUser)).catch(e => console.error('[Dooms Tracker] Sphere grid failed to open', e)); return; }
         if (action === 'dungeon') { import('./dungeonModal.js').then(m => m.openDungeon()).catch(e => console.error('[Dooms Tracker] Dungeon window failed to open', e)); return; }
         if (action === 'combat') { import('./combatModal.js').then(m => m.openCombat()).catch(e => console.error('[Dooms Tracker] Combat window failed to open', e)); return; }
         if (action === 'rpg-on') { toggleRpgModeHere(true); return; }

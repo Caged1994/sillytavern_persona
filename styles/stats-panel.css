@@ -320,155 +320,6 @@
 
 .dsp-ai.is-manual { color: var(--dsp-muted); opacity: 0.6; }
 
-/* State rings */
-.dsp-rings {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
-    gap: 8px;
-}
-
-.dsp-ring {
-    position: relative;
-    aspect-ratio: 1;
-    border-radius: 12px;
-    background: var(--dsp-card);
-    border: 1px solid var(--dsp-border);
-    display: grid;
-    place-items: center;
-    transition: background 0.15s;
-}
-
-.dsp-ring:hover { background: var(--dsp-card-hover); }
-
-.dsp-ring svg {
-    width: 88%;
-    height: 88%;
-    transform: rotate(-90deg);
-    overflow: visible;
-}
-
-.dsp-ring-track {
-    fill: none;
-    stroke: rgba(255, 255, 255, 0.08);
-    stroke-width: 7;
-}
-
-.dsp-ring-fill {
-    fill: none;
-    stroke: var(--dsp-color);
-    stroke-width: 7;
-    stroke-linecap: round;
-    filter: drop-shadow(0 0 4px color-mix(in srgb, var(--dsp-color) 55%, transparent));
-    transition: stroke-dashoffset 0.6s cubic-bezier(0.2, 0.8, 0.2, 1), stroke 0.3s;
-}
-
-.dsp-ring.is-low {
-    background: color-mix(in srgb, var(--dsp-color) 10%, var(--dsp-card));
-}
-
-.dsp-ring-center {
-    position: absolute;
-    inset: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 1px;
-    text-align: center;
-    pointer-events: none;
-}
-
-.dsp-ring-center .dsp-value,
-.dsp-ring-center .dsp-value-input { pointer-events: auto; }
-
-.dsp-ring-name {
-    max-width: 70%;
-    font-size: 12px;
-    font-weight: 700;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.dsp-ring-center .dsp-value {
-    font-size: 13px;
-    color: var(--dsp-muted);
-}
-
-.dsp-ring .dsp-ai {
-    position: absolute;
-    top: 6px;
-    right: 8px;
-}
-
-/* Attribute tiles */
-.dsp-attrs {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 8px;
-}
-
-.dsp-attr {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    padding: 8px 10px;
-    border-radius: 12px;
-    background: var(--dsp-card);
-    border: 1px solid var(--dsp-border);
-    min-width: 0;
-}
-
-.dsp-attr-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 4px;
-}
-
-.dsp-attr-abbr {
-    font-size: 11px;
-    font-weight: 800;
-    letter-spacing: 0.1em;
-    color: var(--dsp-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.dsp-attr-value {
-    align-self: flex-start;
-    font-size: 22px;
-    font-weight: 700;
-    line-height: 1.1;
-    padding: 0 2px;
-}
-
-.dsp-attr .dsp-value-input { font-size: 18px; width: 3.4em; text-align: left; }
-
-.dsp-attr-bar {
-    height: 4px;
-    border-radius: 2px;
-    background: rgba(255, 255, 255, 0.08);
-    overflow: hidden;
-}
-
-.dsp-attr-bar span {
-    display: block;
-    height: 100%;
-    border-radius: 2px;
-    background: linear-gradient(90deg, color-mix(in srgb, var(--dsp-accent) 60%, transparent), var(--dsp-accent));
-    transition: width 0.5s ease;
-}
-
-.dsp-attr-name {
-    font-size: 11px;
-    color: var(--dsp-muted);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
 .dsp-foot {
     margin: 4px 2px 0;
     font-size: 11px;
@@ -477,7 +328,6 @@
 
 /* Pop-out gets a bit more room */
 .is-popout .dsp-body { padding: 14px; }
-.is-popout .dsp-rings { grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); }
 
 /* Phones: a bottom sheet instead of a floating window */
 @media (max-width: 700px) {
@@ -493,12 +343,11 @@
     }
     #dooms-stats-panel .dsp-head { cursor: default; }
     #dooms-stats-panel [data-action="popout"] { display: none; }
-    .dsp-rings { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    .dsp-ring-fill,
-    .dsp-attr-bar span { transition: none; }
+    .dsp-p-fill,
+    .dsp-soc-row-bar span { transition: none; }
 }
 
 body.dooms-perf-mode #dooms-stats-panel {
@@ -744,12 +593,6 @@ body.dooms-perf-mode #dooms-stats-panel {
 .dsp-gear-note .dsp-text-btn { padding: 2px 7px; font-size: 11px; }
 
 /* ── Attribute modifiers (items / conditions) ───────────────── */
-.dsp-attr-line {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-}
-
 .dsp-mod {
     font-size: 11px;
     font-weight: 700;
@@ -1403,3 +1246,270 @@ input.dsp-xp-big { width: 3em; font-size: 20px; text-align: center; }
 .dsp-check-result.is-compact { padding: 4px 8px; }
 .dsp-check-result.is-compact .dsp-check-die { width: 26px; height: 26px; font-size: 13px; }
 .dsp-check-recent { display: flex; flex-direction: column; gap: 4px; opacity: 0.8; }
+
+/* ══ Persona-style stat block ═══════════════════════════════════════════
+   HP, SP and the attributes as slanted bars, after the Persona 5 status
+   screen: a blue panel, white names and yellow numbers with a black outline,
+   cyan bars that lean up to the right, each row a little further left. */
+.dsp-pstats {
+    --p5-blue: #1739d6;
+    --p5-blue-2: #0d23a0;
+    --p5-cyan: #3fe6f2;
+    --p5-track: #253556;
+    --p5-yellow: #fff23a;
+    --p5-ink: #05060c;
+    position: relative;
+    padding: 14px 12px 16px 8px;
+    border-radius: 6px;
+    overflow: hidden;
+    background:
+        repeating-linear-gradient(115deg, rgba(255, 255, 255, 0.05) 0 2px, transparent 2px 16px),
+        linear-gradient(160deg, var(--p5-blue) 0%, var(--p5-blue-2) 100%);
+    clip-path: polygon(0 3%, 100% 0, 99% 100%, 1% 97%);
+    font-family: "Arial Black", "Arial Bold", "Helvetica Neue", Impact, sans-serif;
+}
+.dsp-p-group { display: flex; flex-direction: column; gap: 5px; }
+.dsp-p-group + .dsp-p-group {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 2px dashed rgba(255, 255, 255, 0.16);
+}
+
+.dsp-p-row {
+    --dsp-fill: var(--p5-cyan);
+    position: relative;
+    display: grid;
+    grid-template-columns: 50px 46px minmax(60px, 1fr) auto;
+    align-items: center;
+    column-gap: 6px;
+    /* Each row a step further left than the one above, as in the game. */
+    margin-left: calc((var(--dsp-n) - 1 - var(--dsp-i)) * 5px);
+    min-height: 30px;
+}
+.dsp-p-row.is-long { grid-template-columns: minmax(50px, 84px) 46px minmax(60px, 1fr) auto; }
+
+.dsp-p-abbr,
+.dsp-p-value {
+    font-style: italic;
+    font-weight: 900;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    paint-order: stroke fill;
+    -webkit-text-stroke: 4px var(--p5-ink);
+    text-shadow: 2px 2px 0 var(--p5-ink);
+}
+.dsp-p-abbr {
+    justify-self: end;
+    font-size: 22px;
+    color: #f4f8ff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    padding: 2px 3px 2px 0;
+}
+.dsp-p-row.is-long .dsp-p-abbr { font-size: 15px; }
+.dsp-p-value {
+    justify-self: start;
+    font-family: inherit;
+    font-size: 24px;
+    color: var(--p5-yellow);
+    background: none;
+    border: none;
+    padding: 2px 2px;
+    cursor: pointer;
+}
+.dsp-p-value:hover { filter: brightness(1.15); }
+.dsp-p-row .dsp-value-input {
+    width: 3.2em;
+    font-size: 18px;
+    font-weight: 900;
+    color: var(--p5-ink);
+    background: var(--p5-yellow);
+    border: 2px solid var(--p5-ink);
+    border-radius: 2px;
+}
+
+/* The bar: a parallelogram with a black edge, tilted up to the right. */
+.dsp-p-bar {
+    position: relative;
+    display: block;
+    height: 15px;
+    background: var(--p5-track);
+    border: 3px solid var(--p5-ink);
+    transform: rotate(-3deg) skewX(-24deg);
+    box-shadow: 3px 3px 0 rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+}
+.dsp-p-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--dsp-fill) 72%, #fff) 0 35%, var(--dsp-fill) 35%);
+    transition: width 0.45s ease;
+}
+.dsp-p-row.is-state .dsp-p-bar { height: 13px; }
+.dsp-p-row.is-low .dsp-p-abbr { color: #ffd0d0; }
+
+/* "MAX" over a full bar. */
+.dsp-p-barcell { position: relative; display: block; }
+.dsp-p-max {
+    position: absolute;
+    right: -4px;
+    top: -17px;
+    font-size: 16px;
+    font-style: italic;
+    font-weight: 900;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    color: var(--p5-ink);
+    paint-order: stroke fill;
+    -webkit-text-stroke: 3px var(--p5-cyan);
+    transform: rotate(-3deg);
+    pointer-events: none;
+}
+.dsp-p-row.is-max { margin-top: 8px; }
+
+.dsp-p-side {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    min-width: 56px;
+    font-family: system-ui, sans-serif;
+}
+.dsp-p-side .dsp-ai {
+    position: static;
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.7);
+}
+.dsp-p-side .dsp-ai.is-manual { color: rgba(255, 255, 255, 0.4); }
+.dsp-p-side .dsp-mod {
+    color: var(--p5-ink);
+    background: #7ee2a8;
+    font-style: italic;
+}
+.dsp-p-side .dsp-mod.is-down { background: #ff9b9b; }
+.dsp-p-side .dsp-points { margin-left: 0; }
+
+/* ══ Social stats (Persona 5) ═══════════════════════════════════════════
+   Five overlapping circles around a white star; in each, the rank in big
+   italic numbers, the stat name and the rank title on a black tag. */
+.dsp-soc-board {
+    position: relative;
+    width: 100%;
+    max-width: 340px;
+    margin: 0 auto;
+    aspect-ratio: 1 / 0.98;
+    container-type: inline-size;
+    isolation: isolate;
+    font-family: "Arial Black", "Arial Bold", "Helvetica Neue", Impact, sans-serif;
+}
+.dsp-soc-star {
+    position: absolute;
+    left: 50%;
+    top: 53%;
+    width: 22%;
+    transform: translate(-50%, -50%) rotate(-8deg);
+    fill: #fff;
+    filter: drop-shadow(0 0 6px rgba(255, 255, 255, 0.5));
+    z-index: 2;
+    pointer-events: none;
+}
+.dsp-soc {
+    position: absolute;
+    left: var(--x);
+    top: var(--y);
+    width: 42%;
+    aspect-ratio: 1;
+    transform: translate(-50%, -50%);
+    border-radius: 50%;
+    /* All circles share the blue of the game; where they overlap they get lighter. */
+    background: radial-gradient(circle at 38% 32%, #5d9cff 0%, #2f6ee8 75%);
+    opacity: 0.9;
+    mix-blend-mode: screen;
+    box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.35);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3%;
+    z-index: 1;
+}
+.dsp-soc:hover { opacity: 1; }
+/* Progress toward the next rank, as a ring around the circle. */
+.dsp-soc-ring {
+    position: absolute;
+    inset: -4%;
+    border-radius: 50%;
+    background: conic-gradient(#fff calc(var(--pct) * 1%), rgba(255, 255, 255, 0.12) 0);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+    mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+    pointer-events: none;
+}
+.dsp-soc-line {
+    display: flex;
+    align-items: baseline;
+    gap: 4%;
+    transform: rotate(-6deg);
+}
+.dsp-soc-rank {
+    font-family: inherit;
+    font-size: 13cqw;
+    font-style: italic;
+    font-weight: 900;
+    line-height: 1;
+    color: #fff;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    text-shadow: 2px 2px 0 rgba(0, 20, 80, 0.45);
+}
+.dsp-soc.is-max .dsp-soc-rank { color: #fff23a; text-shadow: 2px 2px 0 #05060c; }
+.dsp-soc-name {
+    font-size: 4.2cqw;
+    font-style: italic;
+    font-weight: 900;
+    color: #fff;
+    letter-spacing: -0.02em;
+    text-shadow: 1px 1px 0 rgba(0, 20, 80, 0.5);
+}
+.dsp-soc-title {
+    font-family: system-ui, sans-serif;
+    font-size: 3.6cqw;
+    font-weight: 700;
+    color: #fff;
+    background: #05060c;
+    padding: 2px 9px;
+    transform: rotate(-6deg) skewX(-14deg);
+    white-space: nowrap;
+}
+.dsp-soc .dsp-soc-input {
+    width: 3.6em;
+    font-size: 16px;
+    font-weight: 800;
+    color: #05060c;
+    background: #fff;
+    border: 2px solid #05060c;
+}
+.dsp-soc-list {
+    display: grid;
+    gap: 4px;
+    margin-top: 10px;
+}
+.dsp-soc-row {
+    display: grid;
+    grid-template-columns: 6.5em 1fr auto;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+}
+.dsp-soc-row-name { font-weight: 700; color: var(--soc); }
+.dsp-soc-row-bar {
+    height: 5px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    overflow: hidden;
+}
+.dsp-soc-row-bar span { display: block; height: 100%; transition: width 0.4s ease; }
+.dsp-soc-row-pts { color: var(--dsp-muted); font-variant-numeric: tabular-nums; }

@@ -294,7 +294,7 @@ export function buildEquipmentPrompt(entries, { compact = true, standalone = fal
     const player = list.find(e => e.isUser)?.name;
     const example = JSON.stringify({ equipment: { [list[0].name]: compact
         ? {
-            add: [{ icon: '🗡️', name: 'Iron sword', desc: 'Plain blade', equipped: true, effects: { St: 1 } }],
+            add: [{ icon: '🗡️', name: 'Iron sword', desc: 'Plain blade', equipped: true, effects: { St: 3 } }],
             remove: [{ name: 'Healing potion', qty: 1 }],
             equip: ['Oak shield'], unequip: ['Cloak'],
         }
@@ -314,8 +314,8 @@ export function buildEquipmentPrompt(entries, { compact = true, standalone = fal
             : `. This includes anything ${player} takes out, shows or uses in the user's message, even if it was never mentioned before — the user decides what their character carries`)
         : '';
     out += compact
-        ? `When someone gains, loses, uses up, puts on or puts away an item — or is shown having one not listed${playerNote} — ${where}: ${example}. One emoji, short name, desc under 8 words; "qty" for stacks; "effects" only for real attribute bonuses (applied while equipped). Never remove ${LOCK_MARK}. Omit the key when nothing changes.`
-        : `EQUIPMENT CHANGES: keep these lists true to the story. Add an item when a character gains it — picks it up, buys it, is given it — or when the story shows them already having, wearing or using something that is not listed yet${playerNote}. Remove an item when they drop it, give it away, break it or use it up; for stacks, remove with a "qty" to use up only some. Use "equip" when they put something on or take it in hand and "unequip" when they put it away in the backpack. Write the change with ${where}, like ${example}. Each new item has one emoji icon, a short name, a description under 8 words, "qty" when there are several, "equipped": true if it is worn or held, and "effects" only for genuine attribute bonuses or maluses (e.g. {"St": 1}) — DES applies them automatically while the item is equipped, so never raise or lower attributes yourself because of an item. Items marked ${LOCK_MARK} are fixed by the user and must never be removed. Leave the key out entirely when nothing changes.`;
+        ? `When someone gains, loses, uses up, puts on or puts away an item — or is shown having one not listed${playerNote} — ${where}: ${example}. One emoji, short name, desc under 8 words; "qty" for stacks; "effects" only for real attribute bonuses (applied while equipped; scale 1–99, minor ±2–3, strong ±5–8). Never remove ${LOCK_MARK}. Omit the key when nothing changes.`
+        : `EQUIPMENT CHANGES: keep these lists true to the story. Add an item when a character gains it — picks it up, buys it, is given it — or when the story shows them already having, wearing or using something that is not listed yet${playerNote}. Remove an item when they drop it, give it away, break it or use it up; for stacks, remove with a "qty" to use up only some. Use "equip" when they put something on or take it in hand and "unequip" when they put it away in the backpack. Write the change with ${where}, like ${example}. Each new item has one emoji icon, a short name, a description under 8 words, "qty" when there are several, "equipped": true if it is worn or held, and "effects" only for genuine attribute bonuses or maluses (e.g. {"St": 3}; attributes run 1–99, so a minor bonus is +2–3 and a strong one +5–8) — DES applies them automatically while the item is equipped, so never raise or lower attributes yourself because of an item. Items marked ${LOCK_MARK} are fixed by the user and must never be removed. Leave the key out entirely when nothing changes.`;
     if (seed.length) {
         out += compact
             ? `\nSTARTING GEAR: add what ${seed.join(', ')} already ${seed.length === 1 ? 'carries' : 'carry'} and ${seed.length === 1 ? 'wears' : 'wear'} now, from their description and the scene (a few key items).`

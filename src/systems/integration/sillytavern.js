@@ -44,6 +44,7 @@ import { applyAIAbilities, revertAIAbilitiesForReplacedMessage } from '../featur
 import { applyAIProgress, revertAIProgressForReplacedMessage } from '../features/characterProgress.js';
 import { applyAIMoney, applyAICurrency, revertAIMoneyForReplacedMessage } from '../features/characterMoney.js';
 import { applyAIAffinity, revertAIAffinityForReplacedMessage } from '../features/characterAffinity.js';
+import { applyAISocial } from '../features/characterSocial.js';
 import { settleChecks, revertAIChecksForReplacedMessage } from '../features/characterChecks.js';
 // Expression classification
 import { classifyAllCharacterExpressions, classifyActiveUserExpression, isExpressionSpritesModeEnabled } from './expressionSync.js';
@@ -233,6 +234,10 @@ export async function onMessageReceived(data) {
                 try { if (parsedData.currency) applyAICurrency(parsedData.currency); } catch (e) { console.warn('[Dooms Tracker] Money: currency failed', e); }
                 try { if (parsedData.money) applyAIMoney(parsedData.money, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Money: applying AI update failed', e); }
                 try { if (parsedData.affinity) applyAIAffinity(parsedData.affinity, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Affinity: applying AI update failed', e); }
+            }
+            // Social stats (Persona 5): points the player's character gained.
+            if (parsedData.social && isAwaitingNewMessage) {
+                try { applyAISocial(parsedData.social, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Social: applying AI update failed', e); }
             }
             // Checks: the AI's suggested roll; the outcome of the last one has been answered.
             if (isAwaitingNewMessage) {

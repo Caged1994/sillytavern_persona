@@ -18,14 +18,14 @@ export const RECOVER = 5;
 /** Rules per stat, most severe first. */
 export const CONSEQUENCE_RULES = [
     { id: 'unconscious', stat: 'health', min: 0, max: 0, icon: '😵', name: 'Unconscious', desc: 'Down — cannot act', effects: {} },
-    { id: 'badly-wounded', stat: 'health', min: 1, max: 20, icon: '🩸', name: 'Badly wounded', desc: 'Bleeding, every move hurts', effects: { st: -2, ag: -2, en: -1 } },
-    { id: 'starving', stat: 'satiety', min: 0, max: 10, icon: '🦴', name: 'Starving', desc: 'Weak with hunger', effects: { st: -2, en: -2 } },
-    { id: 'hungry', stat: 'satiety', min: 11, max: 30, icon: '🍞', name: 'Hungry', desc: 'Stomach growling', effects: { st: -1 } },
-    { id: 'exhausted', stat: 'energy', min: 0, max: 10, icon: '😫', name: 'Exhausted', desc: 'Can barely stand', effects: { ag: -2, ma: -2, lu: -1 } },
-    { id: 'tired', stat: 'energy', min: 11, max: 25, icon: '😴', name: 'Tired', desc: 'Slow and heavy-eyed', effects: { ag: -1 } },
-    { id: 'filthy', stat: 'hygiene', min: 0, max: 15, icon: '🪰', name: 'Filthy', desc: 'Dirty and smelly', effects: { lu: -2 } },
-    { id: 'despairing', stat: 'morale', min: 0, max: 10, icon: '🌧️', name: 'Despairing', desc: 'Close to giving up', effects: { ma: -2, lu: -2 } },
-    { id: 'downcast', stat: 'morale', min: 11, max: 25, icon: '😞', name: 'Downcast', desc: 'Low spirits', effects: { lu: -1 } },
+    { id: 'badly-wounded', stat: 'health', min: 1, max: 20, icon: '🩸', name: 'Badly wounded', desc: 'Bleeding, every move hurts', effects: { st: -4, ag: -4, en: -2 } },
+    { id: 'starving', stat: 'satiety', min: 0, max: 10, icon: '🦴', name: 'Starving', desc: 'Weak with hunger', effects: { st: -4, en: -4 } },
+    { id: 'hungry', stat: 'satiety', min: 11, max: 30, icon: '🍞', name: 'Hungry', desc: 'Stomach growling', effects: { st: -2 } },
+    { id: 'exhausted', stat: 'energy', min: 0, max: 10, icon: '😫', name: 'Exhausted', desc: 'Can barely stand', effects: { ag: -4, ma: -4, lu: -2 } },
+    { id: 'tired', stat: 'energy', min: 11, max: 25, icon: '😴', name: 'Tired', desc: 'Slow and heavy-eyed', effects: { ag: -2 } },
+    { id: 'filthy', stat: 'hygiene', min: 0, max: 15, icon: '🪰', name: 'Filthy', desc: 'Dirty and smelly', effects: { lu: -4 } },
+    { id: 'despairing', stat: 'morale', min: 0, max: 10, icon: '🌧️', name: 'Despairing', desc: 'Close to giving up', effects: { ma: -4, lu: -4 } },
+    { id: 'downcast', stat: 'morale', min: 11, max: 25, icon: '😞', name: 'Downcast', desc: 'Low spirits', effects: { lu: -2 } },
     { id: 'mana-drained', stat: 'mana', min: 0, max: 0, icon: '🫗', name: 'SP drained', desc: 'No SP left to use skills', effects: {} },
 ];
 
