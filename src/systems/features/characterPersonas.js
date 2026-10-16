@@ -16,6 +16,10 @@
  * level gained gives it POINTS_PER_LEVEL stat points and the skills its
  * "Learns" list holds.
  *
+ * As in the games, a Persona can never be above its user's level (when
+ * Levels are on): the user cannot add or equip one that is, and one the AI
+ * awakens above it comes in at the character's level.
+ *
  * A Wild Card (the player's character by default) holds up to MAX_STOCK
  * Personas and switches between them; anyone else has one, and a new one
  * replaces it (an evolution). AI changes are undone on a swipe
@@ -96,6 +100,17 @@ function characterLevel(name, isUser) {
     try { return isProgressEnabled() ? getProgress(name, isUser).level || 1 : 1; } catch (e) { return 1; }
 }
 
+/** The highest Persona level a character can use, or null when Levels are off. */
+export function personaLevelCap(name, isUser) {
+    try { return isProgressEnabled() ? getProgress(name, isUser).level || 1 : null; } catch (e) { return null; }
+}
+
+/** Whether the character's level is high enough for this Persona. */
+export function canUsePersona(name, isUser, persona) {
+    const cap = personaLevelCap(name, isUser);
+    return cap === null || !persona || persona.level <= cap;
+}
+
 function changed(name, isUser, { sync = true } = {}) {
     if (sync) syncSkills(name, isUser);
     saveChatScope();
@@ -132,12 +147,16 @@ function syncSkills(name, isUser) {
  * A new Persona for a character: the Compendium's when the name is there,
  * otherwise made from the description (numbers from the program).
  */
-export function makePersonaFor(name, isUser, desc) {
+export function makePersonaFor(name, isUser, desc, { lowerToCap = false } = {}) {
     const d = typeof desc === 'string' ? { name: desc } : (desc || {});
     const lvl = Number(d.level) || characterLevel(name, isUser);
     const def = findInCompendium(d.name);
-    if (def) return P.personaFromCompendium(def, { level: d.level ? lvl : null });
-    return P.personaFromDescription({ ...d, source: d.source || 'ai' }, { level: lvl });
+    let p = def ? P.personaFromCompendium(def, { level: d.level ? lvl : null })
+        : P.personaFromDescription({ ...d, source: d.source || 'ai' }, { level: lvl });
+    const cap = personaLevelCap(name, isUser);
+    // Above the character's level: brought down to it (when asked to).
+    if (p && lowerToCap && cap !== null && p.level > cap) p = P.setPersonaLevel(p, cap).persona;
+    return p;
 }
 
 /** Adds a Persona. Wild Cards collect them; anyone else swaps theirs. */
@@ -160,6 +179,9 @@ function addTo(rec, persona) {
 export function addPersona(name, isUser, desc) {
     const persona = makePersonaFor(name, isUser, { source: 'user', ...(typeof desc === 'string' ? { name: desc } : desc) });
     if (!persona) return { error: 'Give the Persona a name.' };
+    if (!canUsePersona(name, isUser, persona)) {
+        return { error: `${persona.name} is level ${persona.level}: ${name} must reach level ${persona.level} first (now ${personaLevelCap(name, isUser)}).` };
+    }
     const key = statKey(name, isUser);
     const rec = readKey(key);
     const res = addTo(rec, persona);
@@ -185,7 +207,9 @@ function editPersona(name, isUser, id, fn) {
 export function equipPersona(name, isUser, id) {
     const key = statKey(name, isUser);
     const rec = readKey(key);
-    if (!rec.list.some(p => p.id === id) || rec.active === id) return false;
+    const p = rec.list.find(x => x.id === id);
+    if (!p || rec.active === id) return false;
+    if (!canUsePersona(name, isUser, p)) return { error: `${p.name} is level ${p.level}: ${name} must reach level ${p.level} first.` };
     rec.active = id;
     writeKey(key, rec);
     changed(name, isUser);
@@ -205,7 +229,9 @@ export function removePersona(name, isUser, id) {
 }
 
 export function setPersonaLevel(name, isUser, id, level) {
-    return editPersona(name, isUser, id, (p) => P.setPersonaLevel(p, level).persona);
+    const cap = personaLevelCap(name, isUser);
+    const to = cap === null ? level : Math.min(level, cap);
+    return editPersona(name, isUser, id, (p) => (to === p.level ? null : P.setPersonaLevel(p, to).persona));
 }
 
 export function setPersonaStat(name, isUser, id, statId, value) {
@@ -341,7 +367,7 @@ export function applyAIPersonas(raw, messageIndex) {
         const rec = readKey(key);
         const notes = [];
         for (const a of change.add) {
-            const persona = makePersonaFor(target.name, target.isUser, { ...a, source: 'ai' });
+            const persona = makePersonaFor(target.name, target.isUser, { ...a, source: 'ai' }, { lowerToCap: true });
             if (!persona) continue;
             const hadNone = !rec.list.length;
             const res = addTo(rec, persona);
@@ -349,7 +375,7 @@ export function applyAIPersonas(raw, messageIndex) {
         }
         if (change.equip) {
             const p = rec.list.find(x => P.nameKey(x.name) === P.nameKey(change.equip));
-            if (p && rec.active !== p.id) rec.active = p.id;
+            if (p && rec.active !== p.id && canUsePersona(target.name, target.isUser, p)) rec.active = p.id;
         }
         if (change.learn.length) {
             const i = rec.list.findIndex(x => x.id === rec.active);

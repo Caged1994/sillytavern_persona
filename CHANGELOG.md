@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- A Persona can never be above its user's level (Levels on): adding or equipping one refused, the AI's stronger awakenings come in at the user's level, + capped.
 - Hit chances raised (about 90% between equals, as in the games).
 - HP and SP shown and edited as points (current / max) in the Stats panel, fights and dungeons; max HP from En and level, max SP from level; SP costs are the game's points.
 - Removed the automatic conditions from low bars (Badly wounded, Hungry…); old ones are cleared from chats.

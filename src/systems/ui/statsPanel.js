@@ -54,7 +54,7 @@ import { isDungeonEnabled, hasLiveDungeon } from '../features/dungeon.js';
 import { isSocialEnabled, getSocialView, setSocialPoints } from '../features/characterSocial.js';
 import { isResource, getResource, setResourcePoints } from '../features/characterResources.js';
 import {
-    isPersonasEnabled, getPersonaRecord, getActivePersona, addPersona, equipPersona, removePersona,
+    isPersonasEnabled, getPersonaRecord, getActivePersona, addPersona, equipPersona, removePersona, personaLevelCap,
     setPersonaLevel, setPersonaStat, cyclePersonaAffinity, addPersonaSkill, removePersonaSkill, setWildCard,
 } from '../features/characterPersonas.js';
 import { getCompendium, getCompendiumInfo, findInCompendium, refreshCompendium, COMPENDIUM_CHANGED_EVENT } from '../features/personaCompendium.js';
@@ -274,6 +274,8 @@ function affinityGridHtml(p) {
 
 function personaDetailHtml(p, rec) {
     const isActive = rec.active === p.id;
+    const cap = personaLevelCap(selected.name, selected.isUser);
+    const tooHigh = cap !== null && p.level > cap;
     const next = p.learns.filter(l => l.level > p.level).slice(0, 3);
     return `<div class="dsp-pr-detail" data-persona-id="${escapeHtml(p.id)}">
         <div class="dsp-pr-head">
@@ -284,11 +286,13 @@ function personaDetailHtml(p, rec) {
             <div class="dsp-pr-level">
                 <button type="button" class="dsp-icon-btn" data-pr-level="-1" title="One level down"><i class="fa-solid fa-minus"></i></button>
                 <span>Lv <b>${p.level}</b></span>
-                <button type="button" class="dsp-icon-btn" data-pr-level="1" title="One level up (+3 stat points)"><i class="fa-solid fa-plus"></i></button>
+                <button type="button" class="dsp-icon-btn" data-pr-level="1" ${cap !== null && p.level >= cap ? `disabled title="A Persona cannot go above ${escapeHtml(selected.name)}'s level (${cap})"` : 'title="One level up (+3 stat points)"'}><i class="fa-solid fa-plus"></i></button>
             </div>
         </div>
         <div class="dsp-pr-actions">
-            ${isActive ? '<span class="dsp-pr-eq">Equipped</span>' : (rec.wildCard ? '<button type="button" class="dsp-text-btn is-primary" data-action="pr-equip"><i class="fa-solid fa-masks-theater"></i> Equip</button>' : '')}
+            ${isActive ? '<span class="dsp-pr-eq">Equipped</span>' : (rec.wildCard ? (tooHigh
+                ? `<button type="button" class="dsp-text-btn" disabled title="${escapeHtml(selected.name)} must reach level ${p.level} first"><i class="fa-solid fa-lock"></i> Needs Lv ${p.level}</button>`
+                : '<button type="button" class="dsp-text-btn is-primary" data-action="pr-equip"><i class="fa-solid fa-masks-theater"></i> Equip</button>') : '')}
             <span class="dsp-spacer"></span>
             <button type="button" class="dsp-text-btn" data-action="pr-remove" title="Remove this Persona"><i class="fa-solid fa-trash"></i> Remove</button>
         </div>
@@ -315,6 +319,7 @@ function personaHtml() {
     const info = getCompendiumInfo();
     const known = personaForm.name.trim() ? findInCompendium(personaForm.name) : null;
     const canAdd = rec.wildCard ? rec.list.length < MAX_STOCK : true;
+    const capNow = personaLevelCap(selected.name, selected.isUser);
     const stock = rec.list.length > 1 || rec.wildCard ? `
         <div class="dsp-pr-stock">${rec.list.map(p => `
             <button type="button" class="dsp-pr-card${p.id === rec.active ? ' is-active' : ''}${viewed && p.id === viewed.id ? ' is-viewed' : ''}" data-persona="${escapeHtml(p.id)}">
@@ -332,13 +337,13 @@ function personaHtml() {
             <div class="dsp-item-form-row">
                 <input type="text" class="dsp-pr-in-name" data-pr-field="name" list="dsp-pr-compendium" value="${escapeHtml(personaForm.name)}" placeholder="Name${comp.length ? ' (from the Compendium or new)' : ''}" maxlength="40" aria-label="Persona name">
                 <datalist id="dsp-pr-compendium">${comp.map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(`${p.arcana} · Lv ${p.level}`)}</option>`).join('')}</datalist>
-                <input type="number" class="dsp-pr-in-level" data-pr-field="level" value="${escapeHtml(personaForm.level)}" placeholder="Lv" min="1" max="99" aria-label="Level" title="Level (empty: the Compendium's, or the character's)">
+                <input type="number" class="dsp-pr-in-level" data-pr-field="level" value="${escapeHtml(personaForm.level)}" placeholder="Lv" min="1" max="${capNow ?? 99}" aria-label="Level" title="Level (empty: the Compendium's, or the character's)">
             </div>
             ${personaForm.name.trim() && !known ? `<div class="dsp-item-form-row">
                 <select data-pr-field="arcana" aria-label="Arcana"><option value="">Arcana…</option>${ARCANA.map(a => `<option${a === personaForm.arcana ? ' selected' : ''}>${a}</option>`).join('')}</select>
                 <select data-pr-field="focus" aria-label="Strongest stat"><option value="">Even stats</option>${P_STATS.map(id => `<option value="${id}"${id === personaForm.focus ? ' selected' : ''}>Leans on ${P_LABELS[id]}</option>`).join('')}</select>
             </div>` : ''}
-            ${known ? `<p class="dsp-section-hint">From the Compendium: ${escapeHtml(known.arcana)} · Lv ${known.level}</p>` : (personaForm.name.trim() ? '<p class="dsp-section-hint">Not in the Compendium: the extension sets its stats from the level.</p>' : '')}
+            ${known ? `<p class="dsp-section-hint">From the Compendium: ${escapeHtml(known.arcana)} · Lv ${known.level}${capNow !== null && known.level > capNow ? ` — needs ${escapeHtml(selected.name)} at level ${known.level} (now ${capNow})` : ''}</p>` : (personaForm.name.trim() ? `<p class="dsp-section-hint">Not in the Compendium: the extension sets its stats from the level${capNow !== null ? ` (up to ${capNow})` : ''}.</p>` : '')}
             <div class="dsp-item-form-row">
                 <span class="dsp-item-error" role="alert">${escapeHtml(personaForm.error)}</span>
                 <button type="button" class="dsp-text-btn is-primary" data-action="pr-add">Add</button>
@@ -1513,7 +1518,11 @@ function bindRootListeners(root) {
         if (action === 'xp-add') { submitXpForm(); return; }
         if (action === 'pr-add') { submitPersonaForm(); return; }
         if (action === 'pr-refresh') { refreshCompendium({ force: true }).then(() => renderAll()).catch(() => {}); return; }
-        if (action === 'pr-equip' && selected && personaView.id) { equipPersona(selected.name, selected.isUser, personaView.id); return; }
+        if (action === 'pr-equip' && selected && personaView.id) {
+            const r = equipPersona(selected.name, selected.isUser, personaView.id);
+            if (r && r.error) { personaForm.error = r.error; renderAll(); }
+            return;
+        }
         if (action === 'pr-remove' && selected && personaView.id) {
             const p = getPersonaRecord(selected.name, selected.isUser).list.find(x => x.id === personaView.id);
             if (p && (root.ownerDocument.defaultView || window).confirm(`Remove ${p.name}?`)) { removePersona(selected.name, selected.isUser, p.id); personaView.id = null; }

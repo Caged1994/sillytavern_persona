@@ -450,7 +450,7 @@ export function buildPersonaPrompt({ owners = [], wildCards = [], compendium = [
     out += wildCards.length
         ? `Only a Wild Card (${wildCards.join(', ')}) can hold several and switch: {"Name": {"equip": "Pixie"}}; for anyone else a new Persona replaces the old one (an evolution). `
         : 'A character holds one Persona; a new one replaces it (an evolution). ';
-    out += 'When the story teaches the equipped Persona a skill: {"Name": {"learn": ["Zio"]}}. Leave the key out when nothing changes.';
+    out += 'A Persona is never above its user\'s level (a stronger one comes in at the user\'s level). When the story teaches the equipped Persona a skill: {"Name": {"learn": ["Zio"]}}. Leave the key out when nothing changes.';
     if (compendium.length) out += `\nKnown Personas (use these names when one fits): ${compendium.slice(0, 60).join(', ')}.`;
     return out.trim();
 }

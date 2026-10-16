@@ -140,6 +140,9 @@ check('its skills join the spells', Ab.getAbilities('Mastera', true).some(a => a
 S.setCurrentStatValue('Mastera', true, 'st', 5);
 check('editing St edits the Persona', Pe.getActivePersona('Mastera', true).stats.st === 5);
 check('...not the Compendium', ars.stats.st === 2);
+check('a Persona above the character\'s level is refused', !!Pe.addPersona('Mastera', true, { name: 'Bicorn', arcana: 'Hermit', focus: 'st', level: 6 }).error);
+P.setLevel('Mastera', true, 7);
+check('...the equipped one levels with the character', Pe.getActivePersona('Mastera', true).level === 7);
 r = Pe.addPersona('Mastera', true, { name: 'Bicorn', arcana: 'Hermit', focus: 'st', level: 6 });
 check('a Persona not in the Compendium is made from the level', r.persona?.level === 6 && Object.values(r.persona.stats).reduce((a, b) => a + b, 0) === PM.statTotalAt(6));
 check('a Wild Card keeps the first one equipped', Pe.getActivePersona('Mastera', true).name === 'Arsène' && Pe.getPersonas('Mastera', true).length === 2);
@@ -155,13 +158,26 @@ check('for anyone else a new Persona replaces the old (evolution)', Pe.getPerson
 // ── 3. Levels follow the owner ──
 Pe.equipPersona('Mastera', true, Pe.getPersonas('Mastera', true).find(p => p.name === 'Arsène').id);
 const before = Pe.getActivePersona('Mastera', true);
-P.awardXpTo('Mastera', true, 400, { silent: true });
+const lvBefore = P.getProgress('Mastera', true).level;
+P.awardXpTo('Mastera', true, 2000, { silent: true });
 const after = Pe.getActivePersona('Mastera', true);
-const gained = P.getProgress('Mastera', true).level - 1;
+const gained = P.getProgress('Mastera', true).level - lvBefore;
 check('a character level-up levels the equipped Persona', gained > 0 && after.level === before.level + gained, `levels ${gained}, persona ${before.level} → ${after.level}`);
 check('...with 3 points a level', Object.values(after.stats).reduce((a, b) => a + b, 0) === Object.values(before.stats).reduce((a, b) => a + b, 0) + 3 * gained);
 check('...and learns its skills', after.skills.includes('Rakukaja'));
 check('the other Personas stay where they are', Pe.getPersonas('Mastera', true).find(p => p.name === 'Bicorn').level === 6);
+const bic = Pe.getPersonas('Mastera', true).find(p => p.name === 'Bicorn');
+Pe.setPersonaLevel('Mastera', true, bic.id, 99);
+check('a Persona cannot be raised above its user', Pe.getPersonas('Mastera', true).find(p => p.name === 'Bicorn').level === P.getProgress('Mastera', true).level);
+Pe.setPersonaLevel('Mastera', true, bic.id, 6);
+Comp.setCompendiumForTests([ars, { ...ars, name: 'Satanael', level: 95, stats: { st: 60, ma: 60, en: 60, ag: 60, lu: 60 } }]);
+check('a strong Compendium Persona is refused by hand', !!Pe.addPersona('Mastera', true, 'Satanael').error);
+chat.push({ is_user: true, mes: 'q1' }, { is_user: false, mes: 'q2' });
+Pe.applyAIPersonas({ Mastera: { add: 'Satanael' } }, last());
+const sat = Pe.getPersonas('Mastera', true).find(p => p.name === 'Satanael');
+check('the AI awakening one brings it down to the character\'s level', sat && sat.level === P.getProgress('Mastera', true).level && Object.values(sat.stats).every(v => v < 60));
+Pe.revertAIPersonasForReplacedMessage(last());
+Comp.setCompendiumForTests([ars]);
 
 // ── 4. The AI ──
 let instr = pb.generateTrackerInstructions(false, false);
