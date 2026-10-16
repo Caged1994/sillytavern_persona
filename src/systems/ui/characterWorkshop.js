@@ -1,0 +1,4195 @@
+/*
+ * Doom's Enhancement Suite for SillyTavern — Character Workshop
+ * Copyright (C) 2026 Jordan (DangerDaza)
+ *
+ * This file is part of Doom's Enhancement Suite and is licensed under the
+ * GNU Affero General Public License v3.0 or later. If you redistribute this
+ * file or a modified version of it, you must keep this notice intact, state
+ * your changes, and release your version under the same license.
+ *
+ * See the LICENSE file in the project root for the full terms and for
+ * additional copyright notices.
+ *
+ * https://github.com/DangerDaza/Dooms-Enhancement-Suite
+ */
+
+/**
+ * Character Workshop — per-character editor + scene injector.
+ *
+ * Scope: Identity (read-only) and Appearance (portrait + dialogue color).
+ * Plus an "Inject into Scene" action that (a) adds the character to the
+ * active known-characters roster so they appear on the portrait bar,
+ * and (b) queues a one-shot SillyTavern extension prompt instructing
+ * the AI to bring the character into the scene on the next turn. The
+ * injection is cleared automatically once generation ends.
+ *
+ * Opening is decoupled from portraitBar.js via a window CustomEvent
+ * ('dooms:open-workshop') so portraitBar does not import this module.
+ */
+
+import { extensionSettings, lastGeneratedData, updateLastGeneratedData } from '../../core/state.js';
+import {
+    saveSettings,
+    saveChatData,
+    getActiveKnownCharacters,
+    getActiveRemovedCharacters,
+    getActiveBannedCharacters,
+    getActiveCharacterColors,
+    saveCharacterRosterChange,
+} from '../../core/persistence.js';
+import { clearPortraitCache, updatePortraitBar, openExpressionFolder, resolvePortrait, upscaleImage } from './portraitBar.js';
+import { callGenericPopup, POPUP_TYPE } from '../../../../../../popup.js';
+import { getBase64Async } from '../../../../../../utils.js';
+import { getSafeThumbnailUrl, deletePortraitsIfUnreferenced, takePortraitHistoryValues } from '../../utils/avatars.js';
+import { migrateAvatarsToFiles } from '../../utils/avatarMigration.js';
+import { renderThoughts } from '../rendering/thoughts.js';
+import { generateKnifeSuggestions } from '../generation/doomCounter.js';
+import { i18n } from '../../core/i18n.js';
+import { getAllWorldNames, activateWorld, isWorldActive } from '../lorebook/lorebookAPI.js';
+// Campaign versions of a character (Base + one per campaign). The version
+// on the stage decides where buildDraft reads from and commitDraft writes to.
+import {
+    BASE_VERSION,
+    getActiveCampaignId,
+    hasProfile,
+    isLiveVersion,
+    readVersion,
+    writeVersion,
+    addProfile,
+    removeProfile,
+    deleteCharacterEverywhere,
+    removeFromLive,
+    listProfileCampaigns,
+} from '../lorebook/campaignProfiles.js';
+import { getCampaignsInOrder } from '../lorebook/campaignManager.js';
+import {
+    extension_prompt_types,
+    eventSource,
+    event_types,
+    getRequestHeaders,
+} from '../../../../../../../script.js';
+import { desSetExtensionPrompt as setExtensionPrompt, recordPortraitArm, recordPortraitDisarm, recordPortraitFire } from '../generation/inspector.js';
+import { getContext } from '../../../../../../extensions.js';
+import { power_user } from '../../../../../../power-user.js';
+import { escapeHtml } from '../../utils/html.js';
+import { DIALOGUE_COLOR_LIST } from '../../utils/dialogueColors.js';
+// Character Stats: the sheet (definitions, base values, AI flags) is shared by
+// every campaign, so it travels across version switches like colour/aliases.
+import { getStatSheet, saveStatSheet, deleteStatSheet, isStatGenerationPending, setStatEnabled, setStatColor, getDisabledStatIds, getStatColors, STATS_CHANGED_EVENT, addCustomStat, deleteCustomStat, getCustomStatDefinitions } from '../features/characterStats.js';
+import { clampStatValue, BUILTIN_STATES, isHexColor } from '../../utils/statsModel.js';
+// Character Memories (NPCs only): per chat, edited live (no Save needed).
+import {
+    getMemories, addMemory, updateMemory, deleteMemory, deleteMemoriesEverywhere,
+    getRecentLimit, isMemoriesEnabled, MEMORIES_CHANGED_EVENT,
+} from '../features/characterMemories.js';
+import { fadedIds } from '../../utils/memoryModel.js';
+import { deleteEquipmentEverywhere } from '../features/characterEquipment.js';
+import { deleteConditionsEverywhere } from '../features/characterConditions.js';
+import { deleteProgressEverywhere, requestLevelGeneration } from '../features/characterProgress.js';
+import { deleteMoney } from '../features/characterMoney.js';
+import { deleteAffinity } from '../features/characterAffinity.js';
+import { deleteAbilitiesEverywhere } from '../features/characterAbilities.js';
+
+/**
+ * Runs a save function, surfacing failures instead of silently discarding
+ * the user's edit — a swallowed save error loses knife/alias/color changes
+ * with zero feedback.
+ */
+function saveOrWarn(saveFn, what) {
+    try {
+        saveFn();
+    } catch (e) {
+        console.error(`[DES Workshop] ${what} save failed`, e);
+        try {
+            if (window.toastr) window.toastr.error(`Failed to save ${what} — changes may be lost. Check the console.`, 'Character Workshop', { timeOut: 5000 });
+        } catch (toastError) { /* toast is best-effort */ }
+    }
+}
+
+// SillyTavern extension-prompt slot key; must be unique per feature.
+const INJECT_SLOT = 'dooms-workshop-scene-inject';
+// Separate slot for "Eject from scene" — strong anti-inject direction
+// that tells the AI to stop writing this character even if they appear
+// in prior chat history. Distinct slot so eject can be set/cleared
+// independently of any pending inject.
+const EJECT_SLOT = 'dooms-workshop-scene-eject';
+// Persistent ban slot — populated whenever bannedCharacters is non-empty,
+// stays in the prompt every turn until the user un-banishes everyone.
+// Eject is one-shot; this is the standing version for "the AI keeps
+// writing this character no matter what I do."
+const BAN_SLOT = 'dooms-workshop-banned-characters';
+
+const DEFAULT_EJECT_PROMPT =
+`[SCENE DIRECTION — REMOVE CHARACTER]
+The character "{name}" has left the scene and is no longer present. In your next response:
+- Do NOT have them speak.
+- Do NOT have them act.
+- Do NOT describe them as present.
+- Do NOT include them in your presentCharacters tracker output.
+
+If they appeared in earlier turns, treat that as a completed scene — they have moved on. Continue the current scene without them.
+
+This is a one-time direction from the user; do not mention these bracketed instructions in your reply.
+`;
+
+// Default scene-direction template. Users can override per-character via the
+// Injection tab. Supports {name}/{description}/{lorebook}/{relationship}
+// substitution plus conditional blocks {?var}...{/var} that are emitted only
+// when the variable is a non-empty string.
+const DEFAULT_INJECT_PROMPT =
+`[SCENE DIRECTION — INJECT CHARACTER]
+Incorporate the character "{name}" into your next response. Have them arrive, reveal themselves, or otherwise become present in a way that fits the current scene naturally. Include them in your presentCharacters tracker output for this turn.
+{?relationship}
+Relationship to the player: {relationship}. Reflect this dynamic in how they act and speak.
+{/relationship}{?description}
+
+Character notes for "{name}":
+{description}
+{/description}{?lorebook}
+
+The lorebook "{lorebook}" has been activated for additional context about this character; consult its entries as relevant.
+{/lorebook}
+
+This is a one-time direction from the user; do not mention these bracketed instructions in your reply.
+`;
+
+// Shared palette (with human names for tooltips) — src/utils/dialogueColors.js
+// is the single source of truth for both this swatch grid and the portrait
+// bar's automatic color assignment.
+
+let draft = null;
+let $modal = null;
+let listenersBound = false;
+// Guards the two-layer stage crossfade: a tile clicked before the previous
+// portrait finished decoding must win, not the older load handler.
+let stageToken = 0;
+// Milliseconds the editor pane takes to slide/fade on a version switch.
+// Zero under performance mode / reduced motion (the CSS also kills the
+// transitions there, this just skips the wait).
+const VERSION_SWITCH_MS = 220;
+/** Guard so rapid clicks on Generate Knives don't stack API calls. */
+let _knifeGenInProgress = false;
+
+/**
+ * Knife generation themes. Clicking Generate Knives shows these as chips;
+ * the chosen theme steers the AI so every batch doesn't drift toward
+ * betrayal/villainy — Regrets and Fortune in particular produce knives
+ * that make a character sympathetic or lucky rather than compromised.
+ */
+const KNIFE_THEMES = [
+    { id: 'mixed',    emoji: '🎲', label: 'Mixed',      guidance: 'Mix sympathetic, neutral, and compromising beats across the options — debts, secrets, old flames, rivals, regrets, lucky breaks. Do NOT make every knife paint the character as a villain or traitor.' },
+    { id: 'betrayal', emoji: '🗡️', label: 'Betrayal',   guidance: 'Focus on betrayal where {{user}} is the betrayed party — divided loyalties, double lives, deals with the wrong side, and broken promises that are set to cut {{user}} specifically, not strangers or off-screen characters.' },
+    { id: 'enemies',  emoji: '⚔️', label: 'Enemies',    guidance: 'Focus on rivals, grudges, and people from the character\'s past hunting them or wanting them ruined — danger that comes FOR the character, not treachery BY them.' },
+    { id: 'debts',    emoji: '💰', label: 'Debts',      guidance: 'Focus on money owed, favors about to be called in, contracts, and obligations the character cannot easily pay.' },
+    { id: 'flames',   emoji: '💔', label: 'Old Flames', guidance: 'Focus on past romances, heartbreak, lost loves, exes, and unresolved feelings that resurface.' },
+    { id: 'secrets',  emoji: '🤫', label: 'Secrets',    guidance: 'Focus on hidden identities, concealed pasts, and truths the character keeps — not necessarily shameful ones: some secrets are protective, sad, or wondrous.' },
+    { id: 'regrets',  emoji: '🩹', label: 'Regrets',    guidance: 'Focus on guilt, grief, old wounds, and mistakes that haunt the character — sympathetic beats that make them vulnerable rather than villainous.' },
+    { id: 'fortune',  emoji: '🍀', label: 'Fortune',    guidance: 'Focus on POSITIVE surprises: inheritances, secret talents, old friends returning with help, debts owed TO the character, lucky breaks from their past.' },
+];
+let _wsInitialized = false; // guard: don't double-register window/eventSource listeners
+let pendingInjectClear = false; // true while an inject prompt is queued
+// True only between a real (non-quiet, non-dryRun) GENERATION_STARTED and its
+// matching ENDED. Quiet generations from autotrigger extensions
+// (GuidedGenerations thinking/state/clothes guides) and ST's tokenizer dryRuns
+// are invisible to the inject lifecycle — without this guard, the very first
+// quiet gen consumes injectStartsToSkip and its ENDED clears INJECT_SLOT
+// before the user's actual reply runs.
+let inRealGeneration = false;
+// Number of GENERATION_STARTED fires to let pass before clearing. Set to 1
+// at inject time; the generation the inject was for passes without clearing,
+// any subsequent START triggers a clear in case GENERATION_ENDED never fired.
+let injectStartsToSkip = 0;
+
+// Characters currently mid-inject. Keyed lowercase so lookups are stable
+// regardless of casing. Each entry tracks anything we need to undo on
+// either a natural completion or a manual Cancel.
+const pendingInjects = new Map(); // name.toLowerCase() -> { name, disarmAttach: fn|null }
+
+// Mirror state for Eject — same lifecycle as inject (one-shot prompt,
+// clears on the generation after the eject was queued).
+let pendingEjectClear = false;
+let ejectStartsToSkip = 0;
+
+/**
+ * Push the standing "these characters are not in this scene" prompt into
+ * the BAN_SLOT extension prompt, or clear it if no one is currently
+ * banished. Called whenever bannedCharacters changes and once at init so
+ * the slot is repopulated on extension load.
+ */
+export function refreshBanPrompt() {
+    let banned = [];
+    try { banned = getActiveBannedCharacters() || []; } catch (e) {}
+    if (!Array.isArray(banned) || banned.length === 0) {
+        try {
+            setExtensionPrompt(BAN_SLOT, '', extension_prompt_types.IN_PROMPT, 0, false);
+        } catch (e) {}
+        return;
+    }
+    const list = banned.map(n => `- "${n}"`).join('\n');
+    const prompt =
+`[SCENE DIRECTION — CHARACTERS NOT IN SCENE]
+The following characters are NOT in the current scene and must NOT appear in your response:
+${list}
+
+For each banished character:
+- Do NOT have them speak.
+- Do NOT have them act or be present.
+- Do NOT include them in your presentCharacters tracker output.
+- If they were referenced in earlier turns, treat that as a completed scene — they are no longer present.
+
+This is a standing direction; do not mention these bracketed instructions in your reply.
+`;
+    try {
+        setExtensionPrompt(BAN_SLOT, prompt, extension_prompt_types.IN_PROMPT, 0, false);
+    } catch (e) {
+        console.warn('[Dooms Tracker] Workshop: refreshBanPrompt setExtensionPrompt failed', e);
+    }
+}
+
+/**
+ * Toggle a character's banished state. When banished:
+ *  - Added to the active bannedCharacters list (per-chat or global per
+ *    perChatCharacterTracking).
+ *  - Soft-removed from the panel via removedCharacters so the card
+ *    disappears immediately (matches the user intent).
+ *  - The standing BAN_SLOT extension prompt is refreshed so the AI is
+ *    told not to include them on the next and every subsequent turn
+ *    until the user un-banishes.
+ * When un-banished: removed from bannedCharacters; soft-remove is left
+ * alone (the user can restore via the Workshop's banner).
+ */
+export function setCharacterBanished(name, banished) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return;
+    const lower = trimmed.toLowerCase();
+    let banned;
+    try { banned = getActiveBannedCharacters(); } catch (e) { return; }
+    if (!Array.isArray(banned)) return;
+    const isCurrentlyBanned = banned.some(n => typeof n === 'string' && n.toLowerCase() === lower);
+    if (banished && !isCurrentlyBanned) {
+        banned.push(trimmed);
+        // Soft-remove so the card drops out of the panel immediately.
+        try {
+            const removed = getActiveRemovedCharacters();
+            if (Array.isArray(removed) && !removed.some(n => typeof n === 'string' && n.toLowerCase() === lower)) {
+                removed.push(trimmed);
+            }
+        } catch (e) {}
+        saveCharacterRosterChange();
+        saveOrWarn(saveSettings, 'settings');
+        refreshBanPrompt();
+        try { clearPortraitCache(); updatePortraitBar(); } catch (e) {}
+        try { renderThoughts(); } catch (e) {}
+    } else if (!banished && isCurrentlyBanned) {
+        for (let i = banned.length - 1; i >= 0; i--) {
+            if (typeof banned[i] === 'string' && banned[i].toLowerCase() === lower) {
+                banned.splice(i, 1);
+            }
+        }
+        saveCharacterRosterChange();
+        saveOrWarn(saveSettings, 'settings');
+        refreshBanPrompt();
+    }
+}
+
+/**
+ * Lookup helper used by the Workshop's UI to render the toggle state.
+ */
+function isCharacterBanished(name) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return false;
+    const lower = trimmed.toLowerCase();
+    try {
+        const banned = getActiveBannedCharacters();
+        return Array.isArray(banned) && banned.some(n => typeof n === 'string' && n.toLowerCase() === lower);
+    } catch (e) { return false; }
+}
+
+function broadcastInjectState(name, pending) {
+    try {
+        window.dispatchEvent(new CustomEvent('dooms:inject-state-changed', {
+            detail: { name, pending: !!pending },
+        }));
+    } catch (e) {}
+}
+
+function t(key, fallback, vars) {
+    let s;
+    try {
+        s = i18n?.getTranslation?.(key);
+    } catch (e) {
+        s = null;
+    }
+    if (!s) s = fallback;
+    if (vars && typeof s === 'string') {
+        for (const [k, v] of Object.entries(vars)) {
+            s = s.split(`{${k}}`).join(v);
+        }
+    }
+    return s;
+}
+
+export function initCharacterWorkshop() {
+    // Workshop is part of the Present Characters Panel feature set;
+    // when PCP is disabled the Workshop has nothing useful to do, so
+    // we early-return and skip listener registration.
+    if (extensionSettings?.showPortraitBar === false) {
+        console.log('[Dooms Tracker] Character Workshop disabled (Present Characters Panel off), skipping init');
+        return;
+    }
+    // Idempotency guard: if init runs twice (extension hot-reload, manual
+    // re-init, etc.) don't double-register the window + eventSource
+    // listeners — doing so duplicates every open-workshop / cancel-inject
+    // / generation-ended handler and leads to subtle state corruption.
+    if (_wsInitialized) return;
+    _wsInitialized = true;
+    window.addEventListener('dooms:open-workshop', (e) => {
+        const name = e?.detail?.characterName;
+        const isUser = !!e?.detail?.isUser;
+        if (name) openCharacterWorkshop(name, { isUser });
+    });
+    // Portrait-bar (or any other surface) can request a pending-inject be
+    // cancelled via this event. Same decoupling pattern as open-workshop.
+    window.addEventListener('dooms:cancel-inject', (e) => {
+        const name = e?.detail?.name;
+        if (name) cancelInject(name);
+    });
+    // Clear the inject prompt after the targeted generation. Belt-and-
+    // suspenders: trigger from ENDED/STOPPED (normal path) and also from
+    // the START of any *subsequent* generation (covers streaming paths or
+    // aborts where ENDED never fires).
+    try {
+        eventSource.on(event_types.GENERATION_ENDED, onGenerationEndedForInject);
+        eventSource.on(event_types.GENERATION_STOPPED, onGenerationEndedForInject);
+        eventSource.on(event_types.GENERATION_STARTED, onGenerationStartedForInject);
+    } catch (e) {
+        console.warn('[Dooms Tracker] Workshop: failed to register GENERATION_ENDED listener', e);
+    }
+    // Repopulate the standing ban prompt from saved bannedCharacters so it
+    // survives a page reload. Also re-fire on chat changes since the banned
+    // list is per-chat when perChatCharacterTracking is on.
+    try { refreshBanPrompt(); } catch (e) {}
+    try {
+        eventSource.on(event_types.CHAT_CHANGED, () => {
+            try { refreshBanPrompt(); } catch (err) {}
+        });
+    } catch (e) {}
+}
+
+// Tracks the in-flight close fade-out timeout. Cancelled on reopen so a
+// pending .hide() can't fire after we've reopened, and so the closing-
+// animation doesn't visibly overlap the new modal's content.
+let _pendingCloseTimeout = null;
+
+export function openCharacterWorkshop(characterName, options = {}) {
+    if (!characterName) {
+        console.warn('[Dooms Tracker] openCharacterWorkshop called without a name');
+        return;
+    }
+    if (!ensureModal()) return;
+
+    // Kill any pending close-fade-out: prevents (a) the previous modal's
+    // content flashing during its fadeOut overlapping the new fadeIn,
+    // and (b) the close-timeout firing .hide() after we've reopened.
+    if (_pendingCloseTimeout) {
+        clearTimeout(_pendingCloseTimeout);
+        _pendingCloseTimeout = null;
+    }
+    $modal.removeClass('is-closing');
+
+    // Mode resolution. The YOU-tagged tile is the source of truth for
+    // user intent: if the dispatch says isUser=true the user clicked the
+    // YOU badge (or the Roster Users tab), and that's authoritative —
+    // open user mode regardless of what other stores hold. The earlier
+    // version of this routine ignored the dispatch flag whenever an NPC
+    // entry existed without a matching userCharacters[name] key, which
+    // meant clicking the YOU tile for an active persona that lacked a
+    // formal Workshop entry still opened NPC mode.
+    //
+    // When the dispatch flag is false/missing (Roster Characters tab
+    // click, programmatic open), fall back to data inference so a stale
+    // NPC stub for a persona name doesn't force NPC mode either.
+    let isUser;
+    if (options.isUser) {
+        isUser = true;
+    } else {
+        // Case-insensitive lookup so AI-cased names (e.g., "yashiro" coming
+        // off a PCP tile) match the canonical persona key ("Yashiro"). And
+        // use active getters for the NPC stores so per-chat tracking sees
+        // chat_metadata.dooms_tracker.knownCharacters / characterColors —
+        // the global properties are stale when perChatCharacterTracking is
+        // on, which would mislabel a real per-chat NPC as a user persona.
+        const lowerName = String(characterName).toLowerCase();
+        const userChars = extensionSettings.userCharacters || {};
+        const activeUser = extensionSettings.activeUserCharacter;
+        const userExists = Object.keys(userChars).some(k => k.toLowerCase() === lowerName)
+            || (typeof activeUser === 'string' && activeUser.toLowerCase() === lowerName);
+        let activeKnown = {};
+        let activeColors = {};
+        try { activeKnown = getActiveKnownCharacters() || {}; } catch (e) {}
+        try { activeColors = getActiveCharacterColors() || {}; } catch (e) {}
+        const npcAvatars = extensionSettings.npcAvatars || {};
+        const npcExists = Object.keys(activeKnown).some(k => k.toLowerCase() === lowerName)
+            || Object.keys(activeColors).some(k => k.toLowerCase() === lowerName)
+            || Object.keys(npcAvatars).some(k => k.toLowerCase() === lowerName);
+        isUser = userExists && !npcExists;
+    }
+    // Open on the version the chat currently sees: the active campaign's
+    // when the character has one, else Base.
+    loadVersion(characterName, isUser, null, { fullReset: true });
+
+    if (!listenersBound) {
+        bindStaticListeners();
+        listenersBound = true;
+    }
+
+    $modal.attr('data-theme', extensionSettings?.theme || 'default');
+    $modal.addClass('is-open').css('display', '');
+
+    // Only now does the relationship strip have a width to measure, so this
+    // has to come after the modal is shown — landing on the selected chip and
+    // sizing up the arrows both depend on real layout.
+    if (!isUser) {
+        scrollSelectedRelationshipIntoView();
+        updateRelationshipArrows();
+    }
+}
+
+export function closeCharacterWorkshop() {
+    if (!$modal || !$modal.length) return;
+    $modal.removeClass('is-open').addClass('is-closing');
+    if (_pendingCloseTimeout) clearTimeout(_pendingCloseTimeout);
+    // Clear the Expressions tab's lazy-load cache so the next open
+    // re-fetches sprites — protects against a stale uploaded-count
+    // display if the underlying sprite folder changed between opens.
+    $modal.find('#cw-expressions-pane').removeAttr('data-character');
+    _pendingCloseTimeout = setTimeout(() => {
+        $modal.removeClass('is-closing').hide();
+        _pendingCloseTimeout = null;
+    }, 200);
+    draft = null;
+    closeVersionAddMenu();
+}
+
+// ─── Versions (Base + campaigns) ────────────────────────────────────────────
+
+/** The version the chat currently sees for `name`: the active campaign's if it has one, else Base. */
+function defaultVersionFor(name) {
+    const active = getActiveCampaignId();
+    return active && hasProfile(active, name) ? active : BASE_VERSION;
+}
+
+function campaignById(id) {
+    if (!id || id === BASE_VERSION) return null;
+    return extensionSettings.lorebook?.campaigns?.[id] || null;
+}
+
+/** Display name of a version ("Base" or the campaign's name). */
+function versionLabel(versionId) {
+    if (!versionId || versionId === BASE_VERSION) return t('characterWorkshop.versionBase', 'Base');
+    return campaignById(versionId)?.name || versionId;
+}
+
+/** Whether the OS/user asked for no motion, or DES performance mode is on. */
+function motionDisabled() {
+    try {
+        if (document.body.classList.contains('dooms-perf-mode')) return true;
+        return !!window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+    } catch (e) { return false; }
+}
+
+/**
+ * Builds the draft for one version of a character and paints the whole
+ * card. This is the one render entry point — opening the card, clicking a
+ * version tile, and the post-campaign-switch refresh all come through here.
+ * @param {string} name
+ * @param {boolean} isUser
+ * @param {string|null} versionId - 'base', a campaign id, or null for the live default
+ * @param {{fullReset?: boolean, carry?: object|null}} [options]
+ *   fullReset: also clear the knife/alias inputs, suggestions and jump to
+ *   the Identity pane (opening the card). A version switch keeps the pane
+ *   and the half-typed inputs. carry: dirty version-independent fields
+ *   (colour, aliases) from the previous draft to keep across the switch.
+ */
+function loadVersion(name, isUser, versionId, { fullReset = false, carry = null } = {}) {
+    draft = buildDraft(name, isUser, versionId);
+    if (carry) {
+        if (carry.dirty?.color) { draft.color = carry.color; draft.dirty.color = true; }
+        if (carry.dirty?.aliases) { draft.aliases = [...(carry.aliases || [])]; draft.dirty.aliases = true; }
+        if (carry.dirty?.stats) { draft.stats = cloneStats(carry.stats); draft.statsPending = !!carry.statsPending; draft.dirty.stats = true; }
+    }
+    // Stamp the modal with a mode attribute so CSS can flip NPC-only vs
+    // user-only sections without a JS class-toggle on every section.
+    $modal.attr('data-mode', isUser ? 'user' : 'npc');
+    $modal.toggleClass('cw-version-readonly-portrait', !draft.isLive && !isUser);
+
+    renderTitle();
+    renderCampaignBadge();
+    renderHiddenBanner();
+    renderIdentity();
+    renderAppearance();
+    renderInjection();
+    renderKnives();
+    renderAliases();
+    renderStats();
+    renderMemories();
+    renderVersionStrip();
+    if (fullReset) {
+        $modal.find('#cw-knife-input').val('');
+        $modal.find('#cw-alias-input').val('');
+        resetStatAddForm();
+        $modal.find('#cw-mem-input').val('');
+        $modal.find('#cw-mem-error').text('');
+        activatePane('identity');
+    }
+    // Suggestions generated for another version must not be kept for this one.
+    clearKnifeSuggestions();
+}
+
+/**
+ * The edits that do not belong to a single version (colour, aliases, stats)
+ * and so travel with the user when another version is put on the stage.
+ */
+function versionIndependentCarry() {
+    return {
+        color: draft.color,
+        aliases: draft.aliases,
+        stats: draft.stats,
+        statsPending: draft.statsPending,
+        dirty: { color: draft.dirty.color, aliases: draft.dirty.aliases, stats: draft.dirty.stats },
+    };
+}
+
+/** Deep-enough copy of a resolved stat list (entries are flat objects). */
+function cloneStats(stats) {
+    return Array.isArray(stats) ? stats.map(s => ({ ...s })) : [];
+}
+
+// ─── Stats tab ──────────────────────────────────────────────────────────────
+
+function statRowHtml(stat) {
+    const isState = stat.kind === 'state';
+    const off = stat.enabled === false;
+    const range = isState ? '0–100%' : '1–99';
+    // Stats (rings) get a colour picker: global for the built-ins, this
+    // character's own for custom stats. Attributes show their abbreviation.
+    const colorTip = `Colour of ${stat.name} for every character`;
+    const swatch = isState
+        ? `<label class="cw-stat-swatch" title="${escapeHtml(colorTip)}" style="background:${escapeHtml(stat.color || '#888888')}">
+                <input type="color" class="cw-stat-color" value="${escapeHtml(toSixDigitHex(stat.color))}" aria-label="${escapeHtml(colorTip)}">
+           </label>`
+        : `<span class="cw-stat-abbr">${escapeHtml(stat.abbr || stat.name.slice(0, 3).toUpperCase())}</span>`;
+    const tip = stat.description ? ` title="${escapeHtml(stat.description)}"` : '';
+    const disabledAttr = off ? ' disabled' : '';
+    const onSwitch = `<label class="rpg-toggle-switch cw-stat-on" title="${off ? 'Switched off' : 'Switched on'} for every character — click to change">
+                <input type="checkbox" class="cw-stat-on-input"${off ? '' : ' checked'} aria-label="Use ${escapeHtml(stat.name)}">
+                <span class="rpg-toggle-slider"></span>
+           </label>`;
+    return `
+        <div class="cw-stat-row${stat.builtin ? '' : ' is-custom'}${off ? ' is-off' : ''}" data-stat="${escapeHtml(stat.id)}">
+            ${swatch}
+            <div class="cw-stat-name"${tip}>
+                <span class="cw-stat-label">${escapeHtml(stat.name)}${off ? ' <span class="cw-stat-off-tag">off</span>' : ''}</span>
+                ${stat.builtin ? '' : `<span class="cw-stat-desc">${escapeHtml(stat.description || 'No description')}</span>`}
+            </div>
+            <label class="cw-stat-base" title="Starting value (${range})">
+                <input type="number" class="rpg-input cw-stat-base-input" min="${stat.min}" max="${stat.max}" step="1"
+                    value="${escapeHtml(String(stat.base))}" aria-label="${escapeHtml(stat.name)} starting value"${disabledAttr}><span class="cw-stat-unit">${isState ? '%' : ''}</span>
+            </label>
+            <label class="cw-stat-ai-toggle" title="Let the AI change ${escapeHtml(stat.name)}">
+                <input type="checkbox" class="cw-stat-ai-input"${stat.ai ? ' checked' : ''}${disabledAttr}> AI
+            </label>
+            ${onSwitch}
+            ${stat.builtin ? '<span class="cw-stat-del-spacer"></span>' : `<button type="button" class="rpg-dc-knife-btn cw-stat-delete" title="Delete ${escapeHtml(stat.name)} for every character"><i class="fa-solid fa-trash"></i></button>`}
+        </div>`;
+}
+
+// ─── Memories tab ───────────────────────────────────────────────────────────
+
+function renderMemories() {
+    const $list = $modal.find('#cw-mem-list');
+    if (!$list.length) return;
+    const $meta = $modal.find('#cw-mem-meta');
+    if (!draft || draft.isUser) { $list.empty(); $meta.empty(); return; }
+    const list = getMemories(draft.name);
+    const limit = getRecentLimit();
+    const faded = fadedIds(list, limit);
+    const campaignId = getActiveCampaignId();
+    const campaign = campaignId ? extensionSettings.lorebook?.campaigns?.[campaignId]?.name : '';
+    const important = list.filter(m => m.important).length;
+    $meta.html(`
+        <span>${list.length} ${list.length === 1 ? 'memory' : 'memories'} · ${important} ★ · ${list.length - faded.size} sent to the AI</span>
+        ${campaign ? `<span class="cw-mem-campaign">${escapeHtml(campaign)}</span>` : ''}
+        ${isMemoriesEnabled() ? '' : '<span class="cw-mem-off">Memories are switched off in Settings → Stats</span>'}`);
+    if (!list.length) {
+        $list.html(`<div class="cw-mem-empty">No memories yet. They appear here as the story goes — or add one below.</div>`);
+        return;
+    }
+    // Newest first: the most recent memories are the ones you check.
+    $list.html([...list].reverse().map(m => {
+        const isFaded = faded.has(m.id);
+        return `
+        <div class="cw-mem-row${m.important ? ' is-important' : ''}${isFaded ? ' is-faded' : ''}" data-id="${escapeHtml(m.id)}">
+            <button type="button" class="cw-mem-star" title="${m.important ? 'Important — always remembered. Click to make it a normal memory' : 'Make it important — never forgotten'}" aria-pressed="${m.important}">${m.important ? '★' : '☆'}</button>
+            <div class="cw-mem-text" tabindex="0" title="Click to edit">${escapeHtml(m.text)}</div>
+            <span class="cw-mem-tags">
+                ${m.source === 'ai' ? '<span class="cw-mem-tag" title="Added by the AI">AI</span>' : ''}
+                ${isFaded ? '<span class="cw-mem-tag is-faded" title="Older than the most recent memories: kept here, no longer sent to the AI">faded</span>' : ''}
+            </span>
+            <button type="button" class="rpg-dc-knife-btn cw-mem-delete" title="Delete memory"><i class="fa-solid fa-trash"></i></button>
+        </div>`;
+    }).join(''));
+}
+
+function memoryIdOf(el) {
+    return $(el).closest('.cw-mem-row').attr('data-id');
+}
+
+function onMemoriesChanged() {
+    if (!$modal || !$modal.hasClass('is-open') || !draft || draft.isUser) return;
+    if ($modal.find('.cw-mem-edit').length) return; // don't kill an edit in progress
+    renderMemories();
+}
+
+/** <input type=color> only takes #rrggbb. */
+function toSixDigitHex(color) {
+    const c = String(color || '').trim();
+    if (/^#[0-9a-f]{6}$/i.test(c)) return c.toLowerCase();
+    if (/^#[0-9a-f]{3}$/i.test(c)) return '#' + c.slice(1).split('').map(ch => ch + ch).join('').toLowerCase();
+    return '#888888';
+}
+
+function renderStats() {
+    const $host = $modal.find('#cw-stats-editor');
+    if (!$host.length) return;
+    // On/off and built-in colours are global settings that may have changed
+    // since the draft was built (Settings, another character): read them fresh.
+    syncGlobalStatSettings();
+    // Switched-off stats are listed greyed out so they can be switched back on.
+    const stats = draft?.stats || [];
+    const attrs = stats.filter(s => s.kind === 'attribute');
+    const states = stats.filter(s => s.kind === 'state');
+    // NPCs get their values from the AI the first time they are in a scene;
+    // the persona is always set by hand.
+    const genBox = draft?.isUser ? '' : (draft?.statsPending
+        ? `<div class="cw-stats-gen is-pending">
+                <i class="fa-solid fa-wand-magic-sparkles"></i>
+                <span>The AI will generate ${escapeHtml(draft.name)}'s stats to fit who they are, the next time they are in a reply. Edit a starting value below to set them yourself instead.</span>
+            </div>`
+        : `<div class="cw-stats-gen">
+                <span>Want the AI to decide these values again from who ${escapeHtml(draft?.name || 'this character')} is?</span>
+                <button type="button" class="rpg-btn" id="cw-stats-regenerate"><i class="fa-solid fa-wand-magic-sparkles"></i> Regenerate with AI</button>
+            </div>`);
+    $host.html(`
+        ${genBox}
+        ${attrs.length ? `<div class="cw-stats-group">
+            <div class="cw-stats-group-head"><span>Attributes</span><span class="muted">1–99</span></div>
+            ${attrs.map(statRowHtml).join('')}
+        </div>` : ''}
+        ${states.length ? `<div class="cw-stats-group">
+            <div class="cw-stats-group-head"><span>Stats</span><span class="muted">0–100% · rings in the Stats panel</span></div>
+            ${states.map(statRowHtml).join('')}
+        </div>` : ''}
+        <p class="helper cw-stats-legend"><strong>On</strong>, the colour and the custom stats themselves apply to every character; starting values and the AI tick are this character's.</p>`);
+}
+
+function onGlobalStatsChanged(e) {
+    if (e?.detail?.source !== 'settings') return;
+    if (!$modal || !$modal.hasClass('is-open') || !draft) return;
+    const active = document.activeElement;
+    if (active && $modal[0].contains(active) && active.matches('input[type=number], input[type=color]')) return;
+    renderStats();
+}
+
+/** Copies the global on/off state and built-in colours onto the draft. */
+function syncGlobalStatSettings() {
+    if (!draft || !Array.isArray(draft.stats)) return;
+    const off = new Set(getDisabledStatIds());
+    const colors = getStatColors();
+    const defaults = new Map(BUILTIN_STATES.map(d => [d.id, d.color]));
+    // Custom stats added or deleted elsewhere (Settings, another character).
+    const defs = getCustomStatDefinitions();
+    const defIds = new Set(defs.map(d => d.id));
+    draft.stats = draft.stats.filter(st => st.builtin || defIds.has(st.id));
+    const have = new Set(draft.stats.map(st => st.id));
+    if (defs.some(d => !have.has(d.id))) {
+        const fresh = getStatSheet(draft.name, draft.isUser);
+        for (const st of fresh) {
+            if (have.has(st.id)) continue;
+            const after = draft.stats.map(x => x.kind).lastIndexOf(st.kind);
+            draft.stats.splice(after + 1, 0, { ...st });
+        }
+    }
+    for (const st of draft.stats) {
+        st.enabled = !off.has(st.id);
+        if (st.builtin && st.kind === 'state') st.color = isHexColor(colors[st.id]) ? colors[st.id] : (defaults.get(st.id) || st.color);
+        else if (!st.builtin && isHexColor(colors[st.id])) st.color = colors[st.id];
+    }
+}
+
+/** Clears the "Add a stat" form; the AI box follows the kind's default. */
+function resetStatAddForm() {
+    $modal.find('#cw-stat-new-name').val('');
+    $modal.find('#cw-stat-new-desc').val('');
+    $modal.find('#cw-stat-new-kind').val('state');
+    $modal.find('#cw-stat-new-ai').prop('checked', true);
+    $modal.find('#cw-stat-new-error').text('');
+}
+
+function findDraftStat(el) {
+    const id = $(el).closest('.cw-stat-row').attr('data-stat');
+    return id && draft ? draft.stats.find(s => s.id === id) : null;
+}
+
+/** After a successful commit the draft matches the stores again. */
+function clearDirtyFlags() {
+    if (!draft || !draft.dirty) return;
+    for (const key of Object.keys(draft.dirty)) draft.dirty[key] = false;
+}
+
+/**
+ * Folds a half-typed knife or alias (text sitting in the input, Add not yet
+ * clicked) into the draft so a save keeps it, then clears the inputs. Used
+ * by every "save before switching" path; a plain discard clears them only.
+ */
+function pushPendingInputs() {
+    if (!draft) return;
+    const knife = String($modal.find('#cw-knife-input').val() || '').trim();
+    if (knife) {
+        draft.knives.push({ id: 'knife_' + Date.now(), text: knife, used: false });
+        draft.dirty.knives = true;
+    }
+    $modal.find('#cw-knife-input').val('');
+    if (!draft.isUser) {
+        const alias = String($modal.find('#cw-alias-input').val() || '').trim();
+        const lower = alias.toLowerCase();
+        if (alias && lower !== String(draft.name).toLowerCase() && !draft.aliases.some(a => a.toLowerCase() === lower)) {
+            draft.aliases.push(alias);
+            draft.dirty.aliases = true;
+        }
+    }
+    $modal.find('#cw-alias-input').val('');
+}
+
+/** Any edit that belongs to the version on the stage (colour and aliases are version-independent). */
+function hasVersionedEdits() {
+    if (!draft) return false;
+    const d = draft.dirty || {};
+    if (d.avatar || d.injection || d.relationship || d.knives || d.appearance) return true;
+    // A half-typed knife or alias lives only in the input until Add is
+    // clicked; count it so a switch never silently drops it.
+    if (String($modal.find('#cw-knife-input').val() || '').trim()) return true;
+    if (String($modal.find('#cw-alias-input').val() || '').trim()) return true;
+    return false;
+}
+
+/**
+ * Puts another version of the open character on the stage. Unsaved edits
+ * to the current version are saved or discarded on the user's say-so;
+ * colour and alias edits (version-independent) travel along either way.
+ */
+async function switchVersion(versionId) {
+    if (!draft || draft.isUser) return;
+    if (versionId === draft.versionId) return;
+    if (hasVersionedEdits()) {
+        const ok = window.confirm(t(
+            'characterWorkshop.confirmSwitch',
+            'You have unsaved changes to the {version} version of {name}.\n\nOK saves them before switching; Cancel discards them.',
+            { version: versionLabel(draft.versionId), name: draft.name },
+        ));
+        if (ok) {
+            // Push the pending inputs in first so they are part of the save.
+            pushPendingInputs();
+            commitDraft();
+        } else {
+            $modal.find('#cw-knife-input').val('');
+            $modal.find('#cw-alias-input').val('');
+        }
+    }
+    const carry = versionIndependentCarry();
+    const name = draft.name;
+    const $editor = $modal.find('.cw-editor');
+    const animate = !motionDisabled();
+    if (animate) {
+        $editor.addClass('is-switching');
+        await new Promise(resolve => setTimeout(resolve, VERSION_SWITCH_MS / 2));
+        // The card may have closed or changed character while we waited.
+        if (!draft || draft.name !== name) { $editor.removeClass('is-switching'); return; }
+    }
+    loadVersion(name, false, versionId, { carry });
+    if (animate) {
+        // Let the new content paint before sliding it back in.
+        requestAnimationFrame(() => requestAnimationFrame(() => $editor.removeClass('is-switching')));
+    }
+    updateRelationshipArrows();
+    scrollSelectedRelationshipIntoView();
+}
+
+/** Creates a campaign version (a clone of the version on the stage) and switches to it. */
+async function addVersion(campaignId) {
+    if (!draft || draft.isUser || !campaignById(campaignId)) return;
+    const name = draft.name;
+    if (hasProfile(campaignId, name)) { await switchVersion(campaignId); return; }
+    if (hasVersionedEdits()) {
+        // The clone is taken from the saved version, so save what is on the
+        // stage first — that is what the user is looking at and expects to copy.
+        pushPendingInputs();
+        commitDraft();
+    }
+    addProfile(campaignId, name, { from: draft.versionId });
+    saveOrWarn(saveSettings, 'settings');
+    await switchVersion(campaignId);
+    try { refreshRosterBadges(); } catch (e) {}
+    try {
+        if (window.toastr) window.toastr.success(`${versionLabel(campaignId)} version of "${name}" created — edit it and Save.`, 'Character Workshop', { timeOut: 3500 });
+    } catch (e) {}
+}
+
+/** Drops a campaign version; the character falls back to Base in that campaign. */
+async function removeVersion(campaignId) {
+    if (!draft || draft.isUser || !campaignId || campaignId === BASE_VERSION) return;
+    const name = draft.name;
+    if (!hasProfile(campaignId, name)) return;
+    const ok = window.confirm(t(
+        'characterWorkshop.confirmRemoveVersion',
+        'Remove the {version} version of {name}?\n\nThe character falls back to Base in that campaign. Portrait files still used by another version are kept.',
+        { version: versionLabel(campaignId), name },
+    ));
+    if (!ok) return;
+    const candidates = removeProfile(campaignId, name);
+    saveOrWarn(saveSettings, 'settings');
+    deletePortraitsIfUnreferenced(candidates).catch(() => {});
+    try { clearPortraitCache(); updatePortraitBar(); } catch (e) {}
+    try { refreshRosterBadges(); } catch (e) {}
+    if (draft.versionId === campaignId) {
+        loadVersion(name, false, null, {});
+    } else {
+        // Removing the active campaign's version while Base is on the stage
+        // makes Base live again: refresh the badge and the Render button
+        // without rebuilding the draft (unsaved edits stay untouched).
+        draft.isLive = isLiveVersion(draft.versionId, name);
+        $modal.toggleClass('cw-version-readonly-portrait', !draft.isLive);
+        renderCampaignBadge();
+        renderAppearance();
+        renderVersionStrip();
+    }
+}
+
+/**
+ * Called by campaignManager after the active campaign changed while the
+ * card is open. The draft was built for a version that may no longer be
+ * the live one, and a later Save would otherwise write the OLD campaign's
+ * values into the new campaign's stores. Saves pending edits on request
+ * (commitDraft resolves the target version at commit time, so the edits
+ * land in the version they were made on), then reloads the live version.
+ */
+export function refreshWorkshopIfOpen() {
+    if (!$modal || !$modal.hasClass('is-open') || !draft || draft.isUser) return;
+    const name = draft.name;
+    if (hasVersionedEdits()) {
+        const ok = window.confirm(t(
+            'characterWorkshop.confirmSwitch',
+            'You have unsaved changes to the {version} version of {name}.\n\nOK saves them before switching; Cancel discards them.',
+            { version: versionLabel(draft.versionId), name },
+        ));
+        if (ok) {
+            pushPendingInputs();
+            commitDraft();
+        }
+        $modal.find('#cw-knife-input').val('');
+        $modal.find('#cw-alias-input').val('');
+    }
+    const carry = versionIndependentCarry();
+    loadVersion(name, false, null, { carry });
+}
+
+/** Repaints the Roster's version badges if it is open (dynamic — the roster imports nothing from here). */
+async function refreshRosterBadges() {
+    try {
+        const roster = await import('./characterRoster.js');
+        if (typeof roster.refreshRosterIfOpen === 'function') roster.refreshRosterIfOpen();
+    } catch (e) {}
+}
+
+/**
+ * Sets the accent to the campaign colour of the version on the stage (theme
+ * highlight for Base). Set on .rpg-settings-popup-content — the element that
+ * owns the --rpg-* theme tokens — so the stylesheet fallback there sees the
+ * theme's highlight and the inline value beats it.
+ */
+function applyVersionAccent() {
+    const el = $modal.find('.rpg-settings-popup-content')[0];
+    if (!el) return;
+    const campaign = campaignById(draft?.versionId);
+    const color = campaign && typeof campaign.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(campaign.color) ? campaign.color : '';
+    if (color) el.style.setProperty('--cw-accent', color);
+    else el.style.removeProperty('--cw-accent');
+}
+
+/** Header pill naming the version on the stage. Hidden when there are no campaigns. */
+function renderCampaignBadge() {
+    const $badge = $modal.find('#cw-campaign-badge');
+    if (!$badge.length) return;
+    const campaigns = getCampaignsInOrder();
+    if (!draft || draft.isUser || !campaigns.length) {
+        $badge.prop('hidden', true).empty();
+        applyVersionAccent();
+        return;
+    }
+    const campaign = campaignById(draft.versionId);
+    const icon = campaign ? escapeHtml(campaign.icon || 'fa-folder') : 'fa-layer-group';
+    const live = draft.isLive ? ` <span class="cw-campaign-badge-live" title="This is the version the chat sees right now">${escapeHtml(t('characterWorkshop.versionLive', 'Live'))}</span>` : '';
+    $badge.html(`<i class="fa-solid ${icon}" aria-hidden="true"></i><span class="cw-campaign-badge-text">${escapeHtml(versionLabel(draft.versionId))}</span>${live}`)
+        .prop('hidden', false)
+        .attr('title', draft.isLive
+            ? 'The version the chat is using'
+            : 'Not the version the chat is using — switch the active campaign in the Lore Library to play this one');
+    applyVersionAccent();
+}
+
+/**
+ * The version strip on the stage: Base + one tile per campaign version,
+ * then "+" for campaigns without one. Tiles are <div role=tab> (a button
+ * cannot contain the remove button) with a roving tabindex.
+ */
+function renderVersionStrip() {
+    const $strip = $modal.find('#cw-version-strip');
+    if (!$strip.length) return;
+    // A re-render destroys the focused tile; put keyboard focus back on the
+    // current tile afterwards so arrow keys keep working.
+    const hadFocus = typeof document !== 'undefined' && $strip[0].contains(document.activeElement);
+    closeVersionAddMenu();
+    const campaigns = getCampaignsInOrder();
+    if (!draft || draft.isUser || !campaigns.length) {
+        $strip.prop('hidden', true).empty();
+        return;
+    }
+    const name = draft.name;
+    const active = getActiveCampaignId();
+    const versions = [{ id: BASE_VERSION, label: versionLabel(BASE_VERSION), icon: 'fa-layer-group', color: '' }];
+    const missing = [];
+    for (const { id, campaign } of campaigns) {
+        if (hasProfile(id, name)) versions.push({ id, label: campaign.name, icon: campaign.icon || 'fa-folder', color: campaign.color || '' });
+        else missing.push({ id, label: campaign.name, icon: campaign.icon || 'fa-folder' });
+    }
+    const html = versions.map(v => {
+        const profile = readVersion(v.id, name);
+        const avatar = typeof profile?.avatar === 'string' ? profile.avatar : '';
+        const isCurrent = v.id === draft.versionId;
+        const isLive = isLiveVersion(v.id, name);
+        const isActive = v.id !== BASE_VERSION && v.id === active;
+        const classes = ['cw-version-tile', isCurrent ? 'is-current' : '', isLive ? 'is-live' : '', isActive ? 'is-active-campaign' : ''].filter(Boolean).join(' ');
+        const style = v.color && /^#[0-9a-f]{3,8}$/i.test(v.color) ? ` style="--cw-tile-accent: ${escapeHtml(v.color)};"` : '';
+        const thumb = avatar
+            ? `<img src="${escapeHtml(avatar)}" alt="" loading="lazy" decoding="async">`
+            : '<span class="cw-version-thumb-empty" aria-hidden="true">&#128100;</span>';
+        const liveTag = isLive ? `<span class="cw-version-live" title="The version the chat sees right now">${escapeHtml(t('characterWorkshop.versionLive', 'Live'))}</span>` : '';
+        const remove = v.id !== BASE_VERSION
+            ? `<button type="button" class="cw-version-remove-x" data-version="${escapeHtml(v.id)}" title="Remove the ${escapeHtml(v.label)} version" aria-label="Remove the ${escapeHtml(v.label)} version">&times;</button>`
+            : '';
+        return `<div class="cw-version-slot">
+            <div class="${classes}" role="tab" tabindex="${isCurrent ? '0' : '-1'}" aria-selected="${isCurrent ? 'true' : 'false'}"
+                 data-version="${escapeHtml(v.id)}" title="${escapeHtml(v.label)}"${style}>
+                <div class="cw-version-thumb">${thumb}</div>
+                <span class="cw-version-label"><i class="fa-solid ${escapeHtml(v.icon)}" aria-hidden="true"></i> ${escapeHtml(v.label)}</span>
+                ${liveTag}
+            </div>
+            ${remove}
+        </div>`;
+    }).join('');
+    const add = missing.length
+        ? `<button type="button" class="cw-version-add" id="cw-version-add" title="Add a campaign version of ${escapeHtml(name)}" aria-label="Add a campaign version" aria-haspopup="menu" aria-expanded="false">
+                <i class="fa-solid fa-plus" aria-hidden="true"></i>
+           </button>`
+        : '';
+    $strip.html(html + add).prop('hidden', false);
+    const $menu = addMenu();
+    $menu.html(missing.map(m =>
+        `<button type="button" role="menuitem" class="cw-version-add-item" data-campaign="${escapeHtml(m.id)}">
+            <i class="fa-solid ${escapeHtml(m.icon)}" aria-hidden="true"></i> ${escapeHtml(t('characterWorkshop.addVersionFor', 'Add {version} version', { version: m.label }))}
+        </button>`).join(''));
+    // Keep the current tile in view when the strip overflows.
+    const cur = $strip.find('.cw-version-tile.is-current')[0];
+    if (cur && typeof cur.scrollIntoView === 'function') {
+        try { cur.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e) {}
+    }
+    if (hadFocus && cur) {
+        try { cur.focus({ preventScroll: true }); } catch (e) { try { cur.focus(); } catch (err) {} }
+    }
+}
+
+/**
+ * The add-version menu lives in the stage overlay, but while it is open it is
+ * moved to <body> and positioned against the "+" tile in viewport
+ * coordinates: every ancestor in the Workshop (popup content, split pane,
+ * stage) clips its overflow, and on a phone the menu opens downward over the
+ * editor — past the bottom of the popup box, where it was cut off. Looked up
+ * by id so callers find it wherever it currently sits.
+ */
+function addMenu() {
+    return $('#cw-version-add-menu');
+}
+
+let addMenuHome = null;          // { parent, next } — where the node goes back on close
+let addMenuListeners = null;     // window/document listeners active while open
+const ADD_MENU_TOKENS = ['--cw-accent', '--rpg-text', '--rpg-border', '--rpg-highlight'];
+
+function placeAddMenu() {
+    const menu = addMenu()[0];
+    if (!menu || menu.hidden) return;
+    const button = $modal ? $modal.find('#cw-version-add')[0] : null;
+    const vv = typeof window !== 'undefined' ? window.visualViewport : null;
+    const vw = vv ? vv.width : window.innerWidth;
+    const vh = vv ? vv.height : window.innerHeight;
+    const ox = vv ? vv.offsetLeft : 0;
+    const oy = vv ? vv.offsetTop : 0;
+    const margin = 8;
+    const gap = 4;
+    const anchor = button ? button.getBoundingClientRect()
+        : { left: ox + vw / 2, right: ox + vw / 2, top: oy + vh / 2, bottom: oy + vh / 2 };
+    // Measure the natural size first, then cap it to the roomier side.
+    menu.style.maxHeight = '';
+    menu.style.left = '0px';
+    menu.style.top = '0px';
+    const natural = menu.offsetHeight;
+    const spaceBelow = (oy + vh) - anchor.bottom - gap - margin;
+    const spaceAbove = anchor.top - oy - gap - margin;
+    const openDown = spaceBelow >= Math.min(natural, 160) || spaceBelow >= spaceAbove;
+    menu.style.maxHeight = `${Math.max(96, Math.floor((openDown ? spaceBelow : spaceAbove)))}px`;
+    const w = menu.offsetWidth;
+    const h = menu.offsetHeight;
+    const left = Math.max(ox + margin, Math.min(anchor.right - w, ox + vw - w - margin));
+    const wanted = openDown ? anchor.bottom + gap : anchor.top - gap - h;
+    const top = Math.max(oy + margin, Math.min(wanted, oy + vh - h - margin));
+    menu.style.left = `${Math.round(left)}px`;
+    menu.style.top = `${Math.round(top)}px`;
+    menu.classList.toggle('opens-up', !openDown);
+}
+
+function openVersionAddMenu() {
+    const $menu = addMenu();
+    if (!$menu.length || !$menu.children().length) return;
+    const menu = $menu[0];
+    if (!addMenuHome) {
+        addMenuHome = { parent: menu.parentNode, next: menu.nextSibling };
+        // Carry the Workshop's theme tokens along: the scoped theme rules no
+        // longer match once the node sits on <body>.
+        const content = $modal.find('.rpg-settings-popup-content')[0];
+        if (content && typeof getComputedStyle === 'function') {
+            const cs = getComputedStyle(content);
+            for (const token of ADD_MENU_TOKENS) {
+                const value = cs.getPropertyValue(token);
+                if (value) menu.style.setProperty(token, value.trim());
+            }
+        }
+        document.body.appendChild(menu);
+    }
+    menu.classList.add('is-floating');
+    menu.hidden = false;
+    $modal.find('#cw-version-add').attr('aria-expanded', 'true');
+    placeAddMenu();
+    if (!addMenuListeners) {
+        const reposition = () => placeAddMenu();
+        const closeOnOutsideScroll = (e) => { if (!menu.contains(e.target)) closeVersionAddMenu(); };
+        window.addEventListener('resize', reposition);
+        window.visualViewport?.addEventListener('resize', reposition);
+        window.visualViewport?.addEventListener('scroll', reposition);
+        document.addEventListener('scroll', closeOnOutsideScroll, true);
+        addMenuListeners = () => {
+            window.removeEventListener('resize', reposition);
+            window.visualViewport?.removeEventListener('resize', reposition);
+            window.visualViewport?.removeEventListener('scroll', reposition);
+            document.removeEventListener('scroll', closeOnOutsideScroll, true);
+        };
+    }
+    $menu.find('button').first().trigger('focus');
+}
+
+function closeVersionAddMenu() {
+    const $menu = addMenu();
+    if (!$menu.length) return;
+    const menu = $menu[0];
+    menu.hidden = true;
+    menu.classList.remove('is-floating', 'opens-up');
+    menu.style.maxHeight = '';
+    menu.style.left = '';
+    menu.style.top = '';
+    if (addMenuListeners) {
+        addMenuListeners();
+        addMenuListeners = null;
+    }
+    if (addMenuHome) {
+        const { parent, next } = addMenuHome;
+        addMenuHome = null;
+        for (const token of ADD_MENU_TOKENS) menu.style.removeProperty(token);
+        if (parent && parent.isConnected) parent.insertBefore(menu, next && next.parentNode === parent ? next : null);
+    }
+    if ($modal) $modal.find('#cw-version-add').attr('aria-expanded', 'false');
+}
+
+/**
+ * Puts a portrait on the stage with a crossfade: the new image loads on the
+ * back layer, is decoded, and only then swaps to the front. A stale load
+ * (tile clicked twice quickly) is ignored via stageToken. No src = the
+ * placeholder. Instant under performance mode / reduced motion.
+ */
+function setStagePortrait(src) {
+    const token = ++stageToken;
+    const $a = $modal.find('#cw-stage-a');
+    const $b = $modal.find('#cw-stage-b');
+    const $placeholder = $modal.find('#cw-preview-placeholder');
+    if (!$a.length || !$b.length) return;
+    const front = $a.hasClass('is-front') ? $a : $b;
+    const back = front.is($a) ? $b : $a;
+    if (!src) {
+        front.removeClass('is-front');
+        back.removeClass('is-front');
+        $placeholder.prop('hidden', false);
+        $modal.find('.cw-stage-art').addClass('is-empty');
+        // Release the decoded bitmaps once the fade has run.
+        setTimeout(() => { if (stageToken === token) { $a.removeAttr('src'); $b.removeAttr('src'); } }, VERSION_SWITCH_MS + 50);
+        return;
+    }
+    $modal.find('.cw-stage-art').removeClass('is-empty');
+    // Same image already on stage: nothing to do.
+    if (front.hasClass('is-front') && front.attr('src') === src) {
+        $placeholder.prop('hidden', true);
+        return;
+    }
+    const swap = () => {
+        if (stageToken !== token) return;
+        $placeholder.prop('hidden', true);
+        back.addClass('is-front');
+        front.removeClass('is-front');
+    };
+    const img = back[0];
+    back.attr('src', src);
+    if (motionDisabled() || typeof img.decode !== 'function') {
+        swap();
+        return;
+    }
+    img.decode().then(swap).catch(swap);
+}
+
+/**
+ * Is this character currently mid-inject (post-click, pre-AI-reply)?
+ * Case-insensitive. Used by portraitBar to decide whether to show the
+ * INJECTING overlay + Cancel Injection context-menu item.
+ */
+export function isInjectPending(name) {
+    if (!name) return false;
+    return pendingInjects.has(String(name).toLowerCase());
+}
+
+/**
+ * Cancel a pending inject for this character:
+ *  - clears the SillyTavern extension prompt so the AI doesn't receive the
+ *    one-shot scene-direction text
+ *  - disarms the portrait-attach MESSAGE_SENT listener if armed
+ *  - removes the character from the present list (undoes cw-57's splice)
+ *  - removes them from the pending set and broadcasts the new state
+ * Leaves knownCharacters, Workshop data, and lorebook activation alone —
+ * those were either pre-existing or user-chosen, and keeping them avoids
+ * surprise data loss.
+ */
+export function cancelInject(name) {
+    if (!name) return;
+    const key = String(name).toLowerCase();
+    const entry = pendingInjects.get(key);
+    if (!entry) return;
+
+    // Clear the extension-prompt text if this cancel is for the most
+    // recently armed inject. If multiple were queued in rapid succession,
+    // we optimistically clear — a subsequent GENERATION_ENDED would have
+    // cleared it anyway.
+    try {
+        setExtensionPrompt(INJECT_SLOT, '', extension_prompt_types.IN_PROMPT, 0, false);
+    } catch (e) { /* best-effort */ }
+    pendingInjectClear = false;
+    injectStartsToSkip = 0;
+
+    // Disarm the portrait-attach listener if one was armed for this char.
+    try { entry.disarmAttach?.(); } catch (e) {}
+
+    // Undo the "present now" splice ONLY if we actually added it. If the
+    // character was already in the live tracker (AI confirmed them on a
+    // prior turn), the inject was a no-op splice and unmarking would
+    // erroneously remove a legitimately-present character.
+    if (entry.didSplice) {
+        try { unmarkCharacterPresentNow(entry.name); } catch (e) {}
+    }
+
+    pendingInjects.delete(key);
+    broadcastInjectState(entry.name, false);
+
+    try {
+        if (window.toastr) window.toastr.info(`Inject cancelled for "${entry.name}".`, 'Character Workshop', { timeOut: 3000 });
+    } catch (e) {}
+    console.log(`[Dooms Tracker] Workshop: inject cancelled for "${entry.name}"`);
+}
+
+/**
+ * Push back against a character the AI keeps writing into the scene
+ * even after the inject prompt cleared. Sends a strong one-shot
+ * direction telling the AI to drop them on the next turn — useful when
+ * past chat history has cemented them in context.
+ *
+ * Side effects:
+ *  - Cancels any pending inject for this character (since you can't be
+ *    both injecting and ejecting them at once).
+ *  - Removes them from the present-now splice if it was added by inject.
+ *  - Soft-removes them from the panel via removedCharacters so they
+ *    stop showing as a card while the eject is in flight.
+ *  - Sets a one-shot extension prompt under EJECT_SLOT that clears on
+ *    the next generation_ended (same lifecycle as inject).
+ */
+export function ejectFromScene(name) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return;
+
+    // If they're mid-inject, cancel that first (mutually exclusive).
+    if (pendingInjects.has(trimmed.toLowerCase())) {
+        try { cancelInject(trimmed); } catch (e) {}
+    }
+
+    // Soft-remove so the card disappears from the panel immediately.
+    try {
+        const removed = getActiveRemovedCharacters();
+        if (Array.isArray(removed)) {
+            const lower = trimmed.toLowerCase();
+            const already = removed.some(n => typeof n === 'string' && n.toLowerCase() === lower);
+            if (!already) {
+                removed.push(trimmed);
+                saveCharacterRosterChange();
+            }
+        }
+    } catch (e) {
+        console.warn('[Dooms Tracker] Workshop: ejectFromScene soft-remove failed', e);
+    }
+
+    // Build + queue the anti-inject prompt.
+    const prompt = DEFAULT_EJECT_PROMPT.replace(/\{name\}/g, trimmed);
+    try {
+        setExtensionPrompt(EJECT_SLOT, prompt, extension_prompt_types.IN_PROMPT, 0, false);
+        pendingEjectClear = true;
+        ejectStartsToSkip = 1;
+        console.log(`[Dooms Tracker] Workshop: queued scene-eject for "${trimmed}"`);
+    } catch (e) {
+        console.warn('[Dooms Tracker] Workshop: ejectFromScene setExtensionPrompt failed', e);
+    }
+
+    try { clearPortraitCache(); updatePortraitBar(); } catch (e) {}
+    try { renderThoughts(); } catch (e) {}
+    try {
+        if (window.toastr) {
+            window.toastr.info(
+                `${trimmed} will be removed from the next AI response. If they keep returning, you may also need to edit recent chat messages where they appeared.`,
+                'Character Ejected',
+                { timeOut: 6000 },
+            );
+        }
+    } catch (e) {}
+}
+
+/**
+ * Force-clear ALL pending injections + Doom's extension-prompt slot. Used
+ * when a character appears to be getting injected every turn (clear logic
+ * jammed, AI continuing the pattern even after our slot cleared, etc.).
+ *
+ * Wipes:
+ *  - the SillyTavern extension prompt under INJECT_SLOT
+ *  - pendingInjectClear / injectStartsToSkip flags
+ *  - every entry in pendingInjects (with disarmAttach if armed)
+ *  - the portrait-bar overlay state via broadcast (one event per entry)
+ *
+ * Does NOT touch knownCharacters, characterInjection (description /
+ * lorebook / promptTemplate), characterColors, or any user-stored data.
+ */
+export function clearAllInjects() {
+    let count = 0;
+
+    try {
+        setExtensionPrompt(INJECT_SLOT, '', extension_prompt_types.IN_PROMPT, 0, false);
+    } catch (e) {
+        console.warn('[Dooms Tracker] Workshop: clearAllInjects setExtensionPrompt failed', e);
+    }
+    // Also clear any pending eject — same logical bucket of "stuck
+    // one-shot directions we want gone".
+    try {
+        setExtensionPrompt(EJECT_SLOT, '', extension_prompt_types.IN_PROMPT, 0, false);
+    } catch (e) {}
+    pendingInjectClear = false;
+    injectStartsToSkip = 0;
+    pendingEjectClear = false;
+    ejectStartsToSkip = 0;
+
+    for (const [, entry] of pendingInjects) {
+        // Match cancelInject's per-character cleanup so each cancelled
+        // character returns to the same place they would've been before
+        // Inject was clicked: out of the Present splice (only if we
+        // added it), off the INJECTING overlay, and with their attach
+        // listener disarmed. Skip unmark for entries the AI had already
+        // confirmed pre-inject.
+        try { entry.disarmAttach?.(); } catch (e) {}
+        if (entry.didSplice) {
+            try { unmarkCharacterPresentNow(entry.name); } catch (e) {}
+        }
+        broadcastInjectState(entry.name, false);
+        count++;
+    }
+    pendingInjects.clear();
+
+    // Belt-and-suspenders: even if every per-character unmark above
+    // already triggered a re-render, run one final pass so the panel +
+    // thoughts surface settle on a clean state regardless of order.
+    try { clearPortraitCache(); updatePortraitBar(); } catch (e) {}
+    try { renderThoughts(); } catch (e) {}
+
+    try {
+        if (window.toastr) {
+            const msg = count > 0
+                ? `Cleared ${count} pending injection${count === 1 ? '' : 's'} and wiped the inject prompt slot.`
+                : 'No pending injections tracked. Inject prompt slot wiped just in case.';
+            window.toastr.info(msg, 'Character Workshop', { timeOut: 4000 });
+        }
+    } catch (e) {}
+    console.log(`[Dooms Tracker] Workshop: clearAllInjects — cleared ${count} pending`);
+}
+
+// ---------------------------------------------------------------------------
+
+function ensureModal() {
+    if ($modal && $modal.length) return true;
+    $modal = $('#character-workshop-popup');
+    if (!$modal.length) {
+        console.warn('[Dooms Tracker] #character-workshop-popup not in DOM — template.html missing block?');
+        $modal = null;
+        return false;
+    }
+    return true;
+}
+
+function buildDraft(name, isUser = false, versionId = null) {
+    if (isUser) {
+        const u = extensionSettings?.userCharacters?.[name] || {};
+        const inj = u.injection || {};
+        return {
+            name,
+            isUser: true,
+            versionId: BASE_VERSION,
+            isLive: true,
+            color: typeof u.color === 'string' ? u.color : '',
+            avatar: typeof u.avatar === 'string' ? u.avatar : '',
+            avatarFullRes: typeof u.avatarFullRes === 'string' ? u.avatarFullRes : '',
+            pronouns: typeof u.pronouns === 'string' ? u.pronouns : '',
+            linkedPersona: typeof u.linkedPersona === 'string' ? u.linkedPersona : '',
+            // Reuse same field names as NPC draft so render code can be shared
+            relationship: '',
+            injection: {
+                description: typeof inj.description === 'string' ? inj.description : '',
+                lorebook: typeof inj.lorebook === 'string' ? inj.lorebook : '',
+                promptTemplate: typeof inj.promptTemplate === 'string' ? inj.promptTemplate : '',
+            },
+            knives: Array.isArray(u.knives) ? u.knives.map(k => ({ ...k })) : [],
+            // Aliases are NPC-only (a persona's name is the player's own);
+            // kept on the draft so shared render code can no-op safely.
+            aliases: [],
+            stats: cloneStats(getStatSheet(name, true)),
+            statsPending: false,
+            dirty: { color: false, avatar: false, injection: false, relationship: false, pronouns: false, linkedPersona: false, knives: false, aliases: false, stats: false },
+        };
+    }
+    const version = versionId || defaultVersionFor(name);
+    // Live = this version IS the flat stores right now (the active
+    // campaign's version, or Base when no campaign overrides the name).
+    // Anything else is read from its saved copy (shadowed Base or an
+    // inactive campaign's bucket) and written back there on Save.
+    const live = isLiveVersion(version, name);
+    const npcAliases = extensionSettings?.characterAliases?.[name];
+    // Read color from the chat-aware getter so we see the same value
+    // commitDraft writes (and that the PCP renders). When
+    // perChatCharacterTracking is on, the global characterColors is
+    // typically empty for this character — the real value lives in
+    // chat_metadata.dooms_tracker.characterColors. Colour is per chat, not
+    // per version; aliases are a global name mapping. Both are read the
+    // same way whatever version is on the stage.
+    const activeColors = getActiveCharacterColors() || {};
+    const common = {
+        name,
+        isUser: false,
+        versionId: version,
+        isLive: live,
+        color: activeColors[name] || '',
+        aliases: Array.isArray(npcAliases) ? npcAliases.filter(a => typeof a === 'string') : [],
+        stats: cloneStats(getStatSheet(name, false)),
+        statsPending: isStatGenerationPending(name, false),
+        dirty: { color: false, avatar: false, injection: false, relationship: false, knives: false, aliases: false, appearance: false, stats: false },
+    };
+    if (live) {
+        const inj = extensionSettings?.characterInjection?.[name] || {};
+        const npcKnives = extensionSettings?.characterKnives?.[name];
+        return {
+            ...common,
+            avatar: extensionSettings?.npcAvatars?.[name] || '',
+            avatarFullRes: extensionSettings?.npcAvatarsFullRes?.[name] || '',
+            relationship: resolveCurrentRelationship(name),
+            injection: {
+                description: typeof inj.description === 'string' ? inj.description : '',
+                lorebook: typeof inj.lorebook === 'string' ? inj.lorebook : '',
+                promptTemplate: typeof inj.promptTemplate === 'string' ? inj.promptTemplate : '',
+            },
+            knives: Array.isArray(npcKnives) ? npcKnives.map(k => ({ ...k })) : [],
+            appearance: typeof extensionSettings?.characterAppearance?.[name] === 'string' ? extensionSettings.characterAppearance[name] : '',
+        };
+    }
+    // readVersion returns null for a shadowed Base that had no entry — an
+    // empty version, not an error.
+    const p = readVersion(version, name) || {};
+    const inj = p.injection && typeof p.injection === 'object' ? p.injection : {};
+    return {
+        ...common,
+        avatar: typeof p.avatar === 'string' ? p.avatar : '',
+        avatarFullRes: typeof p.avatarFullRes === 'string' ? p.avatarFullRes : '',
+        // No AI-classification fallback here: that is live tracker data,
+        // which belongs to whatever version the chat is using.
+        relationship: typeof p.relationship === 'string' ? p.relationship : '',
+        injection: {
+            description: typeof inj.description === 'string' ? inj.description : '',
+            lorebook: typeof inj.lorebook === 'string' ? inj.lorebook : '',
+            promptTemplate: typeof inj.promptTemplate === 'string' ? inj.promptTemplate : '',
+        },
+        knives: Array.isArray(p.knives) ? p.knives.map(k => ({ ...k })) : [],
+        appearance: typeof p.appearance === 'string' ? p.appearance : '',
+    };
+}
+
+function resolveCurrentRelationship(name) {
+    // Persistent user-set override wins over the AI's per-turn classification.
+    const override = extensionSettings?.characterRelationships?.[name];
+    if (typeof override === 'string' && override) return override;
+    // Fallback: best-effort read from the AI's volatile tracker data.
+    try {
+        const raw = window?.dooms_lastGeneratedData?.characterThoughts;
+        if (!raw) return '';
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        const list = parsed?.characters || [];
+        const found = list.find(c => c?.name === name);
+        return found?.relationship?.status || '';
+    } catch (e) {
+        return '';
+    }
+}
+
+function renderTitle() {
+    $modal.find('#cw-char-title').text(draft.name);
+    $modal.find('#cw-user-badge').prop('hidden', !draft.isUser);
+    $modal.find('#cw-modal-title').text(draft.isUser ? 'User Character Workshop' : 'Character Workshop');
+    $modal.find('#cw-inject-label').text(draft.isUser ? 'Inject persona' : 'Inject into Scene');
+}
+
+/**
+ * Renders the theme picker shown when Generate Knives is clicked.
+ * Picking a chip starts the actual generation with that theme.
+ */
+function renderKnifeThemePicker() {
+    const $sugg = $modal.find('#cw-knife-suggestions');
+    const chips = KNIFE_THEMES.map((t, i) => `
+        <button type="button" class="rpg-rel-chip cw-knife-theme-chip" data-theme-index="${i}" title="${escapeHtml(t.guidance)}">
+            <span>${t.emoji}</span> ${t.label}
+        </button>
+    `).join('');
+    $sugg.prop('hidden', false).html(`
+        <p class="helper" style="margin: 0 0 6px;">What kind of knives should the AI forge?</p>
+        <div class="rpg-rel-chips">${chips}</div>
+    `);
+}
+
+/**
+ * Renders AI-generated knife suggestions as checkbox rows so the player
+ * can pick which ones to keep. Suggestions are stashed on the container's
+ * data so the Keep handler can read them back by index.
+ */
+function renderKnifeSuggestions(suggestions) {
+    const $sugg = $modal.find('#cw-knife-suggestions');
+    const rows = suggestions.map((text, i) => `
+        <label class="cw-knife-suggestion">
+            <input type="checkbox" data-index="${i}">
+            <span class="rpg-dc-knife-icon">🔪</span>
+            <span class="rpg-dc-knife-text">${escapeHtml(text)}</span>
+        </label>
+    `).join('');
+    $sugg.prop('hidden', false).html(`
+        <p class="helper" style="margin: 0 0 4px;">Pick the knives worth keeping — the rest are discarded:</p>
+        ${rows}
+        <div class="cw-knife-sugg-actions">
+            <button type="button" class="rpg-btn rpg-btn-primary" id="cw-knife-sugg-keep">
+                <i class="fa-solid fa-check"></i> Keep selected
+            </button>
+            <button type="button" class="rpg-btn rpg-btn-ghost" id="cw-knife-sugg-discard">Discard all</button>
+        </div>
+    `);
+    $sugg.data('suggestions', suggestions);
+}
+
+function clearKnifeSuggestions() {
+    $modal.find('#cw-knife-suggestions').prop('hidden', true).empty().removeData('suggestions');
+}
+
+function renderKnives() {
+    const $list = $modal.find('#cw-knives-list');
+    if (!$list.length) return;
+    const knives = draft?.knives || [];
+    if (!knives.length) {
+        $list.html('<div class="rpg-dc-knives-empty">No knives yet — story beats you add here lie in wait until the Doom Counter strikes while this character is in the scene.</div>');
+        return;
+    }
+    $list.html(knives.map(k => `
+        <div class="rpg-dc-knife-row${k.used ? ' rpg-dc-knife-used' : ''}" data-id="${escapeHtml(k.id)}">
+            <span class="rpg-dc-knife-icon">🔪</span>
+            <span class="rpg-dc-knife-text">${escapeHtml(k.text)}</span>
+            ${k.used ? `
+                <span class="rpg-dc-knife-used-badge">used</span>
+                <button class="rpg-dc-knife-btn rpg-dc-knife-rearm" type="button" title="Re-arm this knife so it can be offered again"><i class="fa-solid fa-rotate-left"></i></button>
+            ` : ''}
+            <button class="rpg-dc-knife-btn rpg-dc-knife-delete" type="button" title="Delete knife"><i class="fa-solid fa-trash"></i></button>
+        </div>
+    `).join(''));
+}
+
+function isHiddenFromPanel(name) {
+    try {
+        const removed = getActiveRemovedCharacters();
+        if (!Array.isArray(removed)) return false;
+        const lower = String(name || '').toLowerCase();
+        return removed.some(n => typeof n === 'string' && n.toLowerCase() === lower);
+    } catch (e) { return false; }
+}
+
+function renderHiddenBanner() {
+    // The hidden-from-panel banner only applies to NPCs (user characters
+    // aren't added to the chat's removedCharacters list).
+    if (draft?.isUser) {
+        $modal.find('#cw-hidden-banner').prop('hidden', true);
+        return;
+    }
+    const hidden = !!draft && isHiddenFromPanel(draft.name);
+    $modal.find('#cw-hidden-banner').prop('hidden', !hidden);
+}
+
+function restoreCharacterToPanel() {
+    if (!draft) return;
+    const name = draft.name;
+    try {
+        const removed = getActiveRemovedCharacters();
+        if (Array.isArray(removed) && removed.length) {
+            const lower = String(name || '').toLowerCase();
+            for (let i = removed.length - 1; i >= 0; i--) {
+                if (typeof removed[i] === 'string' && removed[i].toLowerCase() === lower) {
+                    removed.splice(i, 1);
+                }
+            }
+            saveCharacterRosterChange();
+        }
+        clearPortraitCache();
+        updatePortraitBar();
+    } catch (e) {
+        console.warn('[Dooms Tracker] Workshop: restoreCharacterToPanel failed', e);
+    }
+    renderHiddenBanner();
+    try {
+        if (window.toastr) window.toastr.success(`"${name}" returned to the panel.`, 'Character Workshop', { timeOut: 3000 });
+    } catch (e) {}
+}
+
+function renderAliases() {
+    const $tags = $modal.find('#cw-alias-tags');
+    if (!$tags.length) return;
+    const aliases = draft?.aliases || [];
+    if (!aliases.length) {
+        $tags.html('<span class="cw-alias-empty">No aliases yet.</span>');
+        return;
+    }
+    $tags.html(aliases.map(a => `
+        <span class="cw-alias-tag">${escapeHtml(a)}
+            <button type="button" class="cw-alias-remove" data-alias="${escapeHtml(a)}" title="Remove alias">&times;</button>
+        </span>
+    `).join(''));
+}
+
+function renderIdentity() {
+    $modal.find('#cw-name').val(draft.name);
+    if (draft.isUser) {
+        renderPronounChips();
+        renderLinkedPersonaSelect();
+        // Show pronouns in the preview slot in place of the relationship label
+        $modal.find('#cw-preview-rel').text(draft.pronouns ? `(${draft.pronouns})` : '');
+    } else {
+        renderRelationshipChips();
+        const rel = (draft.relationship || '').toLowerCase();
+        $modal.find('#cw-rel-chips .rpg-rel-chip').each(function () {
+            const $chip = $(this);
+            const matches = ($chip.attr('data-rel') || '').toLowerCase() === rel;
+            $chip.toggleClass('selected', matches);
+            $chip.attr('aria-checked', matches ? 'true' : 'false');
+        });
+        const $rel = $modal.find('#cw-preview-rel');
+        if (draft.relationship) {
+            // Attribute-selector lookup would break on a name containing a
+            // quote, and these are user-typed now — match in JS instead.
+            const emoji = relationshipEmojiFor(draft.relationship);
+            $rel.text(`${emoji} ${draft.relationship}`.trim());
+        } else {
+            $rel.text('');
+        }
+        // NB: the carousel's scroll position and arrow states are NOT set
+        // here — this runs while the modal is still display:none, so the
+        // strip has no width to measure. openCharacterWorkshop syncs them
+        // once the modal is actually laid out.
+    }
+    $modal.find('#cw-preview-name').text(draft.name);
+    applyPreviewColor(draft.color || '#e94560');
+}
+
+/**
+ * The relationship list, as configured in Settings → Workshop.
+ *
+ * Read through the same nested-then-flat fallback the rest of DES uses, so a
+ * config saved by an older version still resolves. Falls back to the shipped
+ * five only when there's no config at all — an empty object is a deliberate
+ * "no relationships", not something to paper over.
+ */
+function getRelationshipOptions() {
+    const pc = extensionSettings.trackerConfig?.presentCharacters;
+    const map = pc?.relationships?.relationshipEmojis || pc?.relationshipEmojis;
+    if (!map) return { 'Lover': '❤️', 'Friend': '⭐', 'Ally': '🤝', 'Enemy': '⚔️', 'Neutral': '⚖️' };
+    return map;
+}
+
+/** Emoji for a relationship name, matched case-insensitively. */
+function relationshipEmojiFor(name) {
+    const target = String(name || '').toLowerCase();
+    if (!target) return '';
+    const entry = Object.entries(getRelationshipOptions())
+        .find(([key]) => key.toLowerCase() === target);
+    return entry ? entry[1] : '';
+}
+
+/**
+ * Paints the relationship chips from config. Custom relationships land at the
+ * end because insertion order is preserved by the emoji map they're added to.
+ *
+ * A relationship already on this character that's since been deleted from the
+ * list is appended too, so opening the card doesn't silently drop a value the
+ * user never asked to change.
+ */
+function renderRelationshipChips() {
+    const $host = $modal.find('#cw-rel-chips');
+    if (!$host.length) return;
+    const options = getRelationshipOptions();
+    const names = Object.keys(options);
+    const current = String(draft?.relationship || '');
+    if (current && !names.some(n => n.toLowerCase() === current.toLowerCase())) {
+        names.push(current);
+    }
+    $host.html(names.map(name => `
+        <button type="button" class="rpg-rel-chip" role="radio" aria-checked="false"
+                data-rel="${escapeHtml(name)}" data-emoji="${escapeHtml(options[name] || '')}"
+                title="${escapeHtml(name)}"><span>${escapeHtml(options[name] || '')}</span> ${escapeHtml(name)}</button>
+    `).join(''));
+}
+
+/** Greys out an arrow once the strip can't travel any further that way. */
+function updateRelationshipArrows() {
+    const el = $modal.find('#cw-rel-chips')[0];
+    if (!el) return;
+    // 1px of slack: fractional scroll widths mean the end is rarely exact.
+    const atStart = el.scrollLeft <= 1;
+    const atEnd = el.scrollLeft >= el.scrollWidth - el.clientWidth - 1;
+    const overflows = el.scrollWidth > el.clientWidth + 1;
+    const $arrows = $modal.find('.cw-rel-arrow');
+    $arrows.toggleClass('hidden', !overflows);
+    $arrows.filter('[data-dir="-1"]').prop('disabled', atStart);
+    $arrows.filter('[data-dir="1"]').prop('disabled', atEnd);
+}
+
+function scrollSelectedRelationshipIntoView() {
+    const el = $modal.find('#cw-rel-chips')[0];
+    const chip = $modal.find('#cw-rel-chips .rpg-rel-chip.selected')[0];
+    if (!el) return;
+    if (!chip) { el.scrollLeft = 0; return; }
+    // Centre it when possible; clamped by the browser at either end.
+    el.scrollLeft = chip.offsetLeft - (el.clientWidth - chip.offsetWidth) / 2;
+}
+
+function renderPronounChips() {
+    const current = (draft.pronouns || '').toLowerCase();
+    const presets = ['he/him', 'she/her', 'they/them'];
+    const isPreset = presets.includes(current);
+    const isCustom = !!current && !isPreset;
+    $modal.find('#cw-pronoun-chips .rpg-rel-chip').each(function () {
+        const $chip = $(this);
+        const value = ($chip.attr('data-pronouns') || '').toLowerCase();
+        const matches = value === 'custom' ? isCustom : (value === current);
+        $chip.toggleClass('selected', matches);
+        $chip.attr('aria-checked', matches ? 'true' : 'false');
+    });
+    const $custom = $modal.find('#cw-pronouns-custom');
+    if (isCustom) {
+        $custom.val(draft.pronouns).prop('hidden', false);
+    } else {
+        $custom.val('').prop('hidden', true);
+    }
+}
+
+function renderLinkedPersonaSelect() {
+    const $sel = $modal.find('#cw-linked-persona');
+    // Rebuild options from SillyTavern's persona registry. power_user.personas
+    // is { avatarFilename: personaName }. Stash the avatar filename as the
+    // value so we can sync ST persona switches to the active user character.
+    let personas = {};
+    try {
+        // power_user is imported at module top from ST's power-user.js.
+        // Fall through to the window reference in case some fork exposes
+        // it that way, then to {} so we never crash here.
+        const pu = power_user || (typeof window !== 'undefined' && window.power_user) || null;
+        personas = (pu && pu.personas) || {};
+    } catch (e) { personas = {}; }
+    $sel.empty();
+    $sel.append('<option value="">— None —</option>');
+    for (const [avatarFile, personaName] of Object.entries(personas)) {
+        const opt = document.createElement('option');
+        opt.value = avatarFile;
+        opt.textContent = personaName || avatarFile;
+        $sel[0].appendChild(opt);
+    }
+    $sel.val(draft.linkedPersona || '');
+}
+
+function renderAppearance() {
+    setStagePortrait(draft.avatar || '');
+    $modal.find('#cw-appearance').val(draft.appearance || '');
+    // Rendering writes the LIVE stores (the generator stashes the current
+    // portrait to history and saves), so it is only offered on the version
+    // the chat is using; a saved-copy version would silently repaint the
+    // live one instead.
+    const $render = $modal.find('#cw-appearance-render');
+    $render.prop('disabled', !draft.isUser && !draft.isLive);
+    $render.attr('title', (!draft.isUser && !draft.isLive)
+        ? 'Portraits render for the live version only — make this campaign active in the Lore Library first, or switch to the Live tile.'
+        : 'Step 2: render a new portrait with the prompt above (or the automatic LLM prompt if the field is empty). The current portrait is kept and restorable.');
+    const $palette = $modal.find('#cw-palette').empty();
+    for (const { hex, name } of DIALOGUE_COLOR_LIST) {
+        const isSelected = (draft.color || '').toLowerCase() === hex.toLowerCase();
+        const $sw = $(`<button type="button" class="rpg-color-swatch${isSelected ? ' selected' : ''}"></button>`);
+        $sw.css('background', hex);
+        $sw.attr({
+            role: 'radio',
+            'aria-checked': isSelected ? 'true' : 'false',
+            'aria-label': name,
+            title: `${name} (${hex})`,
+            'data-hex': hex,
+        });
+        $palette.append($sw);
+    }
+}
+
+// Cache of available lorebook names; rebuilt every open so newly-created
+// SillyTavern lorebooks show up without a reload. Used by the combobox
+// filter to render the dropdown list.
+let lorebookOptions = [];
+
+function renderInjection() {
+    $modal.find('#cw-inj-description').val(draft.injection.description || '');
+    $modal.find('#cw-inj-prompt').val(draft.injection.promptTemplate || '');
+
+    // Refresh the available lorebook list.
+    try {
+        lorebookOptions = getAllWorldNames() || [];
+    } catch (e) {
+        console.warn('[Dooms Tracker] Workshop: getAllWorldNames failed', e);
+        lorebookOptions = [];
+    }
+
+    // Pre-fill the combobox input with the saved lorebook (if any).
+    $modal.find('#cw-inj-lorebook').val(draft.injection.lorebook || '');
+    closeLorebookCombo();
+
+    // Sync the global "Attach portrait to message" toggle.
+    $modal.find('#cw-inj-attach-portrait').prop('checked', extensionSettings?.injectAttachPortrait === true);
+
+    // Sync the per-character Banish toggle.
+    $modal.find('#cw-banish').prop('checked', isCharacterBanished(draft.name));
+}
+
+function renderLorebookComboList(filter) {
+    const $list = $modal.find('#cw-inj-lorebook-list').empty();
+    const needle = (filter || '').trim().toLowerCase();
+    const matches = lorebookOptions.filter(n => !needle || n.toLowerCase().includes(needle));
+    const saved = draft?.injection?.lorebook || '';
+
+    // Always include "None" at the top so the user can clear without
+    // selecting all the text.
+    if (!needle || 'none'.includes(needle) || '— none —'.includes(needle)) {
+        const $none = $('<li class="cw-combobox-none" data-value="">— None —</li>');
+        if (!saved) $none.addClass('is-active');
+        $list.append($none);
+    }
+
+    if (matches.length === 0 && needle) {
+        $list.append('<li class="cw-combobox-empty">No lorebooks match.</li>');
+    } else {
+        for (const wname of matches) {
+            const $li = $('<li></li>')
+                .attr('data-value', wname)
+                .text(wname);
+            if (wname === saved) $li.addClass('is-active');
+            $list.append($li);
+        }
+    }
+
+    // If the saved value isn't present in the available names, surface it
+    // at the bottom flagged as missing so the user can see it's stale.
+    if (saved && !lorebookOptions.includes(saved) && (!needle || saved.toLowerCase().includes(needle))) {
+        const $li = $('<li></li>')
+            .attr('data-value', saved)
+            .addClass('is-missing is-active')
+            .text(`${saved} (missing)`);
+        $list.append($li);
+    }
+}
+
+function openLorebookCombo() {
+    const $combo = $modal.find('#cw-inj-lorebook-combo');
+    const $list = $modal.find('#cw-inj-lorebook-list');
+    const $input = $modal.find('#cw-inj-lorebook');
+    if ($combo.hasClass('is-open')) return;
+    renderLorebookComboList($input.val());
+    $combo.addClass('is-open');
+    $list.prop('hidden', false);
+    $input.attr('aria-expanded', 'true');
+}
+
+function closeLorebookCombo() {
+    const $combo = $modal.find('#cw-inj-lorebook-combo');
+    const $list = $modal.find('#cw-inj-lorebook-list');
+    const $input = $modal.find('#cw-inj-lorebook');
+    $combo.removeClass('is-open');
+    $list.prop('hidden', true);
+    $input.attr('aria-expanded', 'false');
+}
+
+function commitLorebookSelection(value) {
+    if (!draft) return;
+    draft.injection.lorebook = String(value || '').trim();
+    draft.dirty.injection = true;
+    $modal.find('#cw-inj-lorebook').val(draft.injection.lorebook);
+    closeLorebookCombo();
+}
+
+function applyPreviewColor(hex) {
+    $modal.find('#cw-preview-name').css('color', hex);
+    $modal.find('#cw-preview-color-dot').css('background', hex);
+    // Keep the custom-color button's preview chip in sync too.
+    $modal.find('#cw-color-custom-preview').css('background', hex);
+    $modal.find('#cw-color-custom-input').val(hex);
+}
+
+/**
+ * Commit a new dialogue color to the draft and refresh all UI that
+ * shows it (palette selection state, preview card, custom button chip).
+ * Accepts any hex; if the color matches a palette swatch, that swatch
+ * gets the 'selected' highlight too.
+ */
+function commitColorSelection(hex) {
+    if (!draft || !hex) return;
+    const lower = String(hex).toLowerCase();
+    draft.color = lower;
+    draft.dirty.color = true;
+    $modal.find('.rpg-color-swatch').each(function () {
+        const match = ($(this).attr('data-hex') || '').toLowerCase() === lower;
+        $(this).toggleClass('selected', match);
+        $(this).attr('aria-checked', match ? 'true' : 'false');
+    });
+    applyPreviewColor(lower);
+}
+
+function activatePane(paneId) {
+    $modal.find('.workshop-nav button').each(function () {
+        $(this).toggleClass('active', $(this).attr('data-pane') === paneId);
+    });
+    $modal.find('.rpg-editor-pane').each(function () {
+        $(this).toggleClass('active', $(this).attr('data-pane') === paneId);
+    });
+}
+
+function bindStaticListeners() {
+    // Same defense as bindExpressionHandlers — if a prior module instance
+    // attached `.cw` handlers to this same DOM node, drop them before we
+    // re-bind so we don't run two copies (with two different `draft`s).
+    $modal.off('.cw');
+    $modal.on('click.cw', '.workshop-nav button', function () {
+        const pane = $(this).attr('data-pane');
+        if (!pane) return;
+        activatePane(pane);
+        if (pane === 'expressions') {
+            // Lazy-load on first activation per character — re-renders if
+            // the user already has it but the character changed.
+            const $panel = $modal.find('#cw-expressions-pane');
+            const charName = draft?.name || '';
+            if (charName && $panel.attr('data-character') !== charName) {
+                $panel.attr('data-character', charName);
+                renderExpressionsTab($panel, charName);
+            }
+        }
+    });
+
+    bindExpressionHandlers();
+
+    $modal.on('click.cw', '#cw-close, #cw-cancel', () => closeCharacterWorkshop());
+    $modal.on('click.cw', '#cw-hidden-restore', () => restoreCharacterToPanel());
+
+    // Version strip — tiles are role=tab divs with a roving tabindex.
+    $modal.on('click.cw', '.cw-version-tile', function () {
+        const id = $(this).attr('data-version');
+        if (id) switchVersion(id);
+    });
+    $modal.on('keydown.cw', '#cw-version-strip', function (e) {
+        const tiles = $modal.find('#cw-version-strip .cw-version-tile').toArray();
+        if (!tiles.length) return;
+        const focused = document.activeElement;
+        let idx = tiles.indexOf(focused);
+        if (e.key === 'ArrowRight' || e.key === 'ArrowLeft' || e.key === 'Home' || e.key === 'End') {
+            e.preventDefault();
+            if (idx === -1) idx = tiles.findIndex(t => t.classList.contains('is-current'));
+            if (e.key === 'ArrowRight') idx = (idx + 1) % tiles.length;
+            else if (e.key === 'ArrowLeft') idx = (idx - 1 + tiles.length) % tiles.length;
+            else if (e.key === 'Home') idx = 0;
+            else idx = tiles.length - 1;
+            tiles.forEach((t, i) => t.setAttribute('tabindex', i === idx ? '0' : '-1'));
+            tiles[idx].focus();
+        } else if ((e.key === 'Enter' || e.key === ' ') && focused && focused.classList.contains('cw-version-tile')) {
+            e.preventDefault();
+            const id = focused.getAttribute('data-version');
+            if (id) switchVersion(id);
+        }
+    });
+    $modal.on('click.cw', '.cw-version-remove-x', function (e) {
+        e.stopPropagation();
+        const id = $(this).attr('data-version');
+        if (id) removeVersion(id);
+    });
+    $modal.on('click.cw', '#cw-version-add', function (e) {
+        e.stopPropagation();
+        if (addMenu().prop('hidden')) openVersionAddMenu();
+        else closeVersionAddMenu();
+    });
+    // The open menu floats on <body> (see openVersionAddMenu), so its own
+    // events are delegated from the document, not from the modal.
+    $(document).off('.cwAddMenu');
+    $(document).on('click.cwAddMenu', '#cw-version-add-menu .cw-version-add-item', function (e) {
+        e.stopPropagation();
+        const id = $(this).attr('data-campaign');
+        closeVersionAddMenu();
+        if (id) addVersion(id);
+    });
+    // Click anywhere else (or Escape) closes the add menu.
+    $(document).on('pointerdown.cwAddMenu', function (e) {
+        if (addMenu().prop('hidden') !== false) return;
+        if ($(e.target).closest('#cw-version-add-menu, #cw-version-add').length === 0) closeVersionAddMenu();
+    });
+    $(document).on('keydown.cwAddMenu', '#cw-version-add-menu', function (e) {
+        if (e.key === 'Escape') { e.stopPropagation(); closeVersionAddMenu(); $modal.find('#cw-version-add').trigger('focus'); }
+    });
+
+    // Knives — edits live on the draft and persist on Save
+    $modal.on('click.cw', '#cw-knife-add', function () {
+        if (!draft) return;
+        const $input = $modal.find('#cw-knife-input');
+        const text = String($input.val() || '').trim();
+        if (!text) return;
+        draft.knives.push({ id: 'knife_' + Date.now(), text, used: false });
+        draft.dirty.knives = true;
+        $input.val('');
+        renderKnives();
+    });
+    $modal.on('click.cw', '#cw-knives-list .rpg-dc-knife-delete', function () {
+        if (!draft) return;
+        const id = $(this).closest('.rpg-dc-knife-row').data('id');
+        draft.knives = draft.knives.filter(k => k.id !== id);
+        draft.dirty.knives = true;
+        renderKnives();
+    });
+    $modal.on('click.cw', '#cw-knives-list .rpg-dc-knife-rearm', function () {
+        if (!draft) return;
+        const id = $(this).closest('.rpg-dc-knife-row').data('id');
+        draft.knives = draft.knives.map(k => k.id === id ? { ...k, used: false } : k);
+        draft.dirty.knives = true;
+        renderKnives();
+    });
+    // Stats — sheet edits live on the draft and persist on Save.
+    $modal.on('change.cw', '#cw-stats-editor .cw-stat-base-input', function () {
+        const stat = findDraftStat(this);
+        if (!stat) return;
+        const v = clampStatValue(stat, $(this).val());
+        if (v === null) { $(this).val(stat.base); return; }
+        $(this).val(v);
+        if (v === stat.base) return;
+        stat.base = v;
+        draft.dirty.stats = true;
+        // Choosing a value by hand means the user is setting the sheet.
+        if (draft.statsPending) { draft.statsPending = false; renderStats(); }
+    });
+    // On/off and built-in colours are global settings: applied at once,
+    // mirrored onto the draft so the tab repaints without losing edits.
+    $modal.on('change.cw', '#cw-stats-editor .cw-stat-on-input', function () {
+        const stat = findDraftStat(this);
+        if (!stat) return;
+        const on = $(this).is(':checked');
+        setStatEnabled(stat.id, on);
+        stat.enabled = on;
+        renderStats();
+    });
+    $modal.on('input.cw', '#cw-stats-editor .cw-stat-color', function () {
+        // Live preview on the swatch while the picker is open.
+        $(this).closest('.cw-stat-swatch').css('background', $(this).val());
+    });
+    $modal.on('change.cw', '#cw-stats-editor .cw-stat-color', function () {
+        const stat = findDraftStat(this);
+        if (!stat) return;
+        const color = String($(this).val() || '').toLowerCase();
+        stat.color = color;
+        setStatColor(stat.id, color);
+        renderStats();
+    });
+    // Memories — saved immediately (they live per campaign, not per version).
+    window.removeEventListener(MEMORIES_CHANGED_EVENT, onMemoriesChanged);
+    window.addEventListener(MEMORIES_CHANGED_EVENT, onMemoriesChanged);
+    const addMem = () => {
+        if (!draft || draft.isUser) return;
+        const $in = $modal.find('#cw-mem-input');
+        const res = addMemory(draft.name, $in.val(), { important: $modal.find('#cw-mem-important').is(':checked'), source: 'user' });
+        if (res.error) { $modal.find('#cw-mem-error').text(res.error); return; }
+        $in.val('');
+        $modal.find('#cw-mem-important').prop('checked', false);
+        $modal.find('#cw-mem-error').text('');
+        renderMemories();
+    };
+    $modal.on('click.cw', '#cw-mem-add', addMem);
+    $modal.on('keydown.cw', '#cw-mem-input', function (e) {
+        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); addMem(); }
+    });
+    $modal.on('input.cw', '#cw-mem-input', () => $modal.find('#cw-mem-error').text(''));
+    $modal.on('click.cw', '#cw-mem-list .cw-mem-star', function () {
+        if (!draft) return;
+        const id = memoryIdOf(this);
+        const m = getMemories(draft.name).find(x => x.id === id);
+        if (m) updateMemory(draft.name, id, { important: !m.important });
+        renderMemories();
+    });
+    $modal.on('click.cw', '#cw-mem-list .cw-mem-delete', function () {
+        if (!draft) return;
+        deleteMemory(draft.name, memoryIdOf(this));
+        renderMemories();
+    });
+    const startMemEdit = (el) => {
+        if (!draft) return;
+        const id = memoryIdOf(el);
+        const m = getMemories(draft.name).find(x => x.id === id);
+        if (!m) return;
+        const $ta = $('<textarea class="rpg-textarea cw-mem-edit" rows="2" maxlength="200"></textarea>').val(m.text);
+        $(el).replaceWith($ta);
+        $ta.trigger('focus');
+        let done = false;
+        const finish = (save) => {
+            if (done) return;
+            done = true;
+            if (save && String($ta.val()).trim() && $ta.val() !== m.text) updateMemory(draft.name, id, { text: String($ta.val()) });
+            $ta.remove();
+            renderMemories();
+        };
+        $ta.on('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); finish(true); }
+            else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(false); }
+        });
+        $ta.on('blur', () => finish(true));
+    };
+    $modal.on('click.cw', '#cw-mem-list .cw-mem-text', function () { startMemEdit(this); });
+    $modal.on('keydown.cw', '#cw-mem-list .cw-mem-text', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); startMemEdit(this); }
+    });
+
+    // Settings → Stats changed while the card is open: repaint the tab.
+    window.removeEventListener(STATS_CHANGED_EVENT, onGlobalStatsChanged);
+    window.addEventListener(STATS_CHANGED_EVENT, onGlobalStatsChanged);
+    $modal.on('click.cw', '#cw-stats-regenerate', function () {
+        if (!draft || draft.isUser) return;
+        draft.statsPending = true;
+        draft.dirty.stats = true;
+        renderStats();
+    });
+    $modal.on('change.cw', '#cw-stats-editor .cw-stat-ai-input', function () {
+        const stat = findDraftStat(this);
+        if (!stat) return;
+        stat.ai = $(this).is(':checked');
+        draft.dirty.stats = true;
+    });
+    $modal.on('click.cw', '#cw-stats-editor .cw-stat-delete', function () {
+        const stat = findDraftStat(this);
+        if (!stat || stat.builtin) return;
+        const ok = window.confirm(`Delete the stat "${stat.name}" for every character?\n\nTheir values for it are deleted too.`);
+        if (!ok) return;
+        deleteCustomStat(stat.id);
+        draft.stats = draft.stats.filter(s => s.id !== stat.id);
+        renderStats();
+    });
+    // The AI box follows the kind's default until the user touches it.
+    $modal.on('change.cw', '#cw-stat-new-kind', function () {
+        $modal.find('#cw-stat-new-ai').prop('checked', $(this).val() === 'state');
+    });
+    const addStat = () => {
+        if (!draft) return;
+        const $err = $modal.find('#cw-stat-new-error');
+        // Custom stats are global: added for every character at once.
+        const result = addCustomStat({
+            name: $modal.find('#cw-stat-new-name').val(),
+            description: $modal.find('#cw-stat-new-desc').val(),
+            kind: $modal.find('#cw-stat-new-kind').val(),
+            ai: $modal.find('#cw-stat-new-ai').is(':checked'),
+        });
+        if (result.error) {
+            $err.text(result.error);
+            return;
+        }
+        const stat = result.stat;
+        resetStatAddForm();
+        renderStats();
+        $modal.find(`#cw-stats-editor .cw-stat-row[data-stat="${stat.id}"]`)[0]?.scrollIntoView({ block: 'nearest' });
+    };
+    $modal.on('click.cw', '#cw-stat-add', addStat);
+    $modal.on('keydown.cw', '#cw-stat-new-name', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); addStat(); }
+    });
+    $modal.on('input.cw', '#cw-stat-new-name', function () {
+        $modal.find('#cw-stat-new-error').text('');
+    });
+
+    // Aliases — other names that resolve to this card. Edits live on the
+    // draft and persist on Save.
+    const addAlias = () => {
+        if (!draft || draft.isUser) return;
+        const $input = $modal.find('#cw-alias-input');
+        const alias = String($input.val() || '').trim();
+        if (!alias) return;
+        const lower = alias.toLowerCase();
+        if (lower === String(draft.name).toLowerCase()) {
+            try { if (window.toastr) window.toastr.info('That\'s already this character\'s name.', 'Character Workshop', { timeOut: 3000 }); } catch (e) {}
+            return;
+        }
+        if (draft.aliases.some(a => a.toLowerCase() === lower)) {
+            $input.val('');
+            return;
+        }
+        draft.aliases.push(alias);
+        draft.dirty.aliases = true;
+        $input.val('');
+        renderAliases();
+    };
+    $modal.on('click.cw', '#cw-alias-add', addAlias);
+    $modal.on('keypress.cw', '#cw-alias-input', function (e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            addAlias();
+        }
+    });
+    $modal.on('click.cw', '.cw-alias-remove', function () {
+        if (!draft) return;
+        const alias = String($(this).data('alias'));
+        draft.aliases = draft.aliases.filter(a => a !== alias);
+        draft.dirty.aliases = true;
+        renderAliases();
+    });
+
+    // Generate Knives is a two-step flow: the button shows the theme
+    // picker, and choosing a theme chip fires the actual API call.
+    $modal.on('click.cw', '#cw-knife-generate', function () {
+        if (!draft || _knifeGenInProgress) return;
+        renderKnifeThemePicker();
+    });
+    $modal.on('click.cw', '.cw-knife-theme-chip', async function () {
+        if (!draft || _knifeGenInProgress) return;
+        const theme = KNIFE_THEMES[parseInt($(this).attr('data-theme-index'))];
+        if (!theme) return;
+        _knifeGenInProgress = true;
+        const $btn = $modal.find('#cw-knife-generate');
+        const forName = draft.name;
+        // The draft object identifies the character AND the version on the
+        // stage: a version switch mid-call builds a new draft, and the
+        // suggestions must not land in it.
+        const startDraft = draft;
+        const $sugg = $modal.find('#cw-knife-suggestions');
+        $btn.prop('disabled', true);
+        $sugg.prop('hidden', false).html(`<div class="cw-knife-sugg-loading">Forging ${escapeHtml(theme.label.toLowerCase())} knives&hellip; (asking your AI)</div>`);
+        try {
+            const suggestions = await generateKnifeSuggestions(forName, {
+                isUser: draft.isUser,
+                count: 5,
+                existingKnives: (draft.knives || []).map(k => k.text),
+                theme,
+            });
+            // Modal may have closed or switched character/version during the API call
+            if (draft !== startDraft) return;
+            if (!suggestions.length) throw new Error('Empty suggestion list');
+            renderKnifeSuggestions(suggestions);
+        } catch (e) {
+            console.error('[Dooms Tracker] Workshop: knife generation failed', e);
+            if (draft === startDraft) {
+                $sugg.html('<div class="cw-knife-sugg-loading">Generation failed &mdash; check your API connection and try again.</div>');
+            }
+            try { if (window.toastr) window.toastr.error('Failed to generate knives.', 'Character Workshop', { timeOut: 4000 }); } catch (err) {}
+        } finally {
+            _knifeGenInProgress = false;
+            $btn.prop('disabled', false);
+        }
+    });
+    $modal.on('click.cw', '#cw-knife-sugg-keep', function () {
+        if (!draft) return;
+        const $sugg = $modal.find('#cw-knife-suggestions');
+        const suggestions = $sugg.data('suggestions') || [];
+        const picked = [];
+        $sugg.find('input[type="checkbox"]:checked').each(function () {
+            const idx = parseInt($(this).data('index'));
+            if (suggestions[idx]) picked.push(suggestions[idx]);
+        });
+        if (!picked.length) {
+            try { if (window.toastr) window.toastr.info('Tick at least one knife to keep, or Discard all.', 'Character Workshop', { timeOut: 3000 }); } catch (e) {}
+            return;
+        }
+        const now = Date.now();
+        picked.forEach((text, i) => draft.knives.push({ id: `knife_${now}_${i}`, text, used: false }));
+        draft.dirty.knives = true;
+        clearKnifeSuggestions();
+        renderKnives();
+    });
+    $modal.on('click.cw', '#cw-knife-sugg-discard', function () {
+        clearKnifeSuggestions();
+    });
+    $modal.on('click.cw', function (e) {
+        if (e.target === this) closeCharacterWorkshop();
+    });
+
+    $modal.on('click.cw', '.rpg-color-swatch', function () {
+        if (!draft) return;
+        const hex = $(this).attr('data-hex');
+        if (!hex) return;
+        commitColorSelection(hex);
+    });
+
+    // Relationship chip click — set persistent override. Click again to clear.
+    // Scoped to #cw-rel-chips so the pronoun chips below don't get hit by it.
+    $modal.on('click.cw', '#cw-rel-chips .rpg-rel-chip', function () {
+        if (!draft || draft.isUser) return;
+        const $chip = $(this);
+        const picked = String($chip.attr('data-rel') || '');
+        const current = String(draft.relationship || '');
+        const next = (current.toLowerCase() === picked.toLowerCase()) ? '' : picked;
+        draft.relationship = next;
+        draft.dirty.relationship = true;
+        $modal.find('#cw-rel-chips .rpg-rel-chip').each(function () {
+            const match = ($(this).attr('data-rel') || '').toLowerCase() === next.toLowerCase() && !!next;
+            $(this).toggleClass('selected', match);
+            $(this).attr('aria-checked', match ? 'true' : 'false');
+        });
+        const $rel = $modal.find('#cw-preview-rel');
+        if (next) {
+            const emoji = $chip.attr('data-emoji') || '';
+            $rel.text(`${emoji} ${next}`.trim());
+        } else {
+            $rel.text('');
+        }
+    });
+
+    // Relationship carousel arrows. Scrolls by most of a screenful, leaving a
+    // chip of overlap so it's obvious the strip moved rather than jumped.
+    $modal.on('click.cw', '.cw-rel-arrow', function () {
+        const el = $modal.find('#cw-rel-chips')[0];
+        if (!el) return;
+        const dir = Number($(this).attr('data-dir')) || 1;
+        el.scrollBy({ left: dir * Math.max(80, el.clientWidth * 0.8), behavior: 'smooth' });
+    });
+    // Bound to the strip itself, not delegated: scroll doesn't bubble, so a
+    // delegated handler on the modal would never fire. `.off('.cw')` on the
+    // modal doesn't reach descendants either, hence the explicit off here so
+    // a re-bind can't stack a second copy.
+    // Covers arrow scrolls, trackpad swipes and shift+wheel alike; the smooth
+    // scroll settles over several frames, so the arrow state comes from the
+    // scroll events rather than a guess taken right after the click.
+    $modal.find('#cw-rel-chips').off('.cw').on('scroll.cw', updateRelationshipArrows);
+
+    // Pronoun chip click (user-mode) — picks one of the presets or reveals
+    // the custom input. Click the active chip again to clear.
+    $modal.on('click.cw', '#cw-pronoun-chips .rpg-rel-chip', function () {
+        if (!draft || !draft.isUser) return;
+        const $chip = $(this);
+        const value = String($chip.attr('data-pronouns') || '');
+        const current = String(draft.pronouns || '');
+        const $custom = $modal.find('#cw-pronouns-custom');
+        if (value === 'custom') {
+            // Toggle custom mode: reveal the input; pre-fill with whatever
+            // the current value is if it's already custom.
+            const presets = ['he/him', 'she/her', 'they/them'];
+            const wasCustom = current && !presets.includes(current.toLowerCase());
+            if (wasCustom) {
+                draft.pronouns = '';
+                draft.dirty.pronouns = true;
+                $custom.prop('hidden', true).val('');
+            } else {
+                $custom.prop('hidden', false).val(current && !presets.includes(current.toLowerCase()) ? current : '').trigger('focus');
+            }
+        } else {
+            const next = current.toLowerCase() === value ? '' : value;
+            draft.pronouns = next;
+            draft.dirty.pronouns = true;
+            $custom.prop('hidden', true).val('');
+        }
+        renderPronounChips();
+        $modal.find('#cw-preview-rel').text(draft.pronouns ? `(${draft.pronouns})` : '');
+    });
+
+    // Custom pronoun input — saves on every keystroke
+    $modal.on('input.cw', '#cw-pronouns-custom', function () {
+        if (!draft || !draft.isUser) return;
+        const value = String($(this).val() || '').trim();
+        draft.pronouns = value;
+        draft.dirty.pronouns = true;
+        $modal.find('#cw-preview-rel').text(value ? `(${value})` : '');
+    });
+
+    // Linked SillyTavern persona dropdown — saves the avatar filename
+    $modal.on('change.cw', '#cw-linked-persona', function () {
+        if (!draft || !draft.isUser) return;
+        draft.linkedPersona = String($(this).val() || '');
+        draft.dirty.linkedPersona = true;
+    });
+
+    // "Set as active persona" footer button — flips DES's activeUserCharacter,
+    // forces "Show User in PCP" on so the card actually appears, and (if
+    // linked to a ST persona) calls SillyTavern's persona switch flow.
+    $modal.on('click.cw', '#cw-set-active-persona', function () {
+        if (!draft || !draft.isUser) return;
+        try {
+            extensionSettings.activeUserCharacter = draft.name;
+            // Picking "Set as active" implies the user wants to see them in
+            // the panel — flip the master toggle on so the card renders even
+            // if it had been disabled in Settings.
+            extensionSettings.showUserInPCP = true;
+            saveSettings();
+            // Reflect the toggle change in the settings UI if it's open.
+            try { $('#rpg-pb-show-user').prop('checked', true); } catch (e) {}
+        } catch (e) {}
+        // If the user character is linked to a persona, fire ST's persona
+        // switch. Implementations vary across ST versions, so try the
+        // common entry points and silently fall through.
+        const linked = draft.linkedPersona || '';
+        if (linked) {
+            try {
+                if (typeof window.setUserAvatar === 'function') {
+                    window.setUserAvatar(linked);
+                } else if (power_user && typeof power_user.persona_set === 'function') {
+                    power_user.persona_set(linked);
+                } else {
+                    // Fallback: dispatch a click on the persona's avatar in the
+                    // Personas panel so ST's own handler picks it up.
+                    const sel = `[data-pa-avatar="${linked}"], [data-avatar-file="${linked}"]`;
+                    const el = document.querySelector(sel);
+                    if (el) el.click();
+                }
+            } catch (e) {
+                console.warn('[Dooms Tracker] Failed to switch ST persona:', e);
+            }
+        }
+        try {
+            if (window.toastr) window.toastr.success(`Active user character set to "${draft.name}".`, 'Character Workshop', { timeOut: 3000 });
+        } catch (e) {}
+        // Re-render the PCP so the user-card shows up with the new active.
+        try { updatePortraitBar(); } catch (e) {}
+    });
+
+    // Custom-color dropper — opens the native color picker sheet.
+    $modal.on('click.cw', '#cw-color-custom-btn', function (e) {
+        e.preventDefault();
+        const $input = $modal.find('#cw-color-custom-input');
+        if (!$input.length) return;
+        // Seed the picker with the draft's current color so it opens on it.
+        if (draft?.color) $input.val(draft.color);
+        $input[0].click();
+    });
+    $modal.on('input.cw change.cw', '#cw-color-custom-input', function () {
+        if (!draft) return;
+        const hex = String($(this).val() || '').toLowerCase();
+        if (!/^#[0-9a-f]{6}$/.test(hex)) return;
+        commitColorSelection(hex);
+    });
+
+    $modal.on('change.cw', '#cw-portrait-file', async function () {
+        if (!draft) return;
+        const fileInput = this;
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) return;
+        try {
+            const dataUrl = await getBase64Async(file);
+
+            // Open SillyTavern's built-in crop popup so users can frame the
+            // portrait before saving. Same 3:4 aspect + upscale pipeline as
+            // the portrait-bar's right-click "Upload Portrait" path so the
+            // resulting images match in dimensions.
+            const safeName = (draft.name || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const titleHtml = draft.isUser
+                ? `<h3>Crop portrait for user character: ${safeName}</h3>`
+                : `<h3>Crop portrait for ${safeName}</h3>`;
+            const croppedImage = await callGenericPopup(
+                titleHtml,
+                POPUP_TYPE.CROP,
+                '',
+                { cropAspect: 3 / 4, cropImage: dataUrl },
+            );
+            if (!croppedImage) {
+                console.log('[Dooms Tracker] Workshop: portrait crop cancelled');
+                return;
+            }
+
+            // Upscale the cropped result to 660x880 PNG for crisp portrait
+            // display. The CROP popup returns a low-res JPEG at the crop
+            // pixel size; redrawing it at portrait resolution prevents
+            // softness when it's used in the bar / chat bubbles.
+            const PORTRAIT_W = 660;
+            const PORTRAIT_H = 880;
+            const hiResDataUrl = await upscaleImage(String(croppedImage), PORTRAIT_W, PORTRAIT_H);
+
+            draft.avatar = hiResDataUrl;
+            draft.avatarFullRes = hiResDataUrl;
+            draft.dirty.avatar = true;
+            setStagePortrait(hiResDataUrl);
+        } catch (err) {
+            console.warn('[Dooms Tracker] Workshop: portrait upload failed', err);
+            try {
+                if (window.toastr) window.toastr.error(
+                    String(err?.message || err || 'Upload failed.'),
+                    'Portrait upload',
+                    { timeOut: 4000 },
+                );
+            } catch (e) {}
+        } finally {
+            // Always clear so the same file can be picked again.
+            try { fileInput.value = ''; } catch (e) {}
+        }
+    });
+
+    $modal.on('input.cw change.cw', '#cw-appearance', function () {
+        if (!draft || draft.isUser) return;
+        draft.appearance = String($(this).val() || '');
+        draft.dirty.appearance = true;
+    });
+    // Step 1 — distill the Injection description into a tag prompt. Fills the
+    // Portrait prompt field only; NO image renders until the user has had a
+    // chance to review/tweak and clicks Render portrait.
+    $modal.on('click.cw', '#cw-appearance-from-desc', async function () {
+        if (!draft || draft.isUser) return;
+        const name = draft.name;
+        const description = String(draft.injection?.description || '').trim();
+        if (!description) {
+            try { if (window.toastr) window.toastr.info('No description to work from — fill in the Injection section\'s Description first.', 'Character Workshop', { timeOut: 4000 }); } catch (e) {}
+            return;
+        }
+        const $btn = $(this);
+        const startDraft = draft;
+        $btn.prop('disabled', true);
+        try {
+            const gen = await import('../features/avatarGenerator.js');
+            if (window.toastr) window.toastr.info(`Writing a portrait prompt from ${name}'s description…`, '', { timeOut: 4000 });
+            const prompt = await gen.distillDescriptionPrompt(name, description);
+            if (!prompt) {
+                if (window.toastr) window.toastr.error('The LLM did not return a prompt — check your connection settings and try again.', 'Character Workshop', { timeOut: 5000 });
+                return;
+            }
+            if (draft === startDraft && !draft.isUser) {
+                draft.appearance = prompt;
+                draft.dirty.appearance = true;
+                $modal.find('#cw-appearance').val(prompt);
+            }
+            if (window.toastr) window.toastr.success('Prompt ready — tweak it if you like, then hit Render portrait.', 'Character Workshop', { timeOut: 5000 });
+        } catch (e) {
+            console.error('[Dooms Tracker] Workshop: prompt distillation failed', e);
+            if (window.toastr) window.toastr.error('Prompt generation failed — see console for details.', 'Character Workshop', { timeOut: 4000 });
+        } finally {
+            $btn.prop('disabled', false);
+        }
+    });
+    // Step 2 — render a portrait with whatever the Portrait prompt field
+    // says (empty field = the automatic LLM-written prompt).
+    $modal.on('click.cw', '#cw-appearance-render', async function () {
+        if (!draft || draft.isUser) return;
+        if (!draft.isLive) {
+            // The generator writes the live stores; see renderAppearance.
+            try { if (window.toastr) window.toastr.info('Portraits render for the live version only. Make this campaign active in the Lore Library first.', 'Character Workshop', { timeOut: 5000 }); } catch (e) {}
+            return;
+        }
+        const name = draft.name;
+        const prompt = String(draft.appearance || '').trim();
+        const $btn = $(this);
+        const startDraft = draft;
+        try {
+            const gen = await import('../features/avatarGenerator.js');
+            if (!gen.isSdAvailable()) {
+                if (window.toastr) window.toastr.warning('The Image Generation (Stable Diffusion) extension isn\'t enabled.', 'Character Workshop', { timeOut: 5000 });
+                return;
+            }
+            if (gen.isGenerating(name)) {
+                if (window.toastr) window.toastr.info(`Already generating a portrait for ${name}.`, '', { timeOut: 3000 });
+                return;
+            }
+            const ok = window.confirm(
+                `Render a new portrait for ${name}?\n\n` +
+                (prompt
+                    ? `Uses the Portrait prompt field above.`
+                    : `The field is empty, so the LLM writes a prompt automatically.`) +
+                ` The current portrait is kept and can be restored.`
+            );
+            if (!ok) return;
+            $btn.prop('disabled', true);
+            if (window.toastr) window.toastr.info(`Generating a new portrait for ${name}…`, '', { timeOut: 4000 });
+            const url = prompt
+                ? await gen.generateAvatarWithPrompt(name, prompt)
+                : await gen.regenerateAvatar(name);
+            if (url) {
+                if (draft === startDraft) {
+                    draft.avatar = url;
+                    renderAppearance();
+                    renderVersionStrip();
+                }
+                try { clearPortraitCache(); updatePortraitBar(); } catch (e) {}
+                if (window.toastr) window.toastr.success(`New portrait ready for ${name}.`, '', { timeOut: 3000 });
+            } else if (window.toastr) {
+                window.toastr.warning(`Portrait generation failed for ${name} — the image backend reported an error. Check the Image Generation extension settings and your backend's console.`, '', { timeOut: 8000 });
+            }
+        } catch (e) {
+            console.error('[Dooms Tracker] Workshop: portrait render failed', e);
+            if (window.toastr) window.toastr.error('Portrait generation failed — see console for details.', 'Character Workshop', { timeOut: 4000 });
+        } finally {
+            $btn.prop('disabled', false);
+        }
+    });
+    $modal.on('input.cw change.cw', '#cw-inj-description', function () {
+        if (!draft) return;
+        draft.injection.description = String($(this).val() || '');
+        draft.dirty.injection = true;
+    });
+
+    $modal.on('input.cw change.cw', '#cw-inj-prompt', function () {
+        if (!draft) return;
+        draft.injection.promptTemplate = String($(this).val() || '');
+        draft.dirty.injection = true;
+    });
+    $modal.on('click.cw', '#cw-inj-prompt-reset', function (e) {
+        e.preventDefault();
+        if (!draft) return;
+        draft.injection.promptTemplate = DEFAULT_INJECT_PROMPT;
+        draft.dirty.injection = true;
+        const $prompt = $modal.find('#cw-inj-prompt');
+        $prompt.val(DEFAULT_INJECT_PROMPT);
+        // Only auto-focus on desktop — on mobile this triggers the virtual keyboard
+        if (window.innerWidth > 1000) {
+            $prompt.trigger('focus');
+        }
+    });
+
+    $modal.on('click.cw', '#cw-clear-all-injects', function (e) {
+        e.preventDefault();
+        clearAllInjects();
+    });
+
+    $modal.on('change.cw', '#cw-banish', function () {
+        if (!draft) return;
+        const checked = $(this).prop('checked');
+        setCharacterBanished(draft.name, !!checked);
+        renderHiddenBanner();
+        try {
+            if (window.toastr) {
+                if (checked) {
+                    window.toastr.info(`"${draft.name}" is now banished — every AI generation will be told they're not in the scene.`, 'Character Workshop', { timeOut: 5000 });
+                } else {
+                    window.toastr.info(`"${draft.name}" is no longer banished.`, 'Character Workshop', { timeOut: 3000 });
+                }
+            }
+        } catch (e) {}
+    });
+
+    // "Attach portrait to message" — global setting (not per-character).
+    // Persisted immediately on toggle so it sticks even if the user closes
+    // the Workshop with Cancel.
+    $modal.on('change.cw', '#cw-inj-attach-portrait', function () {
+        extensionSettings.injectAttachPortrait = $(this).prop('checked');
+        try { saveSettings(); } catch (e) { console.warn('[Dooms Tracker] Workshop: failed to save injectAttachPortrait', e); }
+    });
+
+    // Combobox: open on focus / click, filter as the user types.
+    $modal.on('focus.cw click.cw', '#cw-inj-lorebook', function () {
+        openLorebookCombo();
+    });
+    $modal.on('input.cw', '#cw-inj-lorebook', function () {
+        openLorebookCombo();
+        renderLorebookComboList($(this).val());
+        // Don't commit yet — only on selection or blur. But mark dirty so
+        // a Save right after typing a literal name still persists.
+        if (!draft) return;
+        draft.injection.lorebook = String($(this).val() || '').trim();
+        draft.dirty.injection = true;
+    });
+    $modal.on('keydown.cw', '#cw-inj-lorebook', function (e) {
+        if (e.key === 'Escape') {
+            e.stopPropagation();
+            closeLorebookCombo();
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            // Pick the first match in the current filter.
+            const first = $modal.find('#cw-inj-lorebook-list li[data-value]').first();
+            if (first.length) commitLorebookSelection(first.attr('data-value') || '');
+        }
+    });
+    $modal.on('click.cw', '#cw-inj-lorebook-toggle', function (e) {
+        e.preventDefault();
+        if ($modal.find('#cw-inj-lorebook-combo').hasClass('is-open')) {
+            closeLorebookCombo();
+        } else {
+            openLorebookCombo();
+            // Only auto-focus on desktop (enables type-to-filter) — on mobile
+            // this pops the virtual keyboard over the list the user just opened
+            if (window.innerWidth > 1000) {
+                $modal.find('#cw-inj-lorebook').trigger('focus');
+            }
+        }
+    });
+    $modal.on('mousedown.cw', '#cw-inj-lorebook-list li[data-value]', function (e) {
+        e.preventDefault(); // keep input focus
+        commitLorebookSelection($(this).attr('data-value') || '');
+    });
+    // Click outside the combobox closes it.
+    $modal.on('click.cw', function (e) {
+        if (!$modal.find('#cw-inj-lorebook-combo').hasClass('is-open')) return;
+        if ($(e.target).closest('#cw-inj-lorebook-combo').length === 0) {
+            closeLorebookCombo();
+        }
+    });
+
+    $modal.on('click.cw', '#cw-open-expressions', () => {
+        if (!draft) return;
+        try {
+            openExpressionFolder(draft.name);
+        } catch (e) {
+            console.warn('[Dooms Tracker] Workshop: openExpressionFolder failed', e);
+        }
+    });
+
+    $modal.on('click.cw', '#cw-portrait-clear', () => {
+        if (!draft) return;
+        draft.avatar = '';
+        draft.avatarFullRes = '';
+        draft.dirty.avatar = true;
+        $modal.find('#cw-portrait-file').val('');
+        setStagePortrait('');
+    });
+
+    $modal.on('click.cw', '#cw-save', () => {
+        if (!draft) return;
+        commitDraft();
+        closeCharacterWorkshop();
+    });
+
+    // Copy NPC → User Characters list (NPC-only footer action)
+    $modal.on('click.cw', '#cw-copy-to-users', () => {
+        if (!draft || draft.isUser) return;
+        commitDraft();
+        copyNpcToUserCharacter(draft.name);
+    });
+
+    // Copy User Character → NPC list (user-only footer action)
+    $modal.on('click.cw', '#cw-copy-to-characters', () => {
+        if (!draft || !draft.isUser) return;
+        commitDraft();
+        copyUserToNpcCharacter(draft.name);
+    });
+
+    $modal.on('click.cw', '#cw-inject', () => {
+        if (!draft) return;
+        commitDraft(); // persist any pending appearance edits first
+        if (draft.isUser) {
+            injectUserPersona(draft.name);
+        } else {
+            injectIntoScene(draft.name);
+        }
+        closeCharacterWorkshop();
+    });
+
+    $modal.on('click.cw', '#cw-eject', () => {
+        if (!draft) return;
+        ejectFromScene(draft.name);
+        closeCharacterWorkshop();
+    });
+
+    $modal.on('click.cw', '#cw-export', () => {
+        if (!draft) return;
+        try {
+            exportDraft();
+        } catch (e) {
+            console.warn('[Dooms Tracker] Workshop: export failed', e);
+            if (window.toastr) window.toastr.error('Export failed — see console for details.', 'Character Workshop');
+        }
+    });
+
+    $modal.on('click.cw', '#cw-delete', () => {
+        if (!draft) return;
+        const name = draft.name;
+        const versions = draft.isUser ? [] : listProfileCampaigns(name);
+        const ok = window.confirm(versions.length
+            ? t(
+                'characterWorkshop.confirmDeleteVersions',
+                `Delete "{name}" everywhere?\n\nThis removes the portrait, dialogue color, known-character entry AND {count} campaign version(s) of this character ({campaigns}). Sheet data is kept.`,
+                { name, count: String(versions.length), campaigns: versions.map(versionLabel).join(', ') },
+            )
+            : t(
+                'characterWorkshop.confirmDelete',
+                `Delete "{name}" from this chat's roster?\n\nThis removes the portrait, dialogue color, and known-character entry. Sheet data is kept.`,
+                { name },
+            ));
+        if (!ok) return;
+        deleteCharacter(name);
+        closeCharacterWorkshop();
+    });
+}
+
+/**
+ * Mirror a freshly-uploaded user-character portrait into ST's persona
+ * avatar file so the persona panel and {{user}} avatars in chat stay in
+ * sync with the image the user just picked in the Workshop. Without
+ * this, the Workshop saved the cropped portrait only into DES's local
+ * extensionSettings.userCharacters[name].avatar (a base64 data URL) and
+ * never touched the persona file on disk — so the persona manager kept
+ * showing the original avatar.
+ *
+ * Mirrors what ST's own persona panel does on upload:
+ *   1. POST /api/avatars/upload — multipart with `avatar` file +
+ *      `overwrite_name` set to the persona filename (matches the key
+ *      in power_user.personas).
+ *   2. Cache-bust the avatar URL + thumbnail URL so any <img> tags
+ *      already mounted will pick up the new bytes on next render.
+ *
+ * Best-effort: a failure here just leaves ST's persona file untouched —
+ * the DES local copy was already saved by the caller. We log and toast
+ * a warning but never throw.
+ *
+ * @param {string} personaFilename - exact ST persona filename (the key
+ *   in power_user.personas, e.g. "Yashiro.png")
+ * @param {string} dataUrl - PNG data URL produced by upscaleImage
+ */
+async function mirrorAvatarToPersonaFile(personaFilename, dataUrl) {
+    if (!personaFilename || !dataUrl) return;
+    // Refuse to write if the user's linkedPersona points at a filename
+    // that ST doesn't actually have registered. Otherwise we'd create
+    // an orphaned avatar file with no corresponding persona entry.
+    const personas = (power_user && power_user.personas) || {};
+    if (!personas[personaFilename]) {
+        console.warn(`[Dooms Tracker] Workshop: linkedPersona "${personaFilename}" not in power_user.personas — skipping mirror`);
+        return;
+    }
+    try {
+        const blob = await (await fetch(dataUrl)).blob();
+        const file = new File([blob], personaFilename, { type: blob.type || 'image/png' });
+        const fd = new FormData();
+        // ST's persona client uses field name `avatar` (not `file`).
+        fd.append('avatar', file);
+        fd.append('overwrite_name', personaFilename);
+        const resp = await fetch('/api/avatars/upload', {
+            method: 'POST',
+            headers: getRequestHeaders({ omitContentType: true }),
+            body: fd,
+        });
+        if (!resp.ok) {
+            const text = await resp.text().catch(() => '');
+            throw new Error(text || `HTTP ${resp.status}`);
+        }
+        // Force already-rendered <img> tags to reload. A plain
+        // fetch(url, {cache:'reload'}) only refreshes the browser's HTTP
+        // cache for that URL — img elements already on the page (persona
+        // panel preview, message-header user avatar, persona dropdown
+        // thumbnails) won't repaint until their `src` is rewritten. So
+        // walk the DOM and append a timestamp query string to every
+        // matching src.
+        try {
+            const ts = Date.now();
+            const escFilename = personaFilename.replace(/"/g, '\\"');
+            const matchers = [
+                `img[src*="User Avatars/${escFilename}"]`,
+                `img[src*="thumbnail"][src*="${escFilename}"]`,
+                // ST renders persona thumbs encoded too
+                `img[src*="${encodeURIComponent(personaFilename)}"]`,
+            ];
+            const seen = new WeakSet();
+            for (const sel of matchers) {
+                document.querySelectorAll(sel).forEach((img) => {
+                    if (seen.has(img)) return;
+                    seen.add(img);
+                    const src = img.getAttribute('src') || '';
+                    if (!src) return;
+                    const sep = src.includes('?') ? '&' : '?';
+                    img.setAttribute('src', `${src}${sep}t=${ts}`);
+                });
+            }
+        } catch (e) {
+            console.warn('[Dooms Tracker] Workshop: persona avatar img refresh failed', e);
+        }
+        // Best-effort HTTP cache reload too, so any future render reads
+        // the new bytes.
+        try {
+            await fetch(`/User Avatars/${encodeURIComponent(personaFilename)}`, { cache: 'reload' });
+        } catch (e) {}
+        try {
+            const thumbUrl = getSafeThumbnailUrl('persona', personaFilename);
+            if (thumbUrl) await fetch(thumbUrl, { cache: 'reload' });
+        } catch (e) {}
+        console.log(`[Dooms Tracker] Workshop: mirrored portrait to ST persona "${personaFilename}"`);
+        try {
+            if (window.toastr) window.toastr.success(
+                `Saved and synced "${personaFilename}" in the Persona Manager.`,
+                'Persona avatar sync',
+                { timeOut: 2500 },
+            );
+        } catch (e) {}
+    } catch (err) {
+        console.warn(`[Dooms Tracker] Workshop: failed to mirror portrait to ST persona "${personaFilename}":`, err);
+        try {
+            if (window.toastr) window.toastr.warning(
+                `Saved locally but couldn't update the linked SillyTavern persona avatar: ${String(err?.message || err)}`,
+                'Persona avatar sync',
+                { timeOut: 4000 },
+            );
+        } catch (e) {}
+    }
+}
+
+function commitDraft() {
+    if (!draft) return;
+    const name = draft.name;
+    let changed = false;
+
+    // Stats are shared by every version and campaign — saved the same way
+    // whatever version is on the stage, for NPCs and personas alike.
+    if (draft.dirty.stats) {
+        saveStatSheet(name, draft.isUser, draft.stats, { persist: false, pending: !!draft.statsPending });
+        if (draft.statsPending && !draft.isUser) requestLevelGeneration(name);
+        changed = true;
+    }
+
+    // User-character mode: write the whole entry into a single namespace.
+    if (draft.isUser) {
+        if (!extensionSettings.userCharacters) extensionSettings.userCharacters = {};
+        const existing = extensionSettings.userCharacters[name] || {};
+        const tplRaw = (draft.injection.promptTemplate || '').trim();
+        const tpl = (tplRaw && tplRaw !== DEFAULT_INJECT_PROMPT.trim()) ? tplRaw : '';
+        const desc = (draft.injection.description || '').trim();
+        const book = (draft.injection.lorebook || '').trim();
+        const next = {
+            ...existing,
+            color: draft.color || '',
+            avatar: draft.avatar || '',
+            avatarFullRes: draft.avatarFullRes || draft.avatar || '',
+            pronouns: draft.pronouns || '',
+            linkedPersona: draft.linkedPersona || '',
+            injection: { description: desc, lorebook: book, ...(tpl ? { promptTemplate: tpl } : {}) },
+            knives: Array.isArray(draft.knives) ? draft.knives.map(k => ({ ...k })) : [],
+        };
+        extensionSettings.userCharacters[name] = next;
+        saveOrWarn(saveSettings, 'settings');
+        try { updatePortraitBar(); } catch (e) {}
+        // Pass-2 perf: catch a just-saved data:URL avatar and migrate it to
+        // the on-disk URL in the background. Idempotent + locked.
+        Promise.resolve()
+            .then(() => migrateAvatarsToFiles(saveSettings))
+            .then((res) => {
+                if (res?.migrated) {
+                    try { clearPortraitCache(); updatePortraitBar(); } catch (e) {}
+                }
+            })
+            .catch(() => {});
+        // Mirror the user-character portrait into ST's persona avatar file
+        // on every save when both fields are populated. We previously gated
+        // this on dirty.avatar / dirty.linkedPersona, but that misses the
+        // common path of "user opened the Workshop, dropdown already
+        // showed the right persona from a prior save, user clicked Save
+        // without changing anything" — neither flag is dirty so nothing
+        // gets pushed to ST, and the persona file stays out of date if it
+        // was ever written by anything other than DES. Mirror is idempotent
+        // (writes the same bytes), so just always run it. If the network
+        // call fails, mirrorAvatarToPersonaFile already toasts a warning.
+        if (draft.linkedPersona && draft.avatar) {
+            mirrorAvatarToPersonaFile(draft.linkedPersona, draft.avatar).catch(() => {});
+        } else {
+            // Surface why the mirror skipped so the user knows whether to
+            // upload a portrait, link a persona, or both.
+            const reasons = [];
+            if (!draft.linkedPersona) reasons.push('no linked SillyTavern persona');
+            if (!draft.avatar) reasons.push('no portrait uploaded');
+            console.log(`[Dooms Tracker] Workshop: persona mirror skipped (${reasons.join(', ')})`);
+            try {
+                if (window.toastr) window.toastr.info(
+                    `Saved locally. Persona file not updated: ${reasons.join(', ')}.`,
+                    'Persona avatar sync',
+                    { timeOut: 4000 },
+                );
+            } catch (e) {}
+        }
+        clearDirtyFlags();
+        return;
+    }
+
+    if (draft.dirty.color) {
+        // Use the chat-aware getter so colors land in the right store.
+        // When perChatCharacterTracking is on, characterColors live in
+        // chat_metadata.dooms_tracker, NOT extensionSettings — writing
+        // to extensionSettings here meant the PCP (which renders from
+        // the chat-scoped map) never saw the new color.
+        const colors = getActiveCharacterColors();
+        // A MANUAL color change always overwrites the assignment (only the
+        // automatic harvest is forbidden from overwriting). Remember the
+        // replaced color as an alias on the known-character entry so
+        // historical messages — whose font tags still use the old hex —
+        // keep attributing to this character.
+        const prev = colors[name] ? String(colors[name]).toLowerCase() : '';
+        const next = draft.color ? String(draft.color).toLowerCase() : '';
+        if (prev && prev !== next) {
+            try {
+                const known = getActiveKnownCharacters();
+                if (known) {
+                    if (!known[name]) known[name] = { emoji: '👤' };
+                    const aliases = Array.isArray(known[name].previousColors) ? known[name].previousColors : [];
+                    if (!aliases.includes(prev)) aliases.push(prev);
+                    known[name].previousColors = aliases;
+                }
+            } catch (e) { /* alias bookkeeping is best-effort */ }
+        }
+        if (draft.color) {
+            colors[name] = draft.color;
+        } else {
+            delete colors[name];
+        }
+        // Persist via the matching saver (saveChatData when per-chat,
+        // saveSettings otherwise) — saveCharacterRosterChange picks
+        // the right one. The trailing saveSettings() at the end of
+        // commitDraft still runs for the non-per-chat fields.
+        saveOrWarn(saveCharacterRosterChange, 'roster change');
+        // Re-attribute existing bubbles with the updated color map.
+        Promise.resolve().then(async () => {
+            try {
+                const { revertAllChatBubbles, applyAllChatBubbles } = await import('../rendering/chatBubbles.js');
+                if (extensionSettings.chatBubbleMode && extensionSettings.chatBubbleMode !== 'off') {
+                    revertAllChatBubbles();
+                    applyAllChatBubbles();
+                }
+            } catch (e) { /* non-fatal */ }
+        });
+        changed = true;
+    }
+
+    // Aliases are a global name mapping — saved the same way whatever
+    // version is on the stage.
+    if (draft.dirty.aliases) {
+        if (!extensionSettings.characterAliases) extensionSettings.characterAliases = {};
+        if (Array.isArray(draft.aliases) && draft.aliases.length) {
+            extensionSettings.characterAliases[name] = [...draft.aliases];
+        } else {
+            delete extensionSettings.characterAliases[name];
+        }
+        changed = true;
+    }
+
+    // Which storage the versioned fields go to is decided NOW, not when the
+    // draft was built: the active campaign can change while the card is
+    // open (refreshWorkshopIfOpen saves through here), and the version the
+    // draft was opened on must keep its edits wherever it lives now.
+    const live = isLiveVersion(draft.versionId, name);
+    // Portrait files replaced by this save — deleted at the end, and only
+    // if no other version still points at them.
+    const replacedPortraits = [];
+
+    // Only persist the injection template when it actually differs from
+    // the default — this keeps settings compact for unmodified characters
+    // and lets us ship default-prompt changes in the future without every
+    // character being pinned to the old text.
+    const buildInjectionEntry = () => {
+        const desc = (draft.injection.description || '').trim();
+        const book = (draft.injection.lorebook || '').trim();
+        const tplRaw = (draft.injection.promptTemplate || '').trim();
+        const tpl = (tplRaw && tplRaw !== DEFAULT_INJECT_PROMPT.trim()) ? tplRaw : '';
+        if (!desc && !book && !tpl) return null;
+        const entry = { description: desc, lorebook: book };
+        if (tpl) entry.promptTemplate = tpl;
+        return entry;
+    };
+
+    if (live) {
+        if (draft.dirty.avatar) {
+            if (!extensionSettings.npcAvatars) extensionSettings.npcAvatars = {};
+            if (!extensionSettings.npcAvatarsFullRes) extensionSettings.npcAvatarsFullRes = {};
+            replacedPortraits.push(extensionSettings.npcAvatars[name], extensionSettings.npcAvatarsFullRes[name]);
+            if (draft.avatar) {
+                extensionSettings.npcAvatars[name] = draft.avatar;
+                extensionSettings.npcAvatarsFullRes[name] = draft.avatarFullRes || draft.avatar;
+            } else {
+                delete extensionSettings.npcAvatars[name];
+                delete extensionSettings.npcAvatarsFullRes[name];
+            }
+            changed = true;
+        }
+
+        if (draft.dirty.relationship) {
+            if (!extensionSettings.characterRelationships) extensionSettings.characterRelationships = {};
+            if (draft.relationship) {
+                extensionSettings.characterRelationships[name] = draft.relationship;
+            } else {
+                delete extensionSettings.characterRelationships[name];
+            }
+            changed = true;
+        }
+
+        if (draft.dirty.knives) {
+            if (!extensionSettings.characterKnives) extensionSettings.characterKnives = {};
+            if (Array.isArray(draft.knives) && draft.knives.length) {
+                extensionSettings.characterKnives[name] = draft.knives.map(k => ({ ...k }));
+            } else {
+                delete extensionSettings.characterKnives[name];
+            }
+            changed = true;
+        }
+
+        if (draft.dirty.appearance) {
+            if (!extensionSettings.characterAppearance) extensionSettings.characterAppearance = {};
+            const appearance = String(draft.appearance || '').trim();
+            if (appearance) {
+                extensionSettings.characterAppearance[name] = appearance;
+            } else {
+                delete extensionSettings.characterAppearance[name];
+            }
+            changed = true;
+        }
+
+        if (draft.dirty.injection) {
+            if (!extensionSettings.characterInjection) extensionSettings.characterInjection = {};
+            const entry = buildInjectionEntry();
+            if (entry) {
+                extensionSettings.characterInjection[name] = entry;
+            } else {
+                delete extensionSettings.characterInjection[name];
+            }
+            changed = true;
+        }
+    } else if (draft.dirty.avatar || draft.dirty.relationship || draft.dirty.knives || draft.dirty.appearance || draft.dirty.injection) {
+        // A saved copy (shadowed Base or an inactive campaign): merge the
+        // dirty fields into the stored version and write it back whole.
+        const profile = readVersion(draft.versionId, name) || {};
+        if (draft.dirty.avatar) {
+            replacedPortraits.push(profile.avatar, profile.avatarFullRes);
+            if (draft.avatar) {
+                profile.avatar = draft.avatar;
+                profile.avatarFullRes = draft.avatarFullRes || draft.avatar;
+            } else {
+                delete profile.avatar;
+                delete profile.avatarFullRes;
+            }
+        }
+        if (draft.dirty.relationship) {
+            if (draft.relationship) profile.relationship = draft.relationship;
+            else delete profile.relationship;
+        }
+        if (draft.dirty.knives) {
+            if (Array.isArray(draft.knives) && draft.knives.length) profile.knives = draft.knives.map(k => ({ ...k }));
+            else delete profile.knives;
+        }
+        if (draft.dirty.appearance) {
+            const appearance = String(draft.appearance || '').trim();
+            if (appearance) profile.appearance = appearance;
+            else delete profile.appearance;
+        }
+        if (draft.dirty.injection) {
+            const entry = buildInjectionEntry();
+            if (entry) profile.injection = entry;
+            else delete profile.injection;
+        }
+        writeVersion(draft.versionId, name, profile);
+        changed = true;
+    }
+
+    if (!changed) return;
+    saveSettings();
+    clearDirtyFlags();
+    // Now that the settings no longer point at the replaced files, drop
+    // the ones nothing else references (a version cloned from Base shares
+    // Base's file — that one stays).
+    const orphanCandidates = replacedPortraits.filter(v => typeof v === 'string' && v && v !== draft.avatar && v !== draft.avatarFullRes);
+    if (orphanCandidates.length) deletePortraitsIfUnreferenced(orphanCandidates).catch(() => {});
+    try {
+        clearPortraitCache();
+        updatePortraitBar();
+    } catch (e) {
+        console.warn('[Dooms Tracker] Workshop: failed to refresh portrait bar after save', e);
+    }
+    try { renderVersionStrip(); } catch (e) {}
+    try { refreshRosterBadges(); } catch (e) {}
+    // Pass-2 perf: if the user just saved a data:URL portrait, the
+    // boot migration's idempotent helper also handles per-save uploads.
+    // Walks the four legacy maps, finds any data URL (just-saved one
+    // included), uploads via /api/images/upload, and replaces with a
+    // /user/images/des-portraits/... URL. No-op when nothing's pending.
+    Promise.resolve()
+        .then(() => migrateAvatarsToFiles(saveSettings))
+        .then((res) => {
+            if (res?.migrated) {
+                try { clearPortraitCache(); updatePortraitBar(); } catch (e) {}
+            }
+        })
+        .catch(() => {});
+}
+
+/**
+ * Copy an NPC into the user-character namespace. Pulls color, avatar,
+ * and description from the NPC's persisted state. Refuses if a user
+ * character with this name already exists (to avoid silent overwrites).
+ */
+function copyNpcToUserCharacter(name) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return;
+    if (!extensionSettings.userCharacters) extensionSettings.userCharacters = {};
+    if (extensionSettings.userCharacters[trimmed]) {
+        try {
+            if (window.toastr) window.toastr.warning(
+                `A user character named "${trimmed}" already exists. Rename or delete it first.`,
+                'Copy to Users',
+                { timeOut: 4500 },
+            );
+        } catch (e) {}
+        return;
+    }
+    // Copy the version on the stage (the draft was just committed), not
+    // whatever happens to be live — they differ when a saved-copy version
+    // is open.
+    const fromDraft = draft && !draft.isUser && draft.name === trimmed ? draft : null;
+    const color = fromDraft ? (fromDraft.color || '') : (extensionSettings.characterColors?.[trimmed] || '');
+    let avatar = fromDraft ? (fromDraft.avatar || '') : (extensionSettings.npcAvatars?.[trimmed] || '');
+    let avatarFullRes = fromDraft ? (fromDraft.avatarFullRes || '') : (extensionSettings.npcAvatarsFullRes?.[trimmed] || '');
+    // If npcAvatars is empty (NPC's portrait comes from a SillyTavern
+    // character card or the portraits/ folder), let resolvePortrait
+    // find the canonical URL so the copy isn't blank.
+    if (!avatar) {
+        try { avatar = resolvePortrait(trimmed) || ''; } catch (e) {}
+    }
+    if (!avatarFullRes) avatarFullRes = avatar;
+    const inj = fromDraft ? (fromDraft.injection || {}) : (extensionSettings.characterInjection?.[trimmed] || {});
+    extensionSettings.userCharacters[trimmed] = {
+        color,
+        avatar,
+        avatarFullRes,
+        pronouns: '',
+        linkedPersona: '',
+        injection: {
+            description: typeof inj.description === 'string' ? inj.description : '',
+            lorebook: '',
+            // Don't carry the NPC inject prompt template — user inject uses
+            // a different default flow.
+        },
+    };
+    saveOrWarn(saveSettings, 'settings');
+    try {
+        if (window.toastr) window.toastr.success(
+            `Copied "${trimmed}" to User Characters.`,
+            'Workshop',
+            { timeOut: 3000 },
+        );
+    } catch (e) {}
+}
+
+/**
+ * Copy a user character into the NPC namespace. Pulls color, avatar,
+ * and description from the user character. Refuses if an NPC with
+ * this name already exists.
+ */
+function copyUserToNpcCharacter(name) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return;
+    const npcAlready =
+        extensionSettings.knownCharacters?.[trimmed] ||
+        extensionSettings.characterColors?.[trimmed] ||
+        extensionSettings.npcAvatars?.[trimmed];
+    if (npcAlready) {
+        try {
+            if (window.toastr) window.toastr.warning(
+                `A character named "${trimmed}" already exists. Rename or delete it first.`,
+                'Copy to Characters',
+                { timeOut: 4500 },
+            );
+        } catch (e) {}
+        return;
+    }
+    const u = extensionSettings.userCharacters?.[trimmed] || {};
+    // Resolve the canonical avatar URL — u.avatar comes from a Workshop
+    // upload OR persona-import; if those are blank, derive it from the
+    // linkedPersona's avatar filename; if THAT's blank, ask resolvePortrait
+    // (covers SillyTavern character-card auto-import + portraits/ folder).
+    let avatar = u.avatar || '';
+    if (!avatar && u.linkedPersona) {
+        avatar = '/User%20Avatars/' + encodeURIComponent(u.linkedPersona);
+    }
+    if (!avatar) {
+        try { avatar = resolvePortrait(trimmed) || ''; } catch (e) {}
+    }
+    const avatarFullRes = u.avatarFullRes || avatar;
+    if (!extensionSettings.knownCharacters) extensionSettings.knownCharacters = {};
+    if (!extensionSettings.npcAvatars) extensionSettings.npcAvatars = {};
+    if (!extensionSettings.npcAvatarsFullRes) extensionSettings.npcAvatarsFullRes = {};
+    if (!extensionSettings.characterColors) extensionSettings.characterColors = {};
+    if (!extensionSettings.characterInjection) extensionSettings.characterInjection = {};
+    extensionSettings.knownCharacters[trimmed] = { emoji: '👤' };
+    if (u.color) {
+        // Chat-aware write — extensionSettings.characterColors is the wrong
+        // store when perChatCharacterTracking is on.
+        try { getActiveCharacterColors()[trimmed] = u.color; } catch (e) { extensionSettings.characterColors[trimmed] = u.color; }
+    }
+    if (avatar) extensionSettings.npcAvatars[trimmed] = avatar;
+    if (avatarFullRes) extensionSettings.npcAvatarsFullRes[trimmed] = avatarFullRes;
+    const desc = typeof u.injection?.description === 'string' ? u.injection.description : '';
+    if (desc) extensionSettings.characterInjection[trimmed] = { description: desc, lorebook: '' };
+    saveOrWarn(saveSettings, 'settings');
+    try { clearPortraitCache(); updatePortraitBar(); } catch (e) {}
+    try {
+        if (window.toastr) window.toastr.success(
+            `Copied "${trimmed}" to Characters.`,
+            'Workshop',
+            { timeOut: 3000 },
+        );
+    } catch (e) {}
+}
+
+function deleteCharacter(name) {
+    // User character delete: only touches the userCharacters namespace
+    // and clears activeUserCharacter if it was pointing at this entry.
+    if (draft?.isUser) {
+        const userEntry = extensionSettings.userCharacters?.[name];
+        const candidates = userEntry ? [userEntry.avatar, userEntry.avatarFullRes] : [];
+        if (extensionSettings.userCharacters) delete extensionSettings.userCharacters[name];
+        if (extensionSettings.activeUserCharacter === name) {
+            extensionSettings.activeUserCharacter = null;
+        }
+        deleteStatSheet(name, true);
+        deleteEquipmentEverywhere(name, true);
+        deleteConditionsEverywhere(name, true);
+        deleteProgressEverywhere(name, true);
+        deleteMoney(name, true);
+        deleteAbilitiesEverywhere(name, true);
+        saveOrWarn(saveSettings, 'settings');
+        // A persona copied from an NPC shares the NPC's portrait file —
+        // only files nothing else references are deleted.
+        deletePortraitsIfUnreferenced(candidates).catch(() => {});
+        try { updatePortraitBar(); } catch (e) {}
+        return;
+    }
+    if (extensionSettings.characterColors) delete extensionSettings.characterColors[name];
+    // Portrait files: collect every value first (current, full-res, the
+    // history from Regenerate Portrait, every campaign version), remove all
+    // the settings entries, save, and only THEN delete what is unreferenced.
+    const portraitCandidates = [
+        extensionSettings.npcAvatars?.[name],
+        extensionSettings.npcAvatarsFullRes?.[name],
+        ...takePortraitHistoryValues(name),
+        ...deleteCharacterEverywhere(name),
+    ];
+    // Every version-backed store (portraits, injection extras, relationship,
+    // knives, appearance, hero position, auto-portrait meta) — the same set
+    // the campaign switch swaps. Matches characterRoster.purgeCharacter so
+    // delete-from-Workshop and delete-from-Roster stay symmetric.
+    removeFromLive(name);
+    if (extensionSettings.knownCharacters) delete extensionSettings.knownCharacters[name];
+    // Aliases too — an orphaned alias entry would keep silently renaming a
+    // future, unrelated character to this deleted one.
+    if (extensionSettings.characterAliases) delete extensionSettings.characterAliases[name];
+    // Stat sheet, and its values and memories in the open chat.
+    deleteStatSheet(name, false);
+    deleteMemoriesEverywhere(name);
+    deleteEquipmentEverywhere(name, false);
+    deleteConditionsEverywhere(name, false);
+    deleteProgressEverywhere(name, false);
+    deleteMoney(name, false);
+    deleteAffinity(name);
+    deleteAbilitiesEverywhere(name, false);
+    // When perChatCharacterTracking is on, knownCharacters/characterColors
+    // live on chat_metadata. Without wiping those, the Roster grid (which
+    // reads via the active getters) shows the character right back after
+    // the toast.
+    if (extensionSettings.perChatCharacterTracking) {
+        const activeKnown = getActiveKnownCharacters();
+        if (activeKnown) delete activeKnown[name];
+        const activeColors = getActiveCharacterColors();
+        if (activeColors) delete activeColors[name];
+    }
+    // Drop from removedCharacters (both stores). The chat-load orphan-adopt
+    // routine in persistence.js re-creates a knownCharacters entry for any
+    // name still in removedCharacters, which would resurrect a character
+    // that had previously been ejected from the scene on next reload.
+    // Also drop from bannedCharacters so the standing prompt doesn't keep
+    // telling the AI to exclude a name that no longer exists.
+    const lowerName = String(name || '').toLowerCase();
+    const stripFromList = (list) => list.filter(n =>
+        typeof n !== 'string' || n.toLowerCase() !== lowerName
+    );
+    if (Array.isArray(extensionSettings.removedCharacters)) {
+        extensionSettings.removedCharacters = stripFromList(extensionSettings.removedCharacters);
+    }
+    if (Array.isArray(extensionSettings.bannedCharacters)) {
+        extensionSettings.bannedCharacters = stripFromList(extensionSettings.bannedCharacters);
+    }
+    if (extensionSettings.perChatCharacterTracking) {
+        const activeRemoved = getActiveRemovedCharacters();
+        if (Array.isArray(activeRemoved)) {
+            const filtered = stripFromList(activeRemoved);
+            activeRemoved.length = 0;
+            activeRemoved.push(...filtered);
+        }
+        const activeBanned = getActiveBannedCharacters();
+        if (Array.isArray(activeBanned)) {
+            const filtered = stripFromList(activeBanned);
+            activeBanned.length = 0;
+            activeBanned.push(...filtered);
+        }
+    }
+    saveSettings();
+    if (extensionSettings.perChatCharacterTracking) {
+        saveOrWarn(saveChatData, 'chat data');
+    }
+    deletePortraitsIfUnreferenced(portraitCandidates).catch(() => {});
+    // Re-emit the standing ban-list extension prompt so the AI stops
+    // being told to exclude a name we just deleted. Without this the
+    // BAN_SLOT prompt holds the stale list until CHAT_CHANGED fires.
+    try { refreshBanPrompt(); } catch (e) {}
+    try {
+        clearPortraitCache();
+        updatePortraitBar();
+    } catch (e) {
+        console.warn('[Dooms Tracker] Workshop: failed to refresh portrait bar after delete', e);
+    }
+    try { refreshRosterBadges(); } catch (e) {}
+}
+
+/**
+ * Bring the character into the current chat:
+ *   1. Ensure the active known-characters map has them (chat-scoped if
+ *      perChatCharacterTracking is on, global otherwise) so the portrait
+ *      bar renders them immediately.
+ *   2. Queue a one-shot extension prompt telling the AI to incorporate
+ *      the character in the next response. The prompt self-clears on
+ *      GENERATION_ENDED (see initCharacterWorkshop listener).
+ */
+/**
+ * User-character variant of injectIntoScene. Sends the player's persona
+ * description as a one-shot extension prompt for the next generation,
+ * and (if the global "attach portrait" toggle is on) attaches the user
+ * character's portrait to the next outgoing user message for vision-
+ * capable models. Skips all the NPC-only steps: roster splice, present-
+ * marking, lorebook activation, relationship lacing.
+ */
+function injectUserPersona(name) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return;
+    const description = (draft?.injection?.description || '').trim();
+    // OOC-framed system note. The previous "${name}: ${description}" form
+    // looked structurally identical to a chat line, so group-chat models
+    // could misread it as a hidden message from the user character and have
+    // other characters respond to it. The bracketed [System: …] wrapper and
+    // explicit "not a message" disclaimer prevent that misreading.
+    const promptParts = [];
+    if (description) {
+        promptParts.push(`[System note — out-of-character. Not a chat message. Do not quote or reference these brackets.]\nThe user is currently roleplaying as "${trimmed}".\nPersona: ${description}\nFor the next response, address the user as "${trimmed}".`);
+    }
+    const prompt = promptParts.join('\n\n');
+    if (prompt) {
+        try {
+            setExtensionPrompt(
+                INJECT_SLOT,
+                prompt,
+                extension_prompt_types.IN_PROMPT,
+                0,
+                false,
+            );
+            pendingInjectClear = true;
+            injectStartsToSkip = 1;
+            console.log(`[Dooms Tracker] Workshop: queued persona-inject for "${trimmed}"`);
+        } catch (e) {
+            console.warn('[Dooms Tracker] Workshop: setExtensionPrompt failed', e);
+        }
+    }
+    // Optional portrait attachment for vision-capable models — same path
+    // NPCs use, just sourced from the user-character's avatar.
+    let attached = false;
+    if (extensionSettings?.injectAttachPortrait === true && draft?.avatar) {
+        try {
+            armPortraitAttach(trimmed, draft.avatar);
+            attached = true;
+        } catch (e) {
+            console.warn('[Dooms Tracker] Workshop: portrait attach failed', e);
+        }
+    }
+    try {
+        if (window.toastr) {
+            const bits = [];
+            if (description) bits.push('description');
+            if (attached) bits.push('portrait');
+            const what = bits.length ? bits.join(' + ') : 'nothing';
+            window.toastr.success(
+                `Persona injected (${what}). Sends with the next reply.`,
+                'Character Workshop',
+                { timeOut: 3500 },
+            );
+        }
+    } catch (e) {}
+}
+
+function injectIntoScene(name) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return;
+
+    // 0. Mark this character as mid-inject + broadcast BEFORE any portrait
+    //    bar render. The broadcast populates portraitBar's _injectingNames
+    //    Set so every subsequent updatePortraitBar() call (whether from
+    //    roster mutation, mark-present, or the broadcast itself) renders
+    //    the INJECTING overlay consistently. Stuffing it in late meant the
+    //    early renders briefly showed a card with no overlay, and any
+    //    failure in the later steps could leave the overlay missing
+    //    entirely. disarmAttach is filled in at step 5 once we know
+    //    whether a portrait was actually attached.
+    pendingInjects.set(trimmed.toLowerCase(), { name: trimmed, disarmAttach: null, didSplice: false });
+    broadcastInjectState(trimmed, true);
+
+    // 1. Roster membership + lift any soft-remove. If the user previously
+    //    right-clicked 'Send to Workshop' the name sits in removedCharacters;
+    //    getCharacterList() filters those out AFTER the present-splice, so
+    //    without this the injected card would never appear.
+    try {
+        const roster = getActiveKnownCharacters();
+        if (!roster[trimmed]) {
+            roster[trimmed] = { emoji: '❓' };
+            saveCharacterRosterChange();
+        }
+        try {
+            const removed = getActiveRemovedCharacters();
+            if (Array.isArray(removed) && removed.length) {
+                const lower = trimmed.toLowerCase();
+                for (let i = removed.length - 1; i >= 0; i--) {
+                    if (typeof removed[i] === 'string' && removed[i].toLowerCase() === lower) {
+                        removed.splice(i, 1);
+                    }
+                }
+                saveCharacterRosterChange();
+            }
+        } catch (e) { /* best-effort un-hide */ }
+    } catch (e) {
+        console.warn('[Dooms Tracker] Workshop: failed to add to roster before inject', e);
+    }
+
+    // 1b. Mark the character as PRESENT in the current scene immediately so
+    //     the Present Characters panel highlights them right away, instead
+    //     of waiting for the next AI turn to put them into characterThoughts.
+    //     This calls updatePortraitBar() internally, which by now sees both
+    //     the present splice AND the injecting state. Track whether the
+    //     splice actually added (vs. found an existing entry) so cancel
+    //     doesn't erroneously remove an AI-confirmed character.
+    let didSplice = false;
+    try { didSplice = markCharacterPresentNow(trimmed); } catch (e) {
+        console.warn('[Dooms Tracker] Workshop: failed to mark character present', e);
+    }
+    {
+        const entry = pendingInjects.get(trimmed.toLowerCase());
+        if (entry) entry.didSplice = !!didSplice;
+    }
+
+    // 2. Resolve any persisted injection extras (description + lorebook + relationship + prompt template).
+    const stored = extensionSettings?.characterInjection?.[trimmed] || {};
+    const description = (draft.injection?.description ?? stored.description ?? '').trim();
+    const lorebook = (draft.injection?.lorebook ?? stored.lorebook ?? '').trim();
+    const relationship = (draft.relationship || extensionSettings?.characterRelationships?.[trimmed] || '').trim();
+    const promptTemplate = (draft.injection?.promptTemplate ?? stored.promptTemplate ?? '').trim();
+
+    // 3. If a lorebook is attached and not already active, activate it so
+    //    SillyTavern's WI engine pulls from it for the next generation.
+    if (lorebook) {
+        try {
+            if (typeof isWorldActive === 'function' && !isWorldActive(lorebook)) {
+                activateWorld(lorebook);
+                console.log(`[Dooms Tracker] Workshop: activated lorebook "${lorebook}" for inject`);
+            }
+        } catch (e) {
+            console.warn(`[Dooms Tracker] Workshop: failed to activate lorebook "${lorebook}"`, e);
+        }
+    }
+
+    // 4. One-shot prompt
+    const prompt = buildInjectPrompt(trimmed, { description, lorebook, relationship, promptTemplate });
+    try {
+        setExtensionPrompt(
+            INJECT_SLOT,
+            prompt,
+            extension_prompt_types.IN_PROMPT,
+            0,
+            false,
+        );
+        pendingInjectClear = true;
+        // Allow the very next GENERATION_STARTED (the one this inject is
+        // intended for) to pass without clearing. Any subsequent START
+        // will trigger the clear.
+        injectStartsToSkip = 1;
+        console.log(`[Dooms Tracker] Workshop: queued scene-inject for "${trimmed}"`);
+    } catch (e) {
+        console.warn('[Dooms Tracker] Workshop: setExtensionPrompt failed', e);
+    }
+
+    // 5. Optional portrait attachment for vision-capable models. Arms a
+    //    one-shot MESSAGE_SENT listener that stamps extra.image on the
+    //    user's next outgoing message; SillyTavern's Generate then includes
+    //    that image in the request payload (multimodal APIs only).
+    let attached = false;
+    if (extensionSettings?.injectAttachPortrait === true && draft?.avatar) {
+        const disarmAttach = armPortraitAttach(trimmed, draft.avatar);
+        // Update the pending entry so cancelInject can disarm later.
+        const entry = pendingInjects.get(trimmed.toLowerCase());
+        if (entry) entry.disarmAttach = disarmAttach;
+        attached = true;
+    }
+
+    // 6. Belt-and-suspenders: one final render after every state change is
+    //    in place. Cheap, idempotent, and protects against any earlier
+    //    render that may have been swallowed by a thrown handler upstream.
+    try { clearPortraitCache(); updatePortraitBar(); } catch (e) {}
+
+    // 7. User feedback
+    try {
+        if (window.toastr) {
+            const extras = [];
+            if (relationship) extras.push(`relationship=${relationship}`);
+            if (description) extras.push('description');
+            if (lorebook) extras.push(`lorebook "${lorebook}"`);
+            if (attached) extras.push('portrait');
+            const tail = extras.length ? ` (with ${extras.join(' + ')})` : '';
+            window.toastr.success(
+                `${trimmed} will be brought into the scene next turn${tail}.`,
+                'Character Injected',
+                { timeOut: 4000 },
+            );
+        }
+    } catch (e) {
+        // toastr optional
+    }
+}
+
+/**
+ * Mark a character as present in the live scene by splicing them into
+ * lastGeneratedData.characterThoughts (the source of truth for
+ * getCharacterList() and the Present Characters panel). Persists through
+ * saveChatData so the state survives a reload until the next AI turn
+ * either confirms or drops the character.
+ *
+ * Returns true if a new entry was spliced in (so cancel/clear knows it
+ * needs to undo this on revert), false if the character was already
+ * present from a prior AI turn (no-op — leave them alone on cancel).
+ */
+function markCharacterPresentNow(name) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return false;
+
+    const raw = lastGeneratedData?.characterThoughts;
+    let parsed;
+    try {
+        parsed = (typeof raw === 'string' && raw)
+            ? JSON.parse(raw)
+            : (raw && typeof raw === 'object' ? raw : { characters: [] });
+    } catch (e) {
+        parsed = { characters: [] };
+    }
+    if (!parsed || typeof parsed !== 'object') parsed = { characters: [] };
+
+    // The AI sometimes emits characterThoughts as a bare array
+    //   [ {name: "X"}, ... ]
+    // and sometimes as { characters: [...] } — getCharacterList() accepts
+    // both, so we have to too. Pick the right list to mutate, push there,
+    // then serialize in the original shape. Earlier code did
+    //   if (!Array.isArray(parsed.characters)) parsed.characters = [];
+    // but when `parsed` itself was the array, that assigned a non-index
+    // property which JSON.stringify SILENTLY DROPS, so the new entry
+    // never reached the panel and the character ended up showing as
+    // absent instead of present.
+    const wasArray = Array.isArray(parsed);
+    let charactersArr;
+    if (wasArray) {
+        charactersArr = parsed;
+    } else {
+        if (!Array.isArray(parsed.characters)) parsed.characters = [];
+        charactersArr = parsed.characters;
+    }
+
+    const lower = trimmed.toLowerCase();
+    const existing = charactersArr.find(c => typeof c?.name === 'string' && c.name.toLowerCase() === lower);
+    if (existing) {
+        // Already in the live tracker (AI confirmed them on a prior turn).
+        // Don't splice again, and signal "no undo needed" so cancel won't
+        // erroneously remove a character the AI legitimately introduced.
+        return false;
+    }
+
+    const rel = extensionSettings?.characterRelationships?.[trimmed];
+    charactersArr.push({
+        name: trimmed,
+        emoji: '🙂',
+        thoughts: { content: '' },
+        ...(rel ? { relationship: { status: rel } } : {}),
+    });
+
+    const serialized = JSON.stringify(wasArray ? charactersArr : parsed);
+    try { updateLastGeneratedData({ characterThoughts: serialized }); }
+    catch (e) { console.warn('[Dooms Tracker] Workshop: updateLastGeneratedData failed', e); }
+
+    saveOrWarn(saveChatData, 'chat data');
+    try { clearPortraitCache(); updatePortraitBar(); } catch (e) {}
+    try { renderThoughts(); } catch (e) {}
+    return true;
+}
+
+/**
+ * Reverse of markCharacterPresentNow — removes the splice from
+ * lastGeneratedData.characterThoughts so the character no longer appears
+ * in the Present row. Best-effort; silent on any structural surprise.
+ */
+function unmarkCharacterPresentNow(name) {
+    const trimmed = String(name || '').trim();
+    if (!trimmed) return;
+    const raw = lastGeneratedData?.characterThoughts;
+    if (!raw) return;
+    let parsed;
+    try {
+        parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } catch (e) { return; }
+    if (!parsed || typeof parsed !== 'object') return;
+
+    // Same dual-shape handling as markCharacterPresentNow — accept either
+    // a bare array or { characters: [...] }, mutate in place, serialize
+    // back in the original shape so we don't silently drop entries.
+    const wasArray = Array.isArray(parsed);
+    let charactersArr;
+    if (wasArray) {
+        charactersArr = parsed;
+    } else if (Array.isArray(parsed.characters)) {
+        charactersArr = parsed.characters;
+    } else {
+        return;
+    }
+
+    const lower = trimmed.toLowerCase();
+    const before = charactersArr.length;
+    const filtered = charactersArr.filter(c => typeof c?.name !== 'string' || c.name.toLowerCase() !== lower);
+    if (filtered.length === before) return;
+
+    let serialized;
+    if (wasArray) {
+        serialized = JSON.stringify(filtered);
+    } else {
+        parsed.characters = filtered;
+        serialized = JSON.stringify(parsed);
+    }
+    try { updateLastGeneratedData({ characterThoughts: serialized }); } catch (e) {}
+    saveOrWarn(saveChatData, 'chat data');
+    try { clearPortraitCache(); updatePortraitBar(); } catch (e) {}
+    try { renderThoughts(); } catch (e) {}
+}
+
+/**
+ * One-shot: when the user next sends a message, stamp the character's
+ * portrait onto that message's `extra.image` so SillyTavern's Generate
+ * includes the image in the outgoing request (vision-capable models).
+ * Falls back silently if anything in the chain is missing.
+ */
+function armPortraitAttach(name, dataUrl) {
+    let consumed = false;
+    // Surface the queued attach in the Context Inspector — multimodal
+    // image injection bypasses every text path so this is otherwise
+    // invisible to the user.
+    try { recordPortraitArm(name, dataUrl); } catch (e) {}
+    const disarm = () => {
+        if (consumed) return;
+        consumed = true;
+        try { eventSource.removeListener?.(event_types.MESSAGE_SENT, onSent); } catch (e) {}
+        try { eventSource.off?.(event_types.MESSAGE_SENT, onSent); } catch (e) {}
+        try { recordPortraitDisarm(name); } catch (e) {}
+    };
+    const onSent = () => {
+        if (consumed) return;
+        consumed = true;
+        try { eventSource.removeListener?.(event_types.MESSAGE_SENT, onSent); } catch (e) {}
+        try { eventSource.off?.(event_types.MESSAGE_SENT, onSent); } catch (e) {}
+        try {
+            const ctx = (typeof getContext === 'function') ? getContext() : null;
+            const chat = ctx?.chat;
+            if (!Array.isArray(chat) || chat.length === 0) {
+                try { recordPortraitDisarm(name); } catch (e) {}
+                return;
+            }
+            const last = chat[chat.length - 1];
+            if (!last || last.is_user === false) {
+                try { recordPortraitDisarm(name); } catch (e) {}
+                return;
+            }
+            if (!last.extra || typeof last.extra !== 'object') last.extra = {};
+            last.extra.image = dataUrl;
+            last.extra.inline_image = true;
+            try { recordPortraitFire(name, dataUrl, chat.length - 1); } catch (e) {}
+            console.log(`[Dooms Tracker] Workshop: attached "${name}" portrait to outgoing message`);
+        } catch (e) {
+            console.warn('[Dooms Tracker] Workshop: portrait attach failed', e);
+            try { recordPortraitDisarm(name); } catch (err) {}
+        }
+    };
+    try {
+        eventSource.on(event_types.MESSAGE_SENT, onSent);
+    } catch (e) {
+        console.warn('[Dooms Tracker] Workshop: failed to register MESSAGE_SENT for portrait attach', e);
+    }
+    // Self-disarm after 2 minutes if the user never sends a message.
+    setTimeout(() => disarm(), 2 * 60 * 1000);
+    return disarm;
+}
+
+function exportDraft() {
+    if (!draft) return;
+    const payload = {
+        $schema: 'dooms-character-v1',
+        name: draft.name,
+        // Which version was on the stage when exported (Base or a campaign
+        // name). Informational; import ignores it.
+        version: draft.isUser ? undefined : versionLabel(draft.versionId),
+        color: draft.color || '',
+        avatar: draft.avatar || '',
+        avatarFullRes: draft.avatarFullRes || '',
+        relationship: draft.relationship || '',
+        injection: {
+            description: draft.injection?.description || '',
+            lorebook: draft.injection?.lorebook || '',
+            promptTemplate: draft.injection?.promptTemplate || '',
+        },
+    };
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const safeName = String(draft.name || 'character').replace(/[^\w.-]+/g, '_');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `character-${safeName}.json`;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, 100);
+    if (window.toastr) {
+        window.toastr.success(`Exported "${draft.name}" to character-${safeName}.json`, 'Character Workshop', { timeOut: 4000 });
+    }
+}
+
+function buildInjectPrompt(name, extras) {
+    const vars = {
+        name: String(name || ''),
+        description: String(extras?.description || ''),
+        lorebook: String(extras?.lorebook || ''),
+        relationship: String(extras?.relationship || ''),
+    };
+    const raw = (extras?.promptTemplate || '').trim();
+    const template = raw || DEFAULT_INJECT_PROMPT;
+    // Emit conditional blocks {?var}...{/var} only when the variable is
+    // non-empty, then substitute plain {var} placeholders.
+    let out = template.replace(/\{\?(\w+)\}([\s\S]*?)\{\/\1\}/g, (_, key, body) => {
+        return vars[key] ? body : '';
+    });
+    out = out.replace(/\{(\w+)\}/g, (match, key) => {
+        return Object.prototype.hasOwnProperty.call(vars, key) ? vars[key] : match;
+    });
+    // Collapse runs of 3+ newlines that empty conditional blocks can leave
+    // behind so the final prompt stays tidy regardless of which vars are set.
+    return out.replace(/\n{3,}/g, '\n\n');
+}
+
+function clearInjectPromptIfPending() {
+    if (pendingInjectClear) {
+        try {
+            setExtensionPrompt(INJECT_SLOT, '', extension_prompt_types.IN_PROMPT, 0, false);
+            console.log('[Dooms Tracker] Workshop: cleared scene-inject prompt');
+        } catch (e) {
+            console.warn('[Dooms Tracker] Workshop: failed to clear inject prompt', e);
+        } finally {
+            pendingInjectClear = false;
+            injectStartsToSkip = 0;
+            for (const [, entry] of pendingInjects) {
+                broadcastInjectState(entry.name, false);
+            }
+            pendingInjects.clear();
+        }
+    }
+    if (pendingEjectClear) {
+        try {
+            setExtensionPrompt(EJECT_SLOT, '', extension_prompt_types.IN_PROMPT, 0, false);
+            console.log('[Dooms Tracker] Workshop: cleared scene-eject prompt');
+        } catch (e) {
+            console.warn('[Dooms Tracker] Workshop: failed to clear eject prompt', e);
+        } finally {
+            pendingEjectClear = false;
+            ejectStartsToSkip = 0;
+        }
+    }
+}
+
+function onGenerationStartedForInject(type, data, dryRun) {
+    // Quiet generations (autotrigger guides like GuidedGenerations thinking /
+    // state / clothes), image-gen quiet calls, and ST's tokenizer dryRuns
+    // must not affect the inject lifecycle — only the user's actual
+    // generation should consume injectStartsToSkip or trigger a stale-inject
+    // clear. Without this guard the first autotrigger's START decrements the
+    // skip counter and its matching ENDED clears INJECT_SLOT before the real
+    // reply runs. Mirrors injector.js:onGenerationStarted's filter.
+    if (dryRun === true) return;
+    if (typeof type === 'string' && type === 'quiet') return;
+    if (data?.quietImage || data?.quiet_image || data?.isImageGeneration) return;
+    inRealGeneration = true;
+    // The generation the inject/eject is intended for should pass. After
+    // that, any START means a NEW generation is happening (swipe /
+    // regenerate / new turn) and we must not re-apply the old direction.
+    let skippedThisCall = false;
+    if (injectStartsToSkip > 0) {
+        injectStartsToSkip--;
+        skippedThisCall = true;
+    }
+    if (ejectStartsToSkip > 0) {
+        ejectStartsToSkip--;
+        skippedThisCall = true;
+    }
+    if (skippedThisCall) return;
+    if (pendingInjectClear || pendingEjectClear) {
+        console.log('[Dooms Tracker] Workshop: new generation starting — clearing stale inject/eject');
+        clearInjectPromptIfPending();
+    }
+}
+
+function onGenerationEndedForInject() {
+    // Mirror the START guard: only clear when the matching START was a real
+    // generation. Quiet/dryRun generations bypass us entirely so their ENDED
+    // must too — otherwise an autotrigger's ENDED wipes an inject queued for
+    // the user's upcoming reply.
+    if (!inRealGeneration) return;
+    inRealGeneration = false;
+    clearInjectPromptIfPending();
+}
+
+// ─────────────────────────────────────────────
+//  Expressions tab — sprite manager
+//  Same labels and the same markup as the original Expressions tab, same
+//  /api/sprites endpoints (get / upload / upload-zip / delete /
+//  open-folder), same crop-then-PNG flow. Scoped to this module so
+//  the Workshop is self-contained.
+// ─────────────────────────────────────────────
+
+const EXPRESSION_LABELS = [
+    'admiration', 'amusement', 'anger', 'annoyance', 'approval', 'caring',
+    'confusion', 'curiosity', 'desire', 'disappointment', 'disapproval',
+    'disgust', 'embarrassment', 'excitement', 'fear', 'gratitude', 'grief',
+    'joy', 'love', 'nervousness', 'neutral', 'optimism', 'pride',
+    'realization', 'relief', 'remorse', 'sadness', 'surprise',
+];
+
+async function _cwInvalidateSpriteCache(name) {
+    try {
+        const mod = await import('../integration/expressionSync.js');
+        if (typeof mod.invalidateSpriteCacheFor === 'function') {
+            mod.invalidateSpriteCacheFor(name);
+        }
+    } catch (e) { /* expressionSync is optional */ }
+}
+
+async function renderExpressionsTab($panel, characterName) {
+    $panel.html('<div style="padding:20px; opacity:0.5; text-align:center;">Loading sprites…</div>');
+    let existingSprites = [];
+    try {
+        const response = await fetch(`/api/sprites/get?name=${encodeURIComponent(characterName)}`, {
+            headers: getRequestHeaders(),
+        });
+        if (response.ok) existingSprites = await response.json();
+    } catch (err) {
+        console.warn('[Dooms Tracker] Workshop expressions: fetch failed', err);
+    }
+    const spriteMap = new Map();
+    for (const sprite of existingSprites) {
+        if (sprite.label && !spriteMap.has(sprite.label)) {
+            spriteMap.set(sprite.label, sprite.path);
+        }
+    }
+    const uploadedCount = spriteMap.size;
+    let html = `
+        <div class="rpg-cs-expr-header">
+            <span style="font-size:0.85em; opacity:0.7;">${uploadedCount} / ${EXPRESSION_LABELS.length} expressions uploaded</span>
+            <div class="rpg-cs-expr-actions">
+                <button class="rpg-cs-expr-upload-zip menu_button"><i class="fa-solid fa-file-zipper"></i> Upload ZIP</button>
+                <button class="rpg-cs-expr-open-folder menu_button"><i class="fa-solid fa-folder-open"></i> Open Folder</button>
+                ${uploadedCount > 0
+                    ? `<button class="rpg-cs-expr-remove-all menu_button" title="Delete every uploaded expression sprite for this character"><i class="fa-solid fa-trash-can"></i> Remove All</button>`
+                    : ''}
+            </div>
+        </div>
+        <div class="rpg-cs-expression-grid">
+    `;
+    for (const label of EXPRESSION_LABELS) {
+        const spritePath = spriteMap.get(label);
+        const hasSprite = !!spritePath;
+        html += `
+            <div class="rpg-cs-expr-slot ${hasSprite ? 'rpg-cs-expr-has-sprite' : ''}">
+                <div class="rpg-cs-expr-thumb">
+                    ${hasSprite
+                        ? `<img src="${spritePath}" alt="${label}" loading="lazy" />`
+                        : '<div class="rpg-cs-expr-placeholder"><i class="fa-solid fa-image"></i></div>'
+                    }
+                    <div class="rpg-cs-expr-overlay">
+                        <button class="rpg-cs-expr-upload" data-label="${label}" title="Upload ${label}">
+                            <i class="fa-solid fa-upload"></i>
+                        </button>
+                        ${hasSprite ? `
+                            <button class="rpg-cs-expr-delete" data-label="${label}" title="Delete ${label}">
+                                <i class="fa-solid fa-trash"></i>
+                            </button>
+                        ` : ''}
+                    </div>
+                </div>
+                <div class="rpg-cs-expr-label">${label}</div>
+            </div>
+        `;
+    }
+    html += '</div>';
+    $panel.html(html);
+}
+
+let _cwExprHandlersBound = false;
+function bindExpressionHandlers() {
+    if (_cwExprHandlersBound) return;
+    _cwExprHandlersBound = true;
+    // Defensive: if a prior module instance bound handlers in this same
+    // namespace (extension hot-reload, dev refresh of the JS bundle), they
+    // would still be on `document` and run alongside ours — and they
+    // closure-captured the previous module's `draft`, so they'd report the
+    // wrong character. Clear the namespace before re-binding.
+    $(document).off('.cwExpr');
+
+    // Keep the .rpg-cs-* selectors so we share the existing CSS
+    // (.rpg-cs-expr-* rules already styled). Scope to the Workshop's
+    // pane so these don't double-fire when both modals are in the DOM.
+    const inWorkshop = (target) =>
+        $(target).closest('#character-workshop-popup .rpg-cs-tab-content[data-tab="expressions"]').length > 0;
+
+    // Upload single sprite
+    // All expression handlers below source the character name from `draft`
+    // rather than the pane's data-character attribute. The pane is reused
+    // across opens and the attribute is only refreshed when the user clicks
+    // the Expressions tab — uploads/deletes triggered from a still-active
+    // tab after a character switch would otherwise hit the previous one.
+    $(document).on('click.cwExpr', '.rpg-cs-expr-upload:not(.rpg-cs-expr-upload-zip)', function () {
+        if (!inWorkshop(this)) return;
+        const label = $(this).data('label');
+        const $tab = $(this).closest('.rpg-cs-tab-content');
+        const charName = draft?.name || '';
+        if (!label || !charName) return;
+        const $input = $('<input type="file" accept="image/*" style="display:none">');
+        $input.on('change', async function () {
+            const file = this.files && this.files[0];
+            if (!file) { $input.remove(); return; }
+            try {
+                const dataUrl = await getBase64Async(file);
+                const cropped = await callGenericPopup(
+                    `<h3>Crop "${label}" expression for ${charName}</h3>`,
+                    POPUP_TYPE.CROP,
+                    '',
+                    { cropAspect: 3 / 4, cropImage: dataUrl },
+                );
+                if (!cropped) return;
+                const blob = await fetch(cropped).then(r => r.blob());
+                const croppedFile = new File([blob], `${label}.png`, { type: 'image/png' });
+                const fd = new FormData();
+                fd.append('name', charName);
+                fd.append('label', label);
+                fd.append('avatar', croppedFile);
+                fd.append('spriteName', label);
+                const resp = await fetch('/api/sprites/upload', {
+                    method: 'POST',
+                    headers: getRequestHeaders({ omitContentType: true }),
+                    body: fd,
+                });
+                if (resp.ok) {
+                    _cwInvalidateSpriteCache(charName);
+                    renderExpressionsTab($tab, charName);
+                    if (window.toastr) window.toastr.success(`Uploaded ${label} expression for ${charName}`, '', { timeOut: 2000 });
+                } else {
+                    if (window.toastr) window.toastr.error('Upload failed.', 'Error');
+                }
+            } catch (err) {
+                console.error('[Dooms Tracker] Workshop expressions: upload failed', err);
+                if (window.toastr) window.toastr.error('Upload failed.', 'Error');
+            }
+            $input.remove();
+        });
+        $('body').append($input);
+        $input.trigger('click');
+    });
+
+    // Delete single sprite
+    $(document).on('click.cwExpr', '.rpg-cs-expr-delete', async function () {
+        if (!inWorkshop(this)) return;
+        const label = $(this).data('label');
+        const $tab = $(this).closest('.rpg-cs-tab-content');
+        const charName = draft?.name || '';
+        if (!label || !charName) return;
+        try {
+            const resp = await fetch('/api/sprites/delete', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ name: charName, label }),
+            });
+            if (resp.ok) {
+                _cwInvalidateSpriteCache(charName);
+                renderExpressionsTab($tab, charName);
+                if (window.toastr) window.toastr.info(`Removed ${label} expression for ${charName}`, '', { timeOut: 2000 });
+            }
+        } catch (err) {
+            console.error('[Dooms Tracker] Workshop expressions: delete failed', err);
+        }
+    });
+
+    // Remove all sprites
+    $(document).on('click.cwExpr', '.rpg-cs-expr-remove-all', async function () {
+        if (!inWorkshop(this)) return;
+        const $btn = $(this);
+        const $tab = $btn.closest('.rpg-cs-tab-content');
+        const charName = draft?.name || '';
+        if (!charName) return;
+        // Re-fetch the sprite list as the truth source — DOM might be stale
+        // and we don't want to ask ST to delete labels that no longer exist.
+        let sprites = [];
+        try {
+            const resp = await fetch(`/api/sprites/get?name=${encodeURIComponent(charName)}`, {
+                headers: getRequestHeaders(),
+            });
+            if (resp.ok) sprites = await resp.json();
+        } catch (err) {
+            console.error('[Dooms Tracker] Workshop expressions: remove-all fetch failed', err);
+            if (window.toastr) window.toastr.error('Could not read existing sprites.', 'Remove All');
+            return;
+        }
+        const labels = sprites.map(s => s.label).filter(Boolean);
+        if (labels.length === 0) {
+            if (window.toastr) window.toastr.info('No sprites to remove.', '', { timeOut: 1500 });
+            return;
+        }
+        const ok = window.confirm(
+            `Remove all ${labels.length} expression sprite${labels.length === 1 ? '' : 's'} for "${charName}"?\n\nThis cannot be undone.`,
+        );
+        if (!ok) return;
+        $btn.prop('disabled', true);
+        const results = await Promise.allSettled(labels.map(label => fetch('/api/sprites/delete', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ name: charName, label }),
+        }).then(r => {
+            if (!r.ok) throw new Error(`HTTP ${r.status} for ${label}`);
+            return label;
+        })));
+        const failed = results.filter(r => r.status === 'rejected');
+        _cwInvalidateSpriteCache(charName);
+        renderExpressionsTab($tab, charName);
+        if (failed.length === 0) {
+            if (window.toastr) window.toastr.success(`Removed ${labels.length} expression${labels.length === 1 ? '' : 's'} for ${charName}`, '', { timeOut: 2000 });
+        } else {
+            console.error('[Dooms Tracker] Workshop expressions: remove-all partial failure', failed.map(f => f.reason));
+            if (window.toastr) window.toastr.warning(
+                `Removed ${labels.length - failed.length}/${labels.length} expressions; ${failed.length} failed.`,
+                'Remove All',
+                { timeOut: 4000 },
+            );
+        }
+    });
+
+    // ZIP upload
+    $(document).on('click.cwExpr', '.rpg-cs-expr-upload-zip', function () {
+        if (!inWorkshop(this)) return;
+        const $tab = $(this).closest('.rpg-cs-tab-content');
+        const charName = draft?.name || '';
+        if (!charName) return;
+        const $input = $('<input type="file" accept=".zip" style="display:none">');
+        $input.on('change', async function () {
+            const file = this.files && this.files[0];
+            if (!file) { $input.remove(); return; }
+            const fd = new FormData();
+            fd.append('name', charName);
+            fd.append('avatar', file);
+            try {
+                const resp = await fetch('/api/sprites/upload-zip', {
+                    method: 'POST',
+                    headers: getRequestHeaders({ omitContentType: true }),
+                    body: fd,
+                });
+                if (resp.ok) {
+                    _cwInvalidateSpriteCache(charName);
+                    renderExpressionsTab($tab, charName);
+                    if (window.toastr) window.toastr.success(`Sprite pack uploaded for ${charName}`, '', { timeOut: 2000 });
+                } else {
+                    if (window.toastr) window.toastr.error('ZIP upload failed.', 'Error');
+                }
+            } catch (err) {
+                console.error('[Dooms Tracker] Workshop expressions: zip upload failed', err);
+                if (window.toastr) window.toastr.error('ZIP upload failed.', 'Error');
+            }
+            $input.remove();
+        });
+        $('body').append($input);
+        $input.trigger('click');
+    });
+
+    // Open folder
+    $(document).on('click.cwExpr', '.rpg-cs-expr-open-folder', async function () {
+        if (!inWorkshop(this)) return;
+        const $tab = $(this).closest('.rpg-cs-tab-content');
+        const charName = draft?.name || '';
+        if (!charName) return;
+        try {
+            const resp = await fetch('/api/sprites/open-folder', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ name: charName }),
+            });
+            if (!resp.ok && resp.status === 404) {
+                if (window.toastr) window.toastr.info(
+                    `Expression sprites go in: data/default-user/characters/${charName}/`,
+                    'Open Folder Not Available',
+                    { timeOut: 6000 },
+                );
+            }
+        } catch (err) {
+            console.error('[Dooms Tracker] Workshop expressions: open folder failed', err);
+            if (window.toastr) window.toastr.info(
+                `Expression sprites go in: data/default-user/characters/${charName}/`,
+                'Open Folder Not Available',
+                { timeOut: 6000 },
+            );
+        }
+    });
+}

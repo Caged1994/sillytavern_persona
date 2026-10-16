@@ -1,0 +1,1597 @@
+/*
+ * Doom's Enhancement Suite for SillyTavern — Present Characters Panel (portrait bar)
+ * Copyright (C) 2026 Jordan (DangerDaza)
+ *
+ * This file is part of Doom's Enhancement Suite and is licensed under the
+ * GNU Affero General Public License v3.0 or later. If you redistribute this
+ * file or a modified version of it, you must keep this notice intact, state
+ * your changes, and release your version under the same license.
+ *
+ * See the LICENSE file in the project root for the full terms and for
+ * additional copyright notices.
+ *
+ * https://github.com/DangerDaza/Dooms-Enhancement-Suite
+ */
+
+/**
+ * Portrait Bar Module
+ * Renders a collapsible card-shelf of character portraits between
+ * the chat area and the input area in SillyTavern.
+ *
+ * Portrait lookup priority:
+ *   1. npcAvatars (base64 data URI stored in extensionSettings — shared with thoughts panel)
+ *   2. SillyTavern character card avatars (group members → all characters → current character)
+ *   3. Local `portraits/` folder (e.g. portraits/Lyra.png)
+ *   4. Character emoji fallback
+ *
+ * Right-clicking a portrait card opens a context menu with workshop /
+ * roster actions; portrait upload + dialogue color editing live in the
+ * Workshop now.
+ */
+import { extensionSettings, lastGeneratedData, committedTrackerData, FALLBACK_AVATAR_DATA_URI, getSyncedExpressionLabel, addDebugLog } from '../../core/state.js';
+import { extensionFolderPath } from '../../core/config.js';
+import { saveSettings, getActiveKnownCharacters, getActiveRemovedCharacters, getActiveCharacterColors, saveCharacterRosterChange } from '../../core/persistence.js';
+import { callGenericPopup, POPUP_TYPE } from '../../../../../../popup.js';
+import { getBase64Async } from '../../../../../../utils.js';
+import { this_chid, characters, chat_metadata, getRequestHeaders } from '../../../../../../../script.js';
+import { selected_group, getGroupMembers } from '../../../../../../group-chats.js';
+import { getSafeThumbnailUrl, getExpressionAwarePortrait, deletePortraitsIfUnreferenced, getPortraitHistoryCount, restorePreviousPortrait } from '../../utils/avatars.js';
+import { DIALOGUE_COLORS } from '../../utils/dialogueColors.js';
+import { hasPendingAliasDecision } from '../features/characterAliases.js';
+import { migrateAvatarsToFiles } from '../../utils/avatarMigration.js';
+import { keyedReconcile } from '../../utils/domDiff.js';
+import { escapeHtml } from '../../utils/html.js';
+import { parseTrackerJson } from '../../utils/trackerParse.js';
+import { schedule } from '../../core/scheduler.js';
+import { ensureSettingsUI } from '../../core/lazyUI.js';
+import { isProgressEnabled, hasLevel, getProgress } from '../features/characterProgress.js';
+
+/** Logs to the debug panel only when debugMode is on — getCharacterList runs on every render. */
+function debugLog(message, data = null) {
+    if (extensionSettings.debugMode) {
+        addDebugLog(message, data);
+    }
+}
+
+/** Supported image extensions to probe for, in priority order */
+const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'webp', 'gif'];
+
+/** Palette of dialogue colors auto-assigned to new characters */
+// Shared named palette (imported above) — single source of truth with the
+// Workshop's swatch grid. The bigger pool also gives auto-assignment more
+// headroom before it has to reuse colors in large casts.
+
+// ─────────────────────────────────────────────
+//  Settings → CSS custom properties
+// ─────────────────────────────────────────────
+
+/** Parses a hex colour like "#e94560" into [r, g, b]. */
+function hexToRgb(hex) {
+    const h = hex.replace('#', '');
+    return [parseInt(h.substring(0, 2), 16), parseInt(h.substring(2, 4), 16), parseInt(h.substring(4, 6), 16)];
+}
+
+/**
+ * Reads portraitBarSettings and pushes CSS custom properties onto :root.
+ * Call this whenever a setting slider/picker changes.
+ */
+export function applyPortraitBarSettings() {
+    const s = extensionSettings.portraitBarSettings || {};
+    const root = document.documentElement.style;
+
+    // Card dimensions
+    root.setProperty('--dooms-pb-card-w', (s.cardWidth ?? 110) + 'px');
+    root.setProperty('--dooms-pb-card-h', (s.cardHeight ?? 150) + 'px');
+    root.setProperty('--dooms-pb-card-radius', (s.cardBorderRadius ?? 8) + 'px');
+    root.setProperty('--dooms-pb-card-gap', (s.cardGap ?? 8) + 'px');
+
+    // Bar background
+    const [bgR, bgG, bgB] = hexToRgb(s.barBackground || '#000000');
+    root.setProperty('--dooms-pb-bg-r', bgR);
+    root.setProperty('--dooms-pb-bg-g', bgG);
+    root.setProperty('--dooms-pb-bg-b', bgB);
+    root.setProperty('--dooms-pb-bg-opacity', ((s.barBackgroundOpacity ?? 20) / 100).toFixed(2));
+
+    // Header / accent colour
+    const [acR, acG, acB] = hexToRgb(s.headerColor || '#e94560');
+    root.setProperty('--dooms-pb-accent-r', acR);
+    root.setProperty('--dooms-pb-accent-g', acG);
+    root.setProperty('--dooms-pb-accent-b', acB);
+
+    // Card border
+    const [brR, brG, brB] = hexToRgb(s.cardBorderColor || '#ffffff');
+    root.setProperty('--dooms-pb-border-r', brR);
+    root.setProperty('--dooms-pb-border-g', brG);
+    root.setProperty('--dooms-pb-border-b', brB);
+    root.setProperty('--dooms-pb-border-opacity', ((s.cardBorderOpacity ?? 6) / 100).toFixed(2));
+
+    // Hover glow
+    const [hvR, hvG, hvB] = hexToRgb(s.hoverGlowColor || '#e94560');
+    root.setProperty('--dooms-pb-hover-r', hvR);
+    root.setProperty('--dooms-pb-hover-g', hvG);
+    root.setProperty('--dooms-pb-hover-b', hvB);
+    root.setProperty('--dooms-pb-hover-glow', (s.hoverGlowIntensity ?? 12) + 'px');
+
+    // Speaker pulse
+    const [spR, spG, spB] = hexToRgb(s.speakingPulseColor || '#e94560');
+    root.setProperty('--dooms-pb-speaking-r', spR);
+    root.setProperty('--dooms-pb-speaking-g', spG);
+    root.setProperty('--dooms-pb-speaking-b', spB);
+
+    // Name overlay
+    root.setProperty('--dooms-pb-name-opacity', ((s.nameOverlayOpacity ?? 85) / 100).toFixed(2));
+
+    // Absent opacity
+    root.setProperty('--dooms-pb-absent-opacity', ((s.absentOpacity ?? 45) / 100).toFixed(2));
+
+    // Toggle visibility of header, arrows, absent characters
+    const $bar = $('#dooms-portrait-bar');
+    $bar.find('.dooms-pb-header').toggle(s.showHeader !== false);
+    $bar.toggleClass('dooms-pb-arrows-hidden', s.showScrollArrows === false);
+}
+
+/** Cache of portrait file-based URL existence checks */
+const portraitFileCache = new Map(); // characterName → url | null
+
+// Pre-populate cache with characters confirmed to have no portrait file (persisted across reloads)
+try {
+    const _noPortrait = JSON.parse(localStorage.getItem('dooms-portrait-no-file') || '[]');
+    _noPortrait.forEach(name => portraitFileCache.set(name, null));
+} catch (e) { /* ignore */ }
+
+/** Tracks which portrait cards are currently flipped (showing back face) */
+const flippedPortraitCards = new Set();
+
+/** Whether the bar is currently expanded */
+let isExpanded = true;
+
+/** Tracks character names from the previous render to detect new arrivals */
+let _previousCharacterNames = new Set();
+
+// Characters currently mid-inject. Populated via the
+// 'dooms:inject-state-changed' window event dispatched by characterWorkshop.js
+// — kept decoupled so this module doesn't import the workshop directly.
+// Keys are lowercased for stable lookup.
+const _injectingNames = new Set();
+
+// Register the listener once at module load — safe even if init hasn't
+// been called yet.
+try {
+    window.addEventListener('dooms:inject-state-changed', (e) => {
+        const name = e?.detail?.name;
+        const pending = !!e?.detail?.pending;
+        if (!name) return;
+        const key = String(name).toLowerCase();
+        if (pending) _injectingNames.add(key);
+        else _injectingNames.delete(key);
+        try { updatePortraitBar(); } catch (err) {}
+    });
+} catch (e) {}
+
+/** Whether we've done the initial render (skip entrance anim on first load) */
+let _initialRenderDone = false;
+
+// ─────────────────────────────────────────────
+//  Initialisation
+// ─────────────────────────────────────────────
+
+/**
+ * Builds the static wrapper HTML and inserts it into the DOM.
+ * Should be called once during initUI().
+ */
+export function initPortraitBar() {
+    // Don't double-init
+    if ($('#dooms-portrait-bar-wrapper').length) return;
+
+    // Level badges follow XP, level-ups and RPG mode.
+    window.addEventListener('dooms:stats-changed', (e) => {
+        const src = e.detail?.source;
+        if (['progress', 'quest', 'ai', 'undo', 'settings', 'rpg-mode'].includes(src)) updatePortraitBar();
+    });
+
+    const wrapperHtml = `
+        <div id="dooms-portrait-bar-wrapper">
+            <div class="dooms-pb-toggle dooms-pb-open" id="dooms-pb-toggle">
+                <div class="dooms-pb-toggle-dots">
+                    <span class="dooms-pb-toggle-dot"></span>
+                    <span class="dooms-pb-toggle-dot"></span>
+                    <span class="dooms-pb-toggle-dot"></span>
+                </div>
+                <span class="dooms-pb-toggle-label">Characters</span>
+                <i class="fa-solid fa-chevron-up dooms-pb-toggle-chevron"></i>
+            </div>
+            <div class="dooms-portrait-bar dooms-pb-expanded" id="dooms-portrait-bar">
+                <div class="dooms-pb-header">
+                    <span class="dooms-pb-title"><i class="fa-solid fa-users"></i> Present Characters</span>
+                    <span class="dooms-pb-count" id="dooms-pb-count">0 characters</span>
+                    <button class="dooms-pb-restore-btn dooms-pb-roster-btn" id="dooms-pb-open-roster" title="Open Character Roster" type="button">
+                        <i class="fa-solid fa-users-rectangle"></i>
+                    </button>
+                </div>
+                <button class="dooms-pb-arrow dooms-pb-left" id="dooms-pb-left"><i class="fa-solid fa-chevron-left"></i></button>
+                <button class="dooms-pb-arrow dooms-pb-right" id="dooms-pb-right"><i class="fa-solid fa-chevron-right"></i></button>
+                <div class="dooms-pb-scroll" id="dooms-pb-scroll"></div>
+            </div>
+        </div>
+        <!-- Context menu (hidden by default) -->
+        <div id="dooms-pb-context-menu" class="dooms-pb-context-menu" style="display:none;">
+            <div class="dooms-pb-ctx-item" data-action="open-workshop">
+                <i class="fa-solid fa-wand-magic-sparkles"></i> Open in Workshop
+            </div>
+            <div class="dooms-pb-ctx-item dooms-pb-ctx-danger" data-action="cancel-inject" style="display:none;">
+                <i class="fa-solid fa-ban"></i> Cancel Injection
+            </div>
+            <div class="dooms-pb-ctx-divider"></div>
+            <div class="dooms-pb-ctx-item" data-action="stats" title="HP, SP and the other stats of this character — can be popped out into its own window">
+                <i class="fa-solid fa-chart-simple"></i> Stats
+            </div>
+            <div class="dooms-pb-ctx-item" data-action="regenerate-portrait" title="Generate a fresh AI portrait for this character — the current one is kept and can be restored (needs the Image Generation extension)">
+                <i class="fa-solid fa-arrows-rotate"></i> Regenerate Portrait
+            </div>
+            <div class="dooms-pb-ctx-item" data-action="restore-portrait" style="display:none;" title="Swap back to the portrait this character had before the last regeneration">
+                <i class="fa-solid fa-clock-rotate-left"></i> Restore Previous Portrait
+            </div>
+            <div class="dooms-pb-ctx-divider"></div>
+            <div class="dooms-pb-ctx-item" data-action="remove-character" title="Hide from this chat's Present Characters panel — character stays in the Workshop where you can Return them later">
+                <i class="fa-solid fa-user-minus"></i> Send to Workshop
+            </div>
+        </div>
+    `;
+
+    // Insert based on position setting
+    const pos = extensionSettings.portraitPosition || 'above';
+    const $sendForm = $('#send_form');
+    const $sheld = $('#sheld');
+
+    if (pos === 'left' || pos === 'right') {
+        // Side modes are appended to <body> with fixed positioning so
+        // they sit beside the chat regardless of #sheld's flex layout.
+        $('body').append(wrapperHtml);
+        $('#dooms-portrait-bar-wrapper').addClass(`dooms-pb-position-${pos}`);
+        applySideModeStyling();
+    } else if (pos === 'top') {
+        // Insert at the top of #sheld (before #chat) so it sits in the flex column
+        const $chat = $sheld.find('#chat');
+        if ($chat.length) {
+            $chat.before(wrapperHtml);
+        } else if ($sheld.length) {
+            $sheld.prepend(wrapperHtml);
+        } else {
+            $('body').prepend(wrapperHtml);
+        }
+        $('#dooms-portrait-bar-wrapper').addClass('dooms-pb-position-top');
+    } else if ($sendForm.length) {
+        if (pos === 'below') {
+            $sendForm.after(wrapperHtml);
+        } else {
+            $sendForm.before(wrapperHtml);
+        }
+    } else {
+        ($sheld.length ? $sheld : $('body')).append(wrapperHtml);
+    }
+
+    // ── Collapse / expand toggle ──
+    $('#dooms-pb-toggle').on('click', function () {
+        isExpanded = !isExpanded;
+        const $bar = $('#dooms-portrait-bar');
+        const $toggle = $(this);
+        const $wrapper = $('#dooms-portrait-bar-wrapper');
+        if (isExpanded) {
+            $bar.removeClass('dooms-pb-collapsed').addClass('dooms-pb-expanded');
+            $toggle.addClass('dooms-pb-open');
+            $wrapper.removeClass('dooms-pb-collapsed-side');
+        } else {
+            $bar.removeClass('dooms-pb-expanded').addClass('dooms-pb-collapsed');
+            $toggle.removeClass('dooms-pb-open');
+            // Also flag the wrapper so side-mode CSS can shrink it down
+            // and rotate the chevron to point toward the open direction.
+            $wrapper.addClass('dooms-pb-collapsed-side');
+        }
+    });
+
+    // ── Scroll arrows ──
+    $('#dooms-pb-left').on('click', function () {
+        $('#dooms-pb-scroll').scrollLeft($('#dooms-pb-scroll').scrollLeft() - 200);
+    });
+    $('#dooms-pb-right').on('click', function () {
+        $('#dooms-pb-scroll').scrollLeft($('#dooms-pb-scroll').scrollLeft() + 200);
+    });
+
+    // ── Left-click portrait card — flip to show detail sheet ──
+    // Scoped to cards INSIDE the portrait-bar shelf so the Workshop's
+    // preview card (also uses .dooms-portrait-card for shared styling)
+    // doesn't accidentally flip when clicked.
+    $(document).on('click', '#dooms-portrait-bar .dooms-portrait-card', function (e) {
+        // Don't flip if clicking on context menu items or other interactive children
+        if ($(e.target).closest('.dooms-pb-ctx-item, button, a, input').length) return;
+        const $card = $(this);
+        if ($card.hasClass('dooms-pb-flipping')) return; // prevent double-click
+        const charName = $card.attr('data-char');
+        // Phase 1: squish card to zero width
+        $card.addClass('dooms-pb-flipping');
+        // Phase 2: at midpoint, swap faces and expand back
+        setTimeout(() => {
+            $card.toggleClass('dooms-pb-flipped');
+            $card.removeClass('dooms-pb-flipping');
+            // Track state for re-render preservation
+            if (charName) {
+                if ($card.hasClass('dooms-pb-flipped')) {
+                    flippedPortraitCards.add(charName);
+                } else {
+                    flippedPortraitCards.delete(charName);
+                }
+            }
+        }, 200);
+    });
+
+    // ── Right-click context menu on portrait cards (delegated) ──
+    $(document).on('contextmenu', '.dooms-portrait-card', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        // Read from data-char (canonical name). The title attr can contain
+        // the tooltip decoration 'Name — expression' when the expression
+        // tooltip toggle is on, which would then flow through every
+        // action (open-folder, colors, etc.) as if the expression were
+        // part of the name.
+        const characterName = $(this).attr('data-char') || $(this).attr('title');
+        if (!characterName) return;
+        const isUser = $(this).attr('data-user') === '1';
+
+        const $menu = $('#dooms-pb-context-menu');
+        $menu.data('character', characterName);
+        $menu.data('isUser', isUser);
+
+        // Show "Open in Workshop" unless explicitly disabled via feature flag.
+        // Workshop tracks the PCP toggle; if PCP is off the menu item
+        // wouldn't be reachable anyway, but keep the gate for defensiveness.
+        $menu.find('[data-action="open-workshop"]').toggle(extensionSettings.showPortraitBar !== false);
+        // 'Cancel Injection' only shows when this character is currently
+        // mid-inject (post-click, pre-AI-reply).
+        const isPending = _injectingNames.has(String(characterName || '').toLowerCase());
+        $menu.find('[data-action="cancel-inject"]').toggle(isPending);
+        // 'Regenerate Portrait' is NPC-only — the generator writes to the
+        // npcAvatars store; user-character portraits are managed in the
+        // Workshop (upload / persona mirror). 'Restore' only shows when a
+        // replaced portrait is actually banked for this character.
+        $menu.find('[data-action="regenerate-portrait"]').toggle(!isUser);
+        $menu.find('[data-action="restore-portrait"]').toggle(!isUser && getPortraitHistoryCount(characterName) > 0);
+
+        // Position near the cursor, clamped to viewport. Re-parent to
+        // <body> first so the menu escapes any ancestor stacking context
+        // the wrapper's parent might create (the side-mode wrapper has
+        // backdrop-filter: blur, which traps siblings inside it). The
+        // z-index bump on the .dooms-pb-context-menu rule keeps it above
+        // the cards even when the cursor lands inside the bar.
+        if ($menu.parent()[0] !== document.body) {
+            $menu.appendTo(document.body);
+        }
+        // Measure off-screen so we can clamp without a flash.
+        $menu.css({ display: 'block', top: '-9999px', left: '-9999px' });
+        const menuW = $menu.outerWidth();
+        const menuH = $menu.outerHeight();
+        const viewW = window.innerWidth;
+        const viewH = window.innerHeight;
+        const topPx = Math.max(0, Math.min(e.clientY, viewH - menuH));
+        const leftPx = Math.max(0, Math.min(e.clientX, viewW - menuW));
+        $menu.css({ top: topPx + 'px', left: leftPx + 'px' });
+
+        // Register a one-time click handler to dismiss the menu when clicking elsewhere
+        // Using setTimeout(0) so this click event doesn't immediately trigger dismissal
+        setTimeout(() => {
+            $(document).one('click.dooms-pb-ctx', function () {
+                hideContextMenu();
+            });
+        }, 0);
+    });
+
+    // ── Context menu item clicks ──
+    $(document).on('click', '.dooms-pb-ctx-item', function (e) {
+        const action = $(this).data('action');
+        const characterName = $('#dooms-pb-context-menu').data('character');
+        const isUser = !!$('#dooms-pb-context-menu').data('isUser');
+
+        hideContextMenu();
+        if (!characterName) return;
+
+        if (action === 'remove-character') {
+            removeCharacter(characterName);
+        } else if (action === 'open-workshop') {
+            // Workshop listener registers when the deferred settings UI loads
+            ensureSettingsUI().then(() => {
+                window.dispatchEvent(new CustomEvent('dooms:open-workshop', { detail: { characterName, isUser } }));
+            }).catch(() => {});
+        } else if (action === 'stats') {
+            // Lazy: the panel module (and its stylesheet) load on first use.
+            import('./statsPanel.js')
+                .then(({ openStatsPanel }) => openStatsPanel(characterName, isUser))
+                .catch(err => console.error('[Dooms Tracker] Stats panel failed to open:', err));
+        } else if (action === 'cancel-inject') {
+            window.dispatchEvent(new CustomEvent('dooms:cancel-inject', { detail: { name: characterName } }));
+        } else if (action === 'regenerate-portrait') {
+            regeneratePortraitFor(characterName);
+        } else if (action === 'restore-portrait') {
+            if (restorePreviousPortrait(characterName)) {
+                saveSettings();
+                clearPortraitCache();
+                updatePortraitBar();
+                if (window.toastr) toastr.success(`Restored ${characterName}'s previous portrait.`, '', { timeOut: 3000 });
+            }
+        }
+    });
+
+    // ── Open Character Roster button ──
+    $('#dooms-pb-open-roster').on('click', function (e) {
+        e.stopPropagation();
+        if (extensionSettings.showPortraitBar === false) return;
+        // Roster listener registers when the deferred settings UI loads
+        ensureSettingsUI().then(() => {
+            window.dispatchEvent(new CustomEvent('dooms:open-roster'));
+        }).catch(() => {});
+    });
+    // Hide the roster button when PCP is off (Workshop is part of PCP).
+    if (extensionSettings.showPortraitBar === false) {
+        $('#dooms-pb-open-roster').hide();
+    }
+
+    // Initial render
+    updatePortraitBar();
+}
+
+// ─────────────────────────────────────────────
+//  Rendering
+// ─────────────────────────────────────────────
+
+/**
+ * Per-card steady-state HTML cache (name -> html). Lets the reconciler skip
+ * cards whose content hasn't changed without storing HTML in the DOM.
+ */
+const cardHtmlCache = new Map();
+
+/** Builds a detached element from an HTML string. */
+function htmlToElement(html) {
+    const tpl = document.createElement('template');
+    tpl.innerHTML = html.trim();
+    return tpl.content.firstElementChild;
+}
+
+/**
+ * Refreshes the portrait cards based on current character data.
+ * Scheduled through the render scheduler so bursts of calls (e.g. the
+ * CHAT_CHANGED handler chain) collapse into one render per frame.
+ */
+export function updatePortraitBar() {
+    schedule('portraitBar', renderPortraitBarNow);
+}
+
+/**
+ * Immediate render. Reconciles existing cards in place instead of rebuilding
+ * the whole shelf, so unchanged cards keep their animations, scroll position,
+ * and hover state, and only changed/new/removed cards touch the DOM.
+ */
+function renderPortraitBarNow() {
+    const $scroll = $('#dooms-pb-scroll');
+    if (!$scroll.length) return;
+
+    if (!extensionSettings.enabled || extensionSettings.showPortraitBar === false) {
+        $('#dooms-portrait-bar-wrapper').hide();
+        return;
+    }
+    $('#dooms-portrait-bar-wrapper').show();
+
+    try {
+    // Apply alignment setting
+    const centered = extensionSettings.portraitAlignment === 'center';
+    $scroll.toggleClass('dooms-pb-centered', centered);
+
+    const allCharacters = getCharacterList();
+    const pbSettings = extensionSettings.portraitBarSettings || {};
+    const showAbsent = pbSettings.showAbsentCharacters !== false;
+    const characters = showAbsent ? allCharacters : allCharacters.filter(c => c.present);
+    const presentCount = allCharacters.filter(c => c.present).length;
+    const totalCount = allCharacters.length;
+
+    const countText = presentCount === totalCount
+        ? `${totalCount} ${totalCount === 1 ? 'character' : 'characters'}`
+        : `${presentCount} present / ${totalCount} known`;
+    $('#dooms-pb-count').text(countText);
+
+    if (totalCount === 0) {
+        $scroll.html('<div class="dooms-pb-empty">No characters present</div>');
+        cardHtmlCache.clear();
+        _previousCharacterNames = new Set();
+        _initialRenderDone = true;
+        return;
+    }
+    // Leaving the empty state: remove the placeholder so reconcile sees only cards
+    $scroll.children('.dooms-pb-empty').remove();
+
+    // Detect newly-arrived characters (only present ones, not absent)
+    const currentPresentNames = new Set(characters.filter(c => c.present).map(c => c.name));
+    const newCharNames = new Set();
+    if (_initialRenderDone && extensionSettings.enableAnimations !== false) {
+        for (const name of currentPresentNames) {
+            if (!_previousCharacterNames.has(name)) {
+                newCharNames.add(name);
+            }
+        }
+    }
+
+    // ── Auto-assign dialogue colors to characters that don't have one yet ──
+    const activeColors = getActiveCharacterColors();
+    const usedColors = new Set(Object.values(activeColors));
+    let colorsAssigned = false;
+    for (const char of characters) {
+        if (!activeColors[char.name]) {
+            // Pick the first unused palette color; fall back to random if all taken
+            let color = DIALOGUE_COLORS.find(c => !usedColors.has(c));
+            if (!color) {
+                color = DIALOGUE_COLORS[Math.floor(Math.random() * DIALOGUE_COLORS.length)];
+            }
+            activeColors[char.name] = color;
+            usedColors.add(color);
+            colorsAssigned = true;
+        }
+    }
+    if (colorsAssigned) saveCharacterRosterChange();
+
+    // Build the steady-state HTML for each card (entrance markup is applied
+    // separately in onEnter so it never pollutes the diff cache).
+    const cardData = characters.map((char, idx) => {
+        const portraitSrc = resolvePortrait(char.name);
+        const speakingClass = (char.present && idx === 0) ? ' dooms-pb-speaking' : '';
+        const absentClass = char.present ? '' : ' dooms-pb-absent';
+        const userClass = char.isUser ? ' dooms-pb-user' : '';
+        const nameEsc = escapeHtml(char.name);
+        const emoji = escapeHtml(char.emoji || '👤');
+        const absentOverlay = char.present ? '' : '<div class="dooms-pb-absent-overlay"></div>';
+        // For user characters, prefer the color stored on userCharacters
+        // over any AI-assigned dialogue color.
+        let charColor = activeColors[char.name];
+        if (char.isUser) {
+            const uc = extensionSettings.userCharacters && extensionSettings.userCharacters[char.name];
+            if (uc && uc.color) charColor = uc.color;
+        }
+        const colorDot = charColor
+            ? `<span class="dooms-portrait-card-color-dot" style="background:${escapeHtml(charColor)};"></span>`
+            : '';
+        const youBadge = char.isUser ? '<span class="dooms-pb-you-badge">YOU</span>' : '';
+        // Level (Better Stats), top-right; ⬆ when attribute points wait to be assigned.
+        let levelBadge = '';
+        try {
+            if (isProgressEnabled() && hasLevel(char.name, !!char.isUser)) {
+                const pr = getProgress(char.name, !!char.isUser);
+                const up = pr.points > 0 ? ' dooms-pb-level-up' : '';
+                const tip = `Level ${pr.level}${pr.party || char.isUser ? ' · party' : ''}${pr.points ? ` · ${pr.points} point${pr.points === 1 ? '' : 's'} to assign` : ''}`;
+                levelBadge = `<span class="dooms-pb-level-badge${up}" title="${escapeHtml(tip)}">Lv ${pr.level}${pr.points ? ' ⬆' : ''}</span>`;
+            }
+        } catch (e) { /* levels are optional */ }
+
+        let backFace = '';
+        try {
+            backFace = buildPortraitBackFace(char.name, emoji, char.details);
+        } catch (e) {
+            console.error(`[Dooms Portrait Bar] Error building back face for ${char.name}:`, e);
+        }
+        const flippedClass = flippedPortraitCards.has(char.name) ? ' dooms-pb-flipped' : '';
+
+        // Tooltip: when the user has opted in, append the current expression
+        // label to the native title attr so hovering the card shows both.
+        let cardTitle = nameEsc;
+        if (extensionSettings.showExpressionInTooltip === true) {
+            const expr = getSyncedExpressionLabel(char.name);
+            if (expr) cardTitle = `${nameEsc} — ${escapeHtml(expr)}`;
+        }
+
+        const injectingClass = _injectingNames.has(char.name.toLowerCase()) ? ' dooms-pb-injecting' : '';
+        const injectingOverlay = injectingClass
+            ? '<div class="dooms-pb-injecting-overlay" aria-hidden="true"><span>INJECTING&hellip;</span></div>'
+            : '';
+
+        const face = portraitSrc
+            ? `<img src="${portraitSrc}" alt="${nameEsc}" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';" />
+                <div class="dooms-portrait-card-emoji" style="display:none;">${emoji}</div>`
+            : `<div class="dooms-portrait-card-emoji">${emoji}</div>`;
+
+        const html = `<div class="dooms-portrait-card${speakingClass}${absentClass}${flippedClass}${injectingClass}${userClass}" title="${cardTitle}" data-char="${nameEsc}"${char.isUser ? ' data-user="1"' : ''}>
+                ${face}
+                ${absentOverlay}
+                ${youBadge}
+                ${levelBadge}
+                ${injectingOverlay}
+                <div class="dooms-portrait-card-name">${colorDot}${nameEsc}</div>
+                ${backFace}
+            </div>`;
+        return { char, html };
+    });
+
+    const scrollEl = $scroll[0];
+    keyedReconcile(scrollEl, cardData, {
+        key: (d) => d.char.name,
+        create: (d) => {
+            cardHtmlCache.set(d.char.name, d.html);
+            return htmlToElement(d.html);
+        },
+        update: (el, d) => {
+            if (cardHtmlCache.get(d.char.name) === d.html) return; // unchanged
+            cardHtmlCache.set(d.char.name, d.html);
+            // Patch in place (keeps the element identity the reconciler tracks)
+            const fresh = htmlToElement(d.html);
+            el.className = fresh.className;
+            el.setAttribute('title', fresh.getAttribute('title') || '');
+            if (fresh.hasAttribute('data-user')) el.setAttribute('data-user', '1');
+            else el.removeAttribute('data-user');
+            el.innerHTML = fresh.innerHTML;
+        },
+        onExit: (el) => {
+            const name = el.getAttribute('data-char');
+            if (name) cardHtmlCache.delete(name);
+            el.remove();
+        },
+        onEnter: (el, d) => {
+            if (!d || !newCharNames.has(d.char.name)) return;
+            // Entrance flourish for newly-arrived characters only
+            el.classList.add('dooms-pb-entrance');
+            el.querySelector('.dooms-portrait-card-name')?.classList.add('dooms-pb-name-highlight');
+            el.insertAdjacentHTML('beforeend', '<span class="dooms-pb-new-badge">&#x2726; New</span>');
+            const glow = document.createElement('div');
+            glow.className = 'dooms-pb-glow-burst';
+            el.appendChild(glow);
+
+            // Auto-scroll to reveal the new card (next frame, after layout)
+            requestAnimationFrame(() => {
+                const cardRight = el.offsetLeft + el.offsetWidth;
+                if (cardRight > scrollEl.scrollLeft + scrollEl.clientWidth) {
+                    scrollEl.scrollTo({ left: cardRight - scrollEl.clientWidth + 20, behavior: 'smooth' });
+                }
+            });
+
+            // Clean up animation artifacts after they finish; resync the cache
+            // since the steady-state HTML no longer matches the live element.
+            setTimeout(() => {
+                el.classList.remove('dooms-pb-entrance');
+                el.querySelector('.dooms-pb-new-badge')?.remove();
+                el.querySelector('.dooms-pb-name-highlight')?.classList.remove('dooms-pb-name-highlight');
+                glow.remove();
+            }, 3500);
+        },
+    });
+
+    // Update tracking set
+    _previousCharacterNames = currentPresentNames;
+    _initialRenderDone = true;
+
+    // Re-apply visual settings (header visibility, arrow visibility, etc.)
+    applyPortraitBarSettings();
+    } catch (e) {
+        console.error('[Dooms Portrait Bar] Error updating portrait bar:', e);
+    }
+}
+
+/**
+ * Moves the portrait bar wrapper above/below #send_form or to the top of the screen
+ * based on the portraitPosition setting.
+ */
+export function repositionPortraitBar() {
+    const $wrapper = $('#dooms-portrait-bar-wrapper');
+    const $sendForm = $('#send_form');
+    if (!$wrapper.length) return;
+
+    const pos = extensionSettings.portraitPosition || 'above';
+
+    // Reset all position-mode classes; re-apply the active one below.
+    $wrapper.removeClass('dooms-pb-position-top dooms-pb-position-left dooms-pb-position-right');
+
+    if (pos === 'left' || pos === 'right') {
+        $('body').append($wrapper);
+        $wrapper.addClass(`dooms-pb-position-${pos}`);
+        applySideModeStyling();
+    } else if (pos === 'top') {
+        const $sheld = $('#sheld');
+        const $chat = $sheld.find('#chat');
+        if ($chat.length) {
+            $chat.before($wrapper);
+        } else if ($sheld.length) {
+            $sheld.prepend($wrapper);
+        }
+        $wrapper.addClass('dooms-pb-position-top');
+    } else if ($sendForm.length) {
+        if (pos === 'below') {
+            $sendForm.after($wrapper);
+        } else {
+            $sendForm.before($wrapper);
+        }
+    }
+}
+
+/**
+ * Re-applies side-mode style hooks after position / push / column changes.
+ * Sets:
+ *   - the column-count CSS variable on the wrapper
+ *   - body class for the push-aside layout (left vs right)
+ * Safe to call when not in side mode (just no-ops the classes).
+ */
+export function applySideModeStyling() {
+    const pos = extensionSettings.portraitPosition || 'above';
+    const $wrapper = $('#dooms-portrait-bar-wrapper');
+    if (!$wrapper.length) return;
+
+    // Always update the column var so it tracks even if mode flips back.
+    const cols = Number(extensionSettings.portraitSideColumns) || 1;
+    // Clamp to 1-2; 3+ saved from earlier builds gets pulled back to 2.
+    const safeCols = cols < 1 ? 1 : cols > 2 ? 2 : cols;
+    document.documentElement.style.setProperty('--dooms-pb-side-cols', safeCols);
+    $wrapper.css('--dooms-pb-side-cols', safeCols);
+
+    // Panel height mode: 'auto' fits to content + vertically centers;
+    // 'full' stretches top to bottom (the original cw-33 behavior).
+    const heightMode = extensionSettings.portraitSideHeight === 'full' ? 'full' : 'auto';
+    $wrapper
+        .toggleClass('dooms-pb-side-height-auto', heightMode === 'auto')
+        .toggleClass('dooms-pb-side-height-full', heightMode === 'full');
+}
+
+// ─────────────────────────────────────────────
+//  Portrait resolution (npcAvatars → ST characters → file → null)
+// ─────────────────────────────────────────────
+
+/**
+ * Fuzzy-match a SillyTavern character card name against an AI-generated name.
+ * Tries exact, parenthesis-stripped, and word-boundary matching.
+ */
+function namesMatch(cardName, aiName) {
+    if (!cardName || !aiName) return false;
+    if (cardName.toLowerCase() === aiName.toLowerCase()) return true;
+    const stripParens = (s) => s.replace(/\s*\([^)]*\)/g, '').trim();
+    const cardCore = stripParens(cardName).toLowerCase();
+    const aiCore = stripParens(aiName).toLowerCase();
+    if (cardCore === aiCore) return true;
+    const escapedCardCore = cardCore.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`\\b${escapedCardCore}\\b`).test(aiCore);
+}
+
+/**
+ * Returns the best available portrait source for a character.
+ * Priority: npcAvatars base64 → ST character card avatar → portraits/ folder → null
+ */
+export function resolvePortrait(name) {
+    if (!name) return null;
+
+    // 0. Synced expression sprite wins over everything else when the user
+    //    has expressions sync enabled. The classifier writes per-character
+    //    sprite URLs into syncedExpressionPortraits after every reply; we
+    //    surface them here so the portrait bar reflects the current
+    //    emotion. Used to come AFTER the user-character branch — that
+    //    meant the active user character never got expression swaps
+    //    because the static avatar shortcut returned first.
+    //    resolveFullPortrait below already has this ordering;
+    //    resolvePortrait now matches.
+    const syncedExpression = getExpressionAwarePortrait(name, null);
+    if (syncedExpression) return syncedExpression;
+
+    // 1. User character — only when this name IS the currently-active user
+    // character. Without the active-name guard, an NPC that happens to
+    // share a name with a user-character would be hijacked: every NPC
+    // portrait lookup matching that name would return the user's avatar
+    // instead, including in chat bubbles.
+    const userEntries = extensionSettings.userCharacters;
+    if (userEntries && userEntries[name] && userEntries[name].avatar) {
+        const activeUserName = resolveActiveUserName();
+        if (activeUserName && name === activeUserName) {
+            return userEntries[name].avatar;
+        }
+    }
+
+    // 2. Custom uploaded avatars (npcAvatars)
+    const avatars = extensionSettings.npcAvatars;
+    if (avatars) {
+        // Exact match
+        if (avatars[name]) return avatars[name];
+
+        // Partial match — handle short names expanded to full names
+        // e.g. "Sakura" → "Sakura Ashenveil"
+        const lowerName = name.toLowerCase();
+        for (const key of Object.keys(avatars)) {
+            if (key.toLowerCase().startsWith(lowerName + ' ')) {
+                return avatars[key];
+            }
+        }
+    }
+
+    // 2. SillyTavern character card avatars (group members first, then all)
+    if (extensionSettings.portraitAutoImport !== false) {
+        try {
+            if (selected_group) {
+                const groupMembers = getGroupMembers(selected_group);
+                if (groupMembers?.length) {
+                    const match = groupMembers.find(m => m?.name && namesMatch(m.name, name));
+                    if (match?.avatar && match.avatar !== 'none') {
+                        const url = getSafeThumbnailUrl('avatar', match.avatar);
+                        if (url) return url;
+                    }
+                }
+            }
+            if (characters?.length) {
+                const match = characters.find(c => c?.name && namesMatch(c.name, name));
+                if (match?.avatar && match.avatar !== 'none') {
+                    const url = getSafeThumbnailUrl('avatar', match.avatar);
+                    if (url) return url;
+                }
+            }
+            if (this_chid !== undefined && characters[this_chid]?.name &&
+                namesMatch(characters[this_chid].name, name)) {
+                const url = getSafeThumbnailUrl('avatar', characters[this_chid].avatar);
+                if (url) return url;
+            }
+        } catch (e) {
+            console.warn('[Dooms Portrait Bar] Character card avatar lookup failed:', e.message);
+        }
+    }
+
+    // 3. Check file-based portraits/ folder
+    return getPortraitFileUrl(name);
+}
+
+/**
+ * Returns a full-resolution portrait URL for a character.
+ * Same logic as resolvePortrait() but uses full-res avatar paths
+ * instead of thumbnails. Use this for character sheets and chat bubbles
+ * where image quality matters.
+ */
+export function resolveFullPortrait(name) {
+    if (!name) return null;
+
+    const syncedExpression = getExpressionAwarePortrait(name, null);
+    if (syncedExpression) return syncedExpression;
+
+    // 1. Try SillyTavern character card avatars first — these are full resolution
+    //    Preferred over npcAvatars which are cropped/downscaled to 330×440.
+    if (extensionSettings.portraitAutoImport !== false) {
+        try {
+            const findFullRes = (charList) => {
+                const match = charList?.find(c => c?.name && namesMatch(c.name, name));
+                if (match?.avatar && match.avatar !== 'none') {
+                    return `/characters/${encodeURIComponent(match.avatar)}`;
+                }
+                return null;
+            };
+
+            if (selected_group) {
+                const groupMembers = getGroupMembers(selected_group);
+                const url = findFullRes(groupMembers);
+                if (url) return url;
+            }
+            if (characters?.length) {
+                const url = findFullRes(characters);
+                if (url) return url;
+            }
+            if (this_chid !== undefined && characters[this_chid]?.name &&
+                namesMatch(characters[this_chid].name, name)) {
+                return `/characters/${encodeURIComponent(characters[this_chid].avatar)}`;
+            }
+        } catch (e) {
+            console.warn('[Dooms Portrait Bar] Full-res avatar lookup failed:', e.message);
+        }
+    }
+
+    // 2. Full-res originals stored at upload time (pre-crop)
+    const fullRes = extensionSettings.npcAvatarsFullRes;
+    if (fullRes) {
+        if (fullRes[name]) return fullRes[name];
+        const lowerName = name.toLowerCase();
+        for (const key of Object.keys(fullRes)) {
+            if (key.toLowerCase().startsWith(lowerName + ' ')) {
+                return fullRes[key];
+            }
+        }
+    }
+
+    // 3. Cropped portraits (npcAvatars — 660×880 data URIs)
+    const avatars = extensionSettings.npcAvatars;
+    if (avatars) {
+        if (avatars[name]) return avatars[name];
+        const lowerName = name.toLowerCase();
+        for (const key of Object.keys(avatars)) {
+            if (key.toLowerCase().startsWith(lowerName + ' ')) {
+                return avatars[key];
+            }
+        }
+    }
+
+    // 3. Fall back to regular resolve (file-based portraits, thumbnails)
+    return resolvePortrait(name);
+}
+
+/**
+ * Returns a portrait file URL, probing asynchronously on first call.
+ */
+function getPortraitFileUrl(name) {
+    if (portraitFileCache.has(name)) {
+        return portraitFileCache.get(name);
+    }
+
+    // Check persistent no-portrait cache before firing any network requests.
+    // This prevents 5+ HEAD 404s per character on every page reload.
+    try {
+        const noPortrait = JSON.parse(localStorage.getItem('dooms-portrait-no-file') || '[]');
+        if (noPortrait.includes(name)) {
+            portraitFileCache.set(name, null);
+            return null;
+        }
+    } catch (e) { /* ignore */ }
+
+    const sanitizedName = sanitizeFilename(name);
+    const basePath = `/${extensionFolderPath}/portraits/${sanitizedName}`;
+    const url = `${basePath}.png`;
+    portraitFileCache.set(name, url);
+
+    // Async probe for real extension
+    probePortraitFileUrl(name, basePath);
+
+    return url;
+}
+
+async function probePortraitFileUrl(name, basePath) {
+    for (const ext of IMAGE_EXTENSIONS) {
+        const testUrl = `${basePath}.${ext}`;
+        try {
+            const response = await fetch(testUrl, { method: 'HEAD' });
+            if (response.ok) {
+                portraitFileCache.set(name, testUrl);
+                // Update DOM if the card is still showing the optimistic .png
+                const $img = $(`.dooms-portrait-card[data-char="${escapeJsString(name)}"] img`);
+                if ($img.length && $img.attr('src') !== testUrl) {
+                    $img.attr('src', testUrl);
+                }
+                return;
+            }
+        } catch (e) { /* continue */ }
+    }
+
+    // No file found — cache null and persist so we skip probing on next reload
+    portraitFileCache.set(name, null);
+    try {
+        const _noPortrait = JSON.parse(localStorage.getItem('dooms-portrait-no-file') || '[]');
+        if (!_noPortrait.includes(name)) {
+            _noPortrait.push(name);
+            localStorage.setItem('dooms-portrait-no-file', JSON.stringify(_noPortrait));
+        }
+    } catch (e) { /* ignore */ }
+
+    // If no npcAvatar either, show emoji fallback
+    if (!(extensionSettings.npcAvatars && extensionSettings.npcAvatars[name])) {
+        const $card = $(`.dooms-portrait-card[data-char="${escapeJsString(name)}"]`);
+        if ($card.length && $card.find('img').length) {
+            const $img = $card.find('img');
+            $img.hide();
+            $card.find('.dooms-portrait-card-emoji').show();
+        }
+    }
+}
+
+// ─────────────────────────────────────────────
+//  Upload & Remove actions
+// ─────────────────────────────────────────────
+
+/**
+ * Opens a file picker → SillyTavern's crop dialog (circle preview, square save)
+ * → stores the cropped image as a base64 npcAvatar.
+ */
+function triggerPortraitUpload(characterName) {
+    const fileInput = $('<input type="file" accept="image/*" style="display:none;">');
+    fileInput.on('change', async function () {
+        const file = this.files[0];
+        if (!file) return;
+
+        try {
+            // Convert to base64 data URL
+            const dataUrl = await getBase64Async(file);
+
+            // Open SillyTavern's built-in crop popup (square aspect = circular preview)
+            const croppedImage = await callGenericPopup(
+                `<h3>Crop portrait for ${escapeHtml(characterName)}</h3>`,
+                POPUP_TYPE.CROP,
+                '',
+                { cropAspect: 3 / 4, cropImage: dataUrl }
+            );
+
+            if (!croppedImage) {
+                console.log(`[Dooms Tracker] Portrait crop cancelled for ${characterName}`);
+                return;
+            }
+
+            // Upscale the cropped image to a high-res size and re-encode as PNG.
+            // The built-in crop popup returns a low-res JPEG at the cropped pixel size,
+            // so we redraw it onto a larger canvas for crisp portrait display.
+            const PORTRAIT_W = 660;
+            const PORTRAIT_H = 880;
+            const hiResDataUrl = await upscaleImage(String(croppedImage), PORTRAIT_W, PORTRAIT_H);
+
+            // Store cropped portrait for portrait bar / chat bubbles
+            if (!extensionSettings.npcAvatars) {
+                extensionSettings.npcAvatars = {};
+            }
+            extensionSettings.npcAvatars[characterName] = hiResDataUrl;
+
+            // Store the original full-res image (pre-crop) for character sheets
+            if (!extensionSettings.npcAvatarsFullRes) {
+                extensionSettings.npcAvatarsFullRes = {};
+            }
+            extensionSettings.npcAvatarsFullRes[characterName] = dataUrl;
+
+            saveSettings();
+
+            // Pass-2 perf: migrate the just-saved data:URL to an on-disk file
+            // (same flow as the boot-time migration). Idempotent + locked.
+            Promise.resolve()
+                .then(() => migrateAvatarsToFiles(saveSettings))
+                .then((res) => {
+                    if (res?.migrated) {
+                        portraitFileCache.delete(characterName);
+                        try { updatePortraitBar(); } catch (e) {}
+                    }
+                })
+                .catch(() => {});
+
+            // Clear file cache so resolvePortrait picks up the new npcAvatar
+            portraitFileCache.delete(characterName);
+            // Remove from no-portrait localStorage cache so future file probing can resume
+            try {
+                const _noPortrait = JSON.parse(localStorage.getItem('dooms-portrait-no-file') || '[]');
+                localStorage.setItem('dooms-portrait-no-file', JSON.stringify(_noPortrait.filter(n => n !== characterName)));
+            } catch (e) { /* ignore */ }
+
+            // Re-render the portrait bar
+            updatePortraitBar();
+
+            console.log(`[Dooms Tracker] Portrait uploaded & cropped for ${characterName}`);
+        } catch (err) {
+            console.error(`[Dooms Tracker] Portrait upload failed for ${characterName}:`, err);
+        }
+    });
+    $('body').append(fileInput);
+    fileInput.trigger('click');
+    // Clean up the hidden input after use
+    setTimeout(() => fileInput.remove(), 60000);
+}
+
+/**
+ * Removes a character's custom portrait (npcAvatar).
+ */
+function removePortrait(characterName) {
+    if (extensionSettings.npcAvatars && extensionSettings.npcAvatars[characterName]) {
+        // Collect first, clear the entries, save, THEN delete from disk —
+        // only files no other character version still references go.
+        const candidates = [extensionSettings.npcAvatars[characterName], extensionSettings.npcAvatarsFullRes?.[characterName]];
+        delete extensionSettings.npcAvatars[characterName];
+        // Also remove the full-res original if stored
+        if (extensionSettings.npcAvatarsFullRes && extensionSettings.npcAvatarsFullRes[characterName]) {
+            delete extensionSettings.npcAvatarsFullRes[characterName];
+        }
+        saveSettings();
+        deletePortraitsIfUnreferenced(candidates).catch(() => {});
+        portraitFileCache.delete(characterName);
+        // Remove from no-portrait localStorage cache so file probing can resume for this character
+        try {
+            const _noPortrait = JSON.parse(localStorage.getItem('dooms-portrait-no-file') || '[]');
+            localStorage.setItem('dooms-portrait-no-file', JSON.stringify(_noPortrait.filter(n => n !== characterName)));
+        } catch (e) { /* ignore */ }
+        updatePortraitBar();
+        console.log(`[Dooms Tracker] Portrait removed for ${characterName}`);
+    }
+}
+
+/**
+ * Opens the character's expression/sprite folder in the OS file explorer.
+ */
+export async function openExpressionFolder(characterName) {
+    try {
+        const response = await fetch('/api/sprites/open-folder', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ name: characterName }),
+        });
+        if (response.ok) {
+            console.log(`[Dooms Tracker] Opened expression folder for: ${characterName}`);
+        } else if (response.status === 404) {
+            toastr.info(
+                `Expression sprites go in: data/default-user/characters/${characterName}/`,
+                'Open Folder Not Available',
+                { timeOut: 6000 }
+            );
+        } else {
+            toastr.error('Failed to open expression folder.', 'Error');
+        }
+    } catch (err) {
+        console.error('[Dooms Tracker] Failed to open expression folder:', err);
+        toastr.info(
+            `Expression sprites go in: data/default-user/characters/${characterName}/`,
+            'Open Folder Not Available',
+            { timeOut: 6000 }
+        );
+    }
+}
+
+/**
+ * Sets a character's dialogue color.
+ */
+function setCharacterColor(characterName, color) {
+    const colors = getActiveCharacterColors();
+    colors[characterName] = color;
+    saveCharacterRosterChange();
+    updatePortraitBar();
+    console.log(`[Dooms Tracker] Dialogue color set for ${characterName}: ${color}`);
+}
+
+/**
+ * Clears a character's dialogue color (AI will pick its own).
+ */
+function clearCharacterColor(characterName) {
+    const colors = getActiveCharacterColors();
+    if (colors[characterName]) {
+        delete colors[characterName];
+        saveCharacterRosterChange();
+        updatePortraitBar();
+        console.log(`[Dooms Tracker] Dialogue color cleared for ${characterName}`);
+    }
+}
+
+/**
+ * Re-runs AI portrait generation for a character from the context menu.
+ * Confirms first (it spends an image-generation call), then delegates to
+ * avatarGenerator.regenerateAvatar, which banks the current portrait in the
+ * character's history, rebuilds the LLM prompt, and calls the Image
+ * Generation extension's /sd.
+ */
+function regeneratePortraitFor(characterName) {
+    const ok = window.confirm(
+        `Regenerate ${characterName}'s portrait?\n\n` +
+        `A fresh portrait is generated with your Image Generation extension. ` +
+        `The current one is kept — right-click → Restore Previous Portrait brings it back.`
+    );
+    if (!ok) return;
+    // Lazy import — same idiom as the other menu actions; keeps this eager
+    // module free of a static dependency on the generation stack.
+    import('../features/avatarGenerator.js').then(async (gen) => {
+        if (gen.isGenerating(characterName)) {
+            if (window.toastr) toastr.info(`Already generating a portrait for ${characterName}.`, '', { timeOut: 3000 });
+            return;
+        }
+        if (window.toastr) toastr.info(`Generating a new portrait for ${characterName}…`, '', { timeOut: 4000 });
+        const url = await gen.regenerateAvatar(characterName);
+        // The old portrait is gone either way — refresh so the card shows
+        // the new image (success) or the initials placeholder (failure).
+        clearPortraitCache();
+        updatePortraitBar();
+        if (url) {
+            if (window.toastr) toastr.success(`New portrait ready for ${characterName}.`, '', { timeOut: 3000 });
+        } else if (window.toastr) {
+            // Two very different failures deserve two different messages: the
+            // /sd command not existing (extension off) vs the image backend
+            // rejecting the request (its own console has the real reason).
+            if (gen.isSdAvailable()) {
+                toastr.warning(`Portrait generation failed for ${characterName} — the image backend reported an error. Check the Image Generation extension settings and your backend's console (for ComfyUI, the server log names the failing node/model).`, '', { timeOut: 8000 });
+            } else {
+                toastr.warning(`Portrait generation failed for ${characterName} — the Image Generation (Stable Diffusion) extension isn't enabled.`, '', { timeOut: 6000 });
+            }
+        }
+    }).catch((err) => {
+        console.error('[Dooms Tracker] Portrait regeneration failed:', err);
+        if (window.toastr) toastr.error('Portrait regeneration failed — see console for details.', '', { timeOut: 4000 });
+    });
+}
+
+/**
+ * Removes a character from the current chat's Present Characters panel
+ * (soft remove — keeps their Workshop/Roster data intact).
+ */
+function removeCharacter(characterName) {
+    // Soft-remove: hide from the current chat's Present Characters panel
+    // by adding to the removedCharacters blacklist. Preserves the
+    // roster entry, portrait, color, and injection data so the character
+    // can still be found (and re-injected) via the Character Workshop /
+    // Roster. Full delete stays in those two surfaces.
+    const removedList = getActiveRemovedCharacters();
+    const lowerName = characterName.toLowerCase();
+
+    // Make sure the character exists in knownCharacters before we mark
+    // them removed. The knownChars seeding loop in getCharacterList
+    // happens AFTER the removed-filter, so a first-time soft-hide on an
+    // AI-only character would otherwise evaporate the roster entry and
+    // strand them with no Workshop/Roster surface to reach from.
+    //
+    // Skip the seed if the name belongs to a user persona — seeding here
+    // for a persona name would create an NPC twin that shows up in the
+    // Roster Characters tab AND the PCP via getCharacterList, on top of
+    // the existing user persona entry. That's the duplicate-Naoko bug.
+    try {
+        // Case-insensitive: AI casing of the name on the tile may differ
+        // from the userCharacters key casing. An exact-key lookup misses
+        // 'yashiro' vs 'Yashiro' and lets the duplicate seed run.
+        const lowerCharacterName = String(characterName).toLowerCase();
+        const userCharsObj = extensionSettings?.userCharacters;
+        const isUserPersona = !!(userCharsObj && Object.keys(userCharsObj).some(
+            k => k.toLowerCase() === lowerCharacterName
+        ));
+        if (!isUserPersona) {
+            const knownChars = getActiveKnownCharacters();
+            if (!knownChars[characterName]) {
+                let emoji = '👤';
+                try {
+                    const hit = getCharacterList().find(c => c && c.name === characterName);
+                    if (hit?.emoji) emoji = hit.emoji;
+                } catch (e) { /* best-effort */ }
+                knownChars[characterName] = { emoji };
+            }
+        }
+    } catch (e) {
+        console.warn('[Dooms Tracker] Send to Workshop: failed to seed knownCharacters entry', e);
+    }
+
+    if (!removedList.some(n => n.toLowerCase() === lowerName)) {
+        removedList.push(characterName);
+    }
+    // Reset entrance/cache tracking so a future re-add re-animates.
+    _previousCharacterNames.delete(characterName);
+    portraitFileCache.delete(characterName);
+    saveCharacterRosterChange();
+    updatePortraitBar();
+    console.log(`[Dooms Tracker] Character sent to Workshop (soft remove): ${characterName}`);
+}
+
+// ─────────────────────────────────────────────
+//  Context menu helpers
+// ─────────────────────────────────────────────
+
+function hideContextMenu() {
+    $('#dooms-pb-context-menu').hide();
+    // Clean up the one-time dismiss handler if it hasn't fired yet
+    $(document).off('click.dooms-pb-ctx');
+}
+
+// ─────────────────────────────────────────────
+//  Character data extraction
+// ─────────────────────────────────────────────
+
+/**
+ * Returns a merged list of present + absent (known but not in scene) characters.
+ * Each entry has { name, emoji, present: boolean }.
+ * Present characters come first, absent characters after.
+ */
+export function getCharacterList() {
+    const data = lastGeneratedData.characterThoughts || committedTrackerData.characterThoughts;
+    let presentChars = [];
+
+    // Pattern to detect off-scene characters from their thoughts
+    const offScenePatterns = /\b(not\s+(currently\s+)?(in|at|present\s+in|present\s+at)\s+(the\s+)?(scene|area|room|location|vicinity))\b|\b(off[\s-]?scene)\b|\b(not\s+physically\s+present)\b|\b(absent\s+from\s+(the\s+)?(scene|room|area|location))\b|\b(away\s+from\s+(the\s+)?scene)\b/i;
+
+    if (data) {
+        try {
+            // Memoized shared parse — read-only. Null (non-JSON) throws on the
+            // property access below and lands in the legacy-text catch.
+            const parsed = parseTrackerJson(data);
+            const characters = Array.isArray(parsed) ? parsed : (parsed.characters || []);
+            presentChars = characters
+                .filter(c => {
+                    // Filter out characters whose thoughts indicate they're off-scene
+                    const thoughts = c.thoughts?.content || c.thoughts || '';
+                    if (thoughts && offScenePatterns.test(thoughts)) {
+                        debugLog(`[Dooms Portrait Bar] Filtered off-scene: ${c.name}`);
+                        return false;
+                    }
+                    return true;
+                })
+                .map(c => ({
+                    name: c.name || 'Unknown',
+                    emoji: c.emoji || '👤',
+                    present: true,
+                    // Full parsed record (read-only), so per-card rendering
+                    // doesn't need a per-character getCharacterDetails lookup.
+                    details: c
+                }));
+        } catch (e) {
+            if (typeof data === 'string') {
+                const lines = data.split('\n');
+                for (const line of lines) {
+                    const match = line.trim().match(/^-\s+(.+)$/);
+                    if (match && !match[1].includes(':') && !match[1].includes('---')) {
+                        presentChars.push({ name: match[1].trim(), emoji: '👤', present: true });
+                    }
+                }
+            }
+        }
+    }
+
+    // Hold back names whose duplicate-decision popup is still open. This is
+    // the choke point that stops a maybe-duplicate from EXISTING: no card in
+    // the bar, no knownCharacters entry created below, no auto-assigned
+    // color. Yes folds the name into the existing card; No/Escape repaints
+    // on settle and the card appears then.
+    presentChars = presentChars.filter(c => {
+        if (hasPendingAliasDecision(c.name)) {
+            debugLog(`[Dooms Portrait Bar] Holding pending duplicate-decision name: ${c.name}`);
+            return false;
+        }
+        return true;
+    });
+
+    // Filter out characters the user has explicitly removed
+    // Case-insensitive matching — AI may output name variants between generations
+    const removed = getActiveRemovedCharacters();
+    const removedLower = new Set(removed.map(n => n.toLowerCase()));
+    const beforeRemoval = presentChars.length;
+    presentChars = presentChars.filter(c => {
+        if (removedLower.has(c.name.toLowerCase())) {
+            debugLog(`[Dooms Portrait Bar] Filtered removed character: ${c.name}`);
+            return false;
+        }
+        return true;
+    });
+    if (beforeRemoval !== presentChars.length) {
+        debugLog(`[Dooms Portrait Bar] removedCharacters list:`, removed);
+    }
+
+    // Update the persistent known-characters roster
+    const knownChars = getActiveKnownCharacters();
+    let rosterChanged = false;
+    for (const char of presentChars) {
+        if (!knownChars[char.name]) {
+            knownChars[char.name] = { emoji: char.emoji };
+            rosterChanged = true;
+        } else if (knownChars[char.name].emoji !== char.emoji) {
+            knownChars[char.name].emoji = char.emoji;
+            rosterChanged = true;
+        }
+    }
+    if (rosterChanged) {
+        saveCharacterRosterChange();
+    }
+
+    // Build absent list from known characters not currently present
+    const presentNames = new Set(presentChars.map(c => c.name));
+    const absentChars = [];
+    for (const [name, info] of Object.entries(knownChars)) {
+        if (!presentNames.has(name) && !removedLower.has(name.toLowerCase())) {
+            absentChars.push({ name, emoji: info.emoji || '👤', present: false });
+        }
+    }
+
+    // Present first, then absent (alphabetical)
+    absentChars.sort((a, b) => a.name.localeCompare(b.name));
+    // Prepend the active user character (if the toggle is on and one exists)
+    // so the player's persona shows up alongside NPCs in the PCP.
+    const userPrefix = buildActiveUserCharacterEntry();
+    // Invariant: a name that exists as a user persona never appears as an
+    // NPC tile in the PCP. The active persona renders via userPrefix
+    // (with the YOU badge / data-user="1"); any other userCharacter name
+    // is suppressed from the NPC lists entirely so we never double-render
+    // and never let a stale NPC stub for a persona name leak into the
+    // bar. Without this, a persona name that the AI mentioned in
+    // characterThoughts (presentChars), or a leftover knownCharacters
+    // entry (absentChars), would render an NPC-flavored tile that opens
+    // the wrong Workshop mode.
+    const userPersonaNames = new Set();
+    if (extensionSettings.userCharacters && typeof extensionSettings.userCharacters === 'object') {
+        for (const name of Object.keys(extensionSettings.userCharacters)) {
+            if (typeof name === 'string' && name) userPersonaNames.add(name.toLowerCase());
+        }
+    }
+    if (userPrefix) userPersonaNames.add(userPrefix.name.toLowerCase());
+    if (userPersonaNames.size) {
+        presentChars = presentChars.filter(c => !userPersonaNames.has(c.name.toLowerCase()));
+        for (let i = absentChars.length - 1; i >= 0; i--) {
+            if (userPersonaNames.has(absentChars[i].name.toLowerCase())) {
+                absentChars.splice(i, 1);
+            }
+        }
+    }
+    return userPrefix
+        ? [userPrefix, ...presentChars, ...absentChars]
+        : [...presentChars, ...absentChars];
+}
+
+/**
+ * Returns the name of the currently-active user character, regardless
+ * of whether showUserInPCP is on. Resolution priority:
+ *   1. Manual override: extensionSettings.activeUserCharacter (set by the
+ *      Workshop's "Set as active persona" button)
+ *   2. Auto-match: the user character whose linkedPersona equals the
+ *      current SillyTavern user_avatar
+ *   3. Single-entry fallback: if exactly one user character exists, use it
+ * Returns null if no user character is available.
+ *
+ * Used by both buildActiveUserCharacterEntry (PCP card) and
+ * resolvePortrait (avatar lookup) so the two paths can't drift apart.
+ */
+export function resolveActiveUserName() {
+    const s = extensionSettings || {};
+    const userMap = s.userCharacters || {};
+    if (!userMap || typeof userMap !== 'object') return null;
+    if (s.activeUserCharacter && userMap[s.activeUserCharacter]) return s.activeUserCharacter;
+    let currentAvatar = '';
+    try {
+        const ctx = (typeof window !== 'undefined' && window.SillyTavern && window.SillyTavern.getContext)
+            ? window.SillyTavern.getContext() : null;
+        currentAvatar = (ctx && ctx.user_avatar) || (typeof window !== 'undefined' && window.user_avatar) || '';
+    } catch (e) { currentAvatar = ''; }
+    if (currentAvatar) {
+        for (const [n, entry] of Object.entries(userMap)) {
+            if (entry && entry.linkedPersona === currentAvatar) return n;
+        }
+    }
+    const allNames = Object.keys(userMap);
+    if (allNames.length === 1) return allNames[0];
+    return null;
+}
+
+/**
+ * Build the PCP entry for the currently-active user character if
+ * extensionSettings.showUserInPCP is on. Returns null if the toggle is
+ * off or no user character is available.
+ */
+function buildActiveUserCharacterEntry() {
+    const s = extensionSettings || {};
+    if (!s.showUserInPCP) return null;
+    const name = resolveActiveUserName();
+    if (!name) return null;
+    // Honor removedCharacters for the persona too — without this, clicking
+    // "Send to Workshop" on the persona tile silently no-ops (the tile
+    // re-renders even though the name is on the soft-remove list).
+    try {
+        const removed = getActiveRemovedCharacters();
+        const lowerName = name.toLowerCase();
+        if (Array.isArray(removed) && removed.some(n => typeof n === 'string' && n.toLowerCase() === lowerName)) {
+            return null;
+        }
+    } catch (e) { /* best-effort */ }
+    return {
+        name,
+        emoji: '👤',
+        present: true,
+        isUser: true,
+    };
+}
+
+// ─────────────────────────────────────────────
+//  Cache & utilities
+// ─────────────────────────────────────────────
+
+export function clearPortraitCache() {
+    portraitFileCache.clear();
+}
+
+/**
+ * Redraws a data-URL image onto a canvas of the given size and returns a PNG data URL.
+ * Uses high-quality bicubic-like smoothing (imageSmoothingQuality: 'high').
+ */
+export function upscaleImage(srcDataUrl, width, height) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = 'high';
+            ctx.drawImage(img, 0, 0, width, height);
+            resolve(canvas.toDataURL('image/png'));
+        };
+        img.onerror = reject;
+        img.src = srcDataUrl;
+    });
+}
+
+function sanitizeFilename(name) {
+    return name.trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_\-]/g, '');
+}
+
+/**
+ * Escapes a string for embedding inside a double-quoted jQuery selector
+ * (JS-string escaping, NOT HTML entities). Not an HTML attribute escaper —
+ * use escapeHtml/escapeAttr from utils/html.js for attribute contexts.
+ */
+function escapeJsString(str) {
+    if (!str) return '';
+    return str.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+/**
+ * Extracts the full character details object from committed tracker data.
+ * Returns null if no data is available for the character.
+ */
+function getCharacterDetails(charName) {
+    const data = lastGeneratedData.characterThoughts || committedTrackerData.characterThoughts;
+    if (!data) return null;
+    try {
+        // Memoized shared parse — the same blob getCharacterList parsed is a
+        // cache hit here, so this is no longer a full re-parse per character.
+        const parsed = parseTrackerJson(data);
+        const characters = Array.isArray(parsed) ? parsed : (parsed.characters || []);
+        return characters.find(c => c.name === charName) || null;
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * Builds the HTML for a portrait card back face detail sheet.
+ * Shows relationship status, appearance, demeanor, and other key character info.
+ * Thoughts are omitted here since they're shown in the sidebar Thoughts panel.
+ */
+function buildPortraitBackFace(charName, emoji, details = null) {
+    // Absent-but-known characters carry no parsed record; fall back to the
+    // (memoized) tracker-data lookup for them.
+    details = details || getCharacterDetails(charName);
+    const nameEsc = escapeHtml(charName);
+
+    let sectionsHtml = '';
+
+    if (details) {
+        // Relationship — may be { status: "Lover" } object or a flat string
+        const rawRelationship = details.Relationship || details.relationship || '';
+        const relationship = (typeof rawRelationship === 'object' && rawRelationship !== null)
+            ? (rawRelationship.status || rawRelationship.value || JSON.stringify(rawRelationship))
+            : String(rawRelationship || '');
+        if (relationship) {
+            sectionsHtml += `<div class="dooms-pb-back-section">
+                <div class="dooms-pb-back-label">❤️ Relationship</div>
+                <div class="dooms-pb-back-value">${escapeHtml(relationship)}</div>
+            </div>`;
+        }
+
+        // Appearance & demeanor — nested inside details.details object
+        const nested = details.details || {};
+        const appearance = (typeof nested === 'object' && nested !== null)
+            ? (nested.appearance || nested.Appearance || '') : '';
+        const demeanor = (typeof nested === 'object' && nested !== null)
+            ? (nested.demeanor || nested.Demeanor || '') : '';
+
+        if (appearance) {
+            sectionsHtml += `<div class="dooms-pb-back-section">
+                <div class="dooms-pb-back-label">👁️ Appearance</div>
+                <div class="dooms-pb-back-value">${escapeHtml(String(appearance))}</div>
+            </div>`;
+        }
+        if (demeanor) {
+            sectionsHtml += `<div class="dooms-pb-back-section">
+                <div class="dooms-pb-back-label">🎭 Demeanor</div>
+                <div class="dooms-pb-back-value">${escapeHtml(String(demeanor))}</div>
+            </div>`;
+        }
+
+        // Show any other nested detail fields we haven't explicitly handled
+        if (typeof nested === 'object' && nested !== null) {
+            const handledDetailFields = new Set(['appearance', 'demeanor']);
+            for (const [key, val] of Object.entries(nested)) {
+                if (handledDetailFields.has(key.toLowerCase()) || !val || typeof val === 'object') continue;
+                sectionsHtml += `<div class="dooms-pb-back-section">
+                    <div class="dooms-pb-back-label">${escapeHtml(key)}</div>
+                    <div class="dooms-pb-back-value">${escapeHtml(String(val))}</div>
+                </div>`;
+            }
+        }
+
+        // Show other top-level fields (skip name, emoji, thoughts, relationship, details, stats)
+        const skipFields = new Set(['name', 'emoji', 'thoughts', 'relationship', 'details', 'stats', 'thoughtscontent']);
+        for (const [key, val] of Object.entries(details)) {
+            if (skipFields.has(key.toLowerCase()) || !val || typeof val === 'object') continue;
+            sectionsHtml += `<div class="dooms-pb-back-section">
+                <div class="dooms-pb-back-label">${escapeHtml(key)}</div>
+                <div class="dooms-pb-back-value">${escapeHtml(String(val))}</div>
+            </div>`;
+        }
+    }
+
+    if (!sectionsHtml) {
+        sectionsHtml = '<div class="dooms-pb-back-empty">No details available</div>';
+    }
+
+    return `<div class="dooms-pb-card-back">
+        <div class="dooms-pb-back-header">
+            <span class="dooms-pb-back-emoji">${emoji}</span>
+            <span class="dooms-pb-back-name">${nameEsc}</span>
+        </div>
+        <div class="dooms-pb-back-body">${sectionsHtml}</div>
+        <div class="dooms-pb-back-hint"><i class="fa-solid fa-rotate-left"></i></div>
+    </div>`;
+}

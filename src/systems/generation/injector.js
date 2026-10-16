@@ -1,0 +1,1066 @@
+/**
+ * Prompt Injector Module
+ * Handles injection of RPG tracker prompts into the generation context
+ */
+import { getContext } from '../../../../../../extensions.js';
+import { extension_prompt_types, extension_prompt_roles, eventSource, event_types } from '../../../../../../../script.js';
+import { desSetExtensionPrompt as setExtensionPrompt, recordEventMutation } from './inspector.js';
+import {
+    extensionSettings,
+    committedTrackerData,
+    lastGeneratedData,
+    isGenerating,
+    lastActionWasSwipe,
+    setIsAwaitingNewMessage
+} from '../../core/state.js';
+import { getActiveCharacterColors } from '../../core/persistence.js';
+import { evaluateSuppression } from './suppression.js';
+import { parseQuests } from './parser.js';
+import { revertAIStatsForReplacedMessage } from '../features/characterStats.js';
+import { revertAIMemoriesForReplacedMessage } from '../features/characterMemories.js';
+import { revertAIEquipmentForReplacedMessage } from '../features/characterEquipment.js';
+import { revertAIConditionsForReplacedMessage } from '../features/characterConditions.js';
+import { revertAIAbilitiesForReplacedMessage } from '../features/characterAbilities.js';
+import { revertAIProgressForReplacedMessage } from '../features/characterProgress.js';
+import { revertAIMoneyForReplacedMessage } from '../features/characterMoney.js';
+import { revertAIAffinityForReplacedMessage } from '../features/characterAffinity.js';
+import { revertAIChecksForReplacedMessage } from '../features/characterChecks.js';
+import { getPendingTwist, isPendingTwistAKnife, getPendingKnifeCharacter, clearPendingTwist, buildDoomTensionInstruction, DOOM_TWIST_SLOT, DOOM_TENSION_SLOT } from './doomCounter.js';
+import {
+    generateTrackerExample,
+    generateTrackerInstructions,
+    generateContextualSummary,
+    formatHistoricalTrackerData,
+    DEFAULT_HTML_PROMPT,
+    DEFAULT_DIALOGUE_COLORING_PROMPT,
+    DEFAULT_NARRATOR_PROMPT,
+    DEFAULT_CONTEXT_INSTRUCTIONS_PROMPT
+} from './promptBuilder.js';
+import { DEFAULT_PLOT_TWIST_TEMPLATE_PROMPT, DEFAULT_KNIFE_TEMPLATE_PROMPT, DEFAULT_NEW_FIELDS_BOOST_PROMPT } from './defaultPrompts.js';
+// Track suppression state for event handler
+let currentSuppressionState = false;
+// Cache of the last GENERATION_STARTED args (type/data/dryRun) so the
+// GENERATION_AFTER_COMMANDS handler can re-evaluate suppression with the same
+// inputs. Needed because GG's `/inject` slash command writes to
+// chat_metadata.script_injects asynchronously — at GENERATION_STARTED time
+// the injects map is still empty, so our first suppression check misses.
+// AFTER_COMMANDS fires once the slash queue drains but before the prompt
+// builds, giving us a second window to clear extension prompts.
+let lastGenerationArgs = null;
+// Type imports
+/** @typedef {import('../../types/inventory.js').InventoryV2} InventoryV2 */
+// Track last chat length we committed at to prevent duplicate commits from streaming
+let lastCommittedChatLength = -1;
+// Store context map for prompt injection (used by event handlers)
+let pendingContextMap = new Map();
+// Flag to track if injection already happened in BEFORE_COMBINE
+let historyInjectionDone = false;
+
+// ─── New-field boost system ───────────────────────────────────────────────────
+// When a widget is newly enabled (not yet in AI output), inject a short high-
+// priority note via IN_PROMPT (system prompt level) for up to BOOST_MAX_GENS
+// generations so the model picks it up immediately.  Resets each page load.
+const BOOST_MAX_GENS = 2;
+// Map of fieldName → remaining boost generations
+const _fieldBoostCounters = {};
+
+/**
+ * Returns the list of enabled infoBox widget names whose values are absent from
+ * the last committed infoBox JSON. These are "new" fields the AI hasn't seen yet.
+ */
+function detectNewFields() {
+    const widgets = extensionSettings.trackerConfig?.infoBox?.widgets || {};
+    const enabledOptional = ['moonPhase', 'tension', 'timeSinceRest', 'conditions', 'terrain'];
+    const newFields = [];
+
+    let committed = null;
+    try {
+        committed = committedTrackerData.infoBox
+            ? (typeof committedTrackerData.infoBox === 'string'
+                ? JSON.parse(committedTrackerData.infoBox)
+                : committedTrackerData.infoBox)
+            : null;
+    } catch { committed = null; }
+
+    for (const field of enabledOptional) {
+        if (!widgets[field]?.enabled) continue;
+        // If the committed data has no value for this field, it's new
+        const inCommitted = committed && committed[field] !== undefined && committed[field] !== null && committed[field] !== '';
+        if (!inCommitted) {
+            newFields.push(field);
+        }
+    }
+    return newFields;
+}
+
+/** Human-readable label + hint for each optional field used in boost prompt */
+const FIELD_BOOST_HINTS = {
+    moonPhase:     'moonPhase (e.g. "Full Moon", "Waxing Crescent")',
+    tension:       'tension (e.g. "Calm", "Tense", "Intimate")',
+    timeSinceRest: 'timeSinceRest (e.g. "6 hours", "2 days")',
+    conditions:    'conditions (e.g. "Poisoned", "None")',
+    terrain:       'terrain (e.g. "Dense Forest", "City Streets")',
+};
+
+/**
+ * Builds and injects (or clears) the new-field boost prompt.
+ * Called each generation from onGenerationStarted().
+ */
+function injectNewFieldBoost(shouldSuppress) {
+    const SLOT = 'dooms-tracker-new-fields';
+
+    if (shouldSuppress || extensionSettings.generationMode !== 'together') {
+        setExtensionPrompt(SLOT, '', extension_prompt_types.IN_PROMPT, 0, false);
+        return;
+    }
+
+    // Find fields that need boosting
+    const newFields = detectNewFields();
+
+    // Initialise or decrement counters
+    for (const field of newFields) {
+        if (_fieldBoostCounters[field] === undefined) {
+            _fieldBoostCounters[field] = BOOST_MAX_GENS;
+        }
+    }
+    // Determine which fields still have remaining boosts
+    const boostedFields = newFields.filter(f => (_fieldBoostCounters[f] || 0) > 0);
+
+    if (boostedFields.length === 0) {
+        setExtensionPrompt(SLOT, '', extension_prompt_types.IN_PROMPT, 0, false);
+        return;
+    }
+
+    // Build a short, high-priority note
+    const fieldList = boostedFields.map(f => FIELD_BOOST_HINTS[f]).join(', ');
+    const boostTemplate = extensionSettings.customNewFieldsBoostPrompt || DEFAULT_NEW_FIELDS_BOOST_PROMPT;
+    const boostPrompt = `\n${boostTemplate.replace('{fieldList}', fieldList)}\n`;
+
+    setExtensionPrompt(SLOT, boostPrompt, extension_prompt_types.IN_PROMPT, 0, false);
+
+    // Decrement counters
+    for (const field of boostedFields) {
+        _fieldBoostCounters[field] = (_fieldBoostCounters[field] || 1) - 1;
+    }
+}
+
+/**
+ * Called after a successful generation to reset boost counters for any field
+ * that now appears in the AI's output (it worked — stop boosting).
+ */
+export function clearBoostForAppearedFields() {
+    let committed = null;
+    try {
+        committed = lastGeneratedData.infoBox
+            ? (typeof lastGeneratedData.infoBox === 'string'
+                ? JSON.parse(lastGeneratedData.infoBox)
+                : lastGeneratedData.infoBox)
+            : null;
+    } catch { committed = null; }
+    if (!committed) return;
+
+    for (const field of Object.keys(_fieldBoostCounters)) {
+        if (committed[field] !== undefined && committed[field] !== null && committed[field] !== '') {
+            delete _fieldBoostCounters[field]; // Field appeared — stop boosting
+        }
+    }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Builds a map of historical context data from ST chat messages with dooms_tracker_swipes data.
+ * Returns a map keyed by message index with formatted context strings.
+ * The index stored depends on the injection position setting.
+ *
+ * @returns {Map<number, string>} Map of target message index to formatted context string
+ */
+/**
+ * Builds a string of per-character color assignments to append to the dialogue coloring prompt.
+ * Returns an empty string if no colors are configured.
+ */
+function buildColorAssignments() {
+    const colors = getActiveCharacterColors();
+    if (!colors || typeof colors !== 'object') return '';
+    const entries = Object.entries(colors).filter(([, color]) => color);
+    if (entries.length === 0) return '';
+    const assignments = entries.map(([name, color]) => `${name} = ${color}`).join(', ');
+    return ` Use these exact colors for the following characters: ${assignments}. These colors are RESERVED — never assign any of them to a different character. Any character not in this list must be given a brand-new, distinct hex color that does not match a reserved color or another character's color; with millions of colors available there is never a reason to reuse one.`;
+}
+
+function buildHistoricalContextMap() {
+    const historyPersistence = extensionSettings.historyPersistence;
+    if (!historyPersistence || !historyPersistence.enabled) {
+        return new Map();
+    }
+    const context = getContext();
+    const chat = context.chat;
+    if (!chat || chat.length < 2) {
+        return new Map();
+    }
+    const trackerConfig = extensionSettings.trackerConfig;
+    const userName = context.name1;
+    const position = historyPersistence.injectionPosition || 'assistant_message_end';
+    const contextMap = new Map();
+    // Determine how many messages to include (0 = all available)
+    const messageCount = historyPersistence.messageCount || 0;
+    const maxMessages = messageCount === 0 ? chat.length : Math.min(messageCount, chat.length);
+    // Find the last assistant message - this is the one that gets current context via setExtensionPrompt
+    // We should NOT add historical context to it when injecting into assistant messages
+    // But when injecting into user messages, we DO need to process it to get context for the preceding user message
+    let lastAssistantIndex = -1;
+    for (let i = chat.length - 1; i >= 0; i--) {
+        if (!chat[i].is_user && !chat[i].is_system) {
+            lastAssistantIndex = i;
+            break;
+        }
+    }
+    // Iterate through messages to find those with tracker data
+    // For user_message_end: start from the last assistant message (we need its context for the preceding user message)
+    // For assistant_message_end: start from before the last assistant message (it gets current context via setExtensionPrompt)
+    let processedCount = 0;
+    const startIndex = position === 'user_message_end'
+        ? lastAssistantIndex
+        : (lastAssistantIndex > 0 ? lastAssistantIndex - 1 : chat.length - 2);
+    for (let i = startIndex; i >= 0 && (messageCount === 0 || processedCount < maxMessages); i--) {
+        const message = chat[i];
+        // Skip system messages
+        if (message.is_system) {
+            continue;
+        }
+        // Only assistant messages have dooms_tracker_swipes data
+        if (message.is_user) {
+            continue;
+        }
+        // Get the dooms_tracker_swipes data for current swipe
+        // Data can be in two places:
+        // 1. message.extra.dooms_tracker_swipes (current session, before save)
+        // 2. message.swipe_info[swipeId].extra.dooms_tracker_swipes (loaded from file)
+        const currentSwipeId = message.swipe_id || 0;
+        let swipeData = message.extra?.dooms_tracker_swipes;
+        // If not in message.extra, check swipe_info
+        if (!swipeData && message.swipe_info && message.swipe_info[currentSwipeId]) {
+            swipeData = message.swipe_info[currentSwipeId].extra?.dooms_tracker_swipes;
+        }
+        if (!swipeData) {
+            continue;
+        }
+        const trackerData = swipeData[currentSwipeId];
+        if (!trackerData) {
+            continue;
+        }
+        // Format the historical tracker data using the shared function
+        const formattedContext = formatHistoricalTrackerData(trackerData, trackerConfig, userName);
+        if (!formattedContext) {
+            continue;
+        }
+        // Build the context wrapper
+        const preamble = historyPersistence.contextPreamble || 'Context for that moment:';
+        const wrappedContext = `\n${preamble}\n${formattedContext}`;
+        // Determine which message index to store based on injection position
+        let targetIndex = i; // Default: the assistant message itself
+        if (position === 'user_message_end') {
+            // Find the preceding user message before this assistant message
+            // This is the user message that prompted this assistant response
+            for (let j = i - 1; j >= 0; j--) {
+                if (chat[j].is_user && !chat[j].is_system) {
+                    targetIndex = j;
+                    break;
+                }
+            }
+            // If no user message found before, skip this one
+            if (targetIndex === i) {
+                continue;
+            }
+        }
+        // For assistant_message_end, extra_user_message, extra_assistant_message:
+        // We inject into the assistant message itself (for now - extra messages handled differently)
+        // Store the context keyed by target index
+        // If multiple assistant messages map to the same user message, append
+        if (contextMap.has(targetIndex)) {
+            contextMap.set(targetIndex, contextMap.get(targetIndex) + wrappedContext);
+        } else {
+            contextMap.set(targetIndex, wrappedContext);
+        }
+        processedCount++;
+    }
+    return contextMap;
+}
+/**
+ * Prepares historical context for injection into prompts.
+ * This builds the context map and stores it for use by prompt event handlers.
+ * Does NOT modify the original chat messages.
+ */
+function prepareHistoricalContextInjection() {
+    const historyPersistence = extensionSettings.historyPersistence;
+    if (!historyPersistence || !historyPersistence.enabled) {
+        pendingContextMap = new Map();
+        return;
+    }
+    if (currentSuppressionState || !extensionSettings.enabled) {
+        pendingContextMap = new Map();
+        return;
+    }
+    const context = getContext();
+    const chat = context.chat;
+    if (!chat || chat.length < 2) {
+        pendingContextMap = new Map();
+        historyInjectionDone = false;
+        return;
+    }
+    // Build and store the context map for use by prompt handlers
+    pendingContextMap = buildHistoricalContextMap();
+    historyInjectionDone = false; // Reset flag for new generation
+}
+/**
+ * Finds the best match position for message content in the prompt.
+ * Tries full content first, then progressively smaller suffixes.
+ *
+ * @param {string} prompt - The prompt to search in
+ * @param {string} messageContent - The message content to find
+ * @returns {{start: number, end: number}|null} - Position info or null if not found
+ */
+function findMessageInPrompt(prompt, messageContent) {
+    if (!messageContent || !prompt) {
+        return null;
+    }
+    // Try to find the full content first
+    let searchIndex = prompt.lastIndexOf(messageContent);
+    if (searchIndex !== -1) {
+        return { start: searchIndex, end: searchIndex + messageContent.length };
+    }
+    // If full content not found, try last N characters with progressively smaller chunks
+    // This handles cases where messages are truncated in the prompt
+    const searchLengths = [500, 300, 200, 100, 50];
+    for (const len of searchLengths) {
+        if (messageContent.length <= len) {
+            continue;
+        }
+        const searchContent = messageContent.slice(-len);
+        searchIndex = prompt.lastIndexOf(searchContent);
+        if (searchIndex !== -1) {
+            return { start: searchIndex, end: searchIndex + searchContent.length };
+        }
+    }
+    return null;
+}
+/**
+ * Injects historical context into a text completion prompt string.
+ * Searches for message content in the prompt and appends context after matches.
+ *
+ * @param {string} prompt - The text completion prompt
+ * @returns {string} - The modified prompt with injected context
+ */
+function injectContextIntoTextPrompt(prompt) {
+    if (pendingContextMap.size === 0) {
+        return prompt;
+    }
+    const context = getContext();
+    const chat = context.chat;
+    let modifiedPrompt = prompt;
+    let injectedCount = 0;
+    // Sort by message index descending so we inject from end to start
+    // This prevents position shifts from affecting earlier injections
+    const sortedEntries = Array.from(pendingContextMap.entries()).sort((a, b) => b[0] - a[0]);
+    // Process each message that needs context injection
+    for (const [msgIdx, ctxContent] of sortedEntries) {
+        const message = chat[msgIdx];
+        if (!message || typeof message.mes !== 'string') {
+            continue;
+        }
+        // Find the message content in the prompt
+        const position = findMessageInPrompt(modifiedPrompt, message.mes);
+        if (!position) {
+            // Message not found in prompt (might be truncated or not included)
+            console.debug(`[Dooms Tracker] Could not find message ${msgIdx} in prompt for context injection`);
+            recordEventMutation('GENERATE_AFTER_COMBINE_PROMPTS', msgIdx, 'fallback injection skipped (message not found in assembled prompt)', message.mes || '', '');
+            continue;
+        }
+        // Insert the context after the message content
+        const before = modifiedPrompt.slice(Math.max(0, position.start - 60), position.end);
+        modifiedPrompt = modifiedPrompt.slice(0, position.end) + ctxContent + modifiedPrompt.slice(position.end);
+        const after = modifiedPrompt.slice(Math.max(0, position.start - 60), position.end + ctxContent.length);
+        recordEventMutation('GENERATE_AFTER_COMBINE_PROMPTS', msgIdx, 'appended historical tracker context (string fallback)', before, after);
+        injectedCount++;
+    }
+    if (injectedCount > 0) {
+        console.log(`[Dooms Tracker] Injected historical context into ${injectedCount} positions in text prompt`);
+    }
+    return modifiedPrompt;
+}
+/**
+ * Injects historical context into a chat completion message array.
+ * Modifies the content of messages in the array directly.
+ *
+ * @param {Array} chatMessages - The chat completion message array
+ * @returns {Array} - The modified message array with injected context
+ */
+function injectContextIntoChatPrompt(chatMessages) {
+    if (pendingContextMap.size === 0 || !Array.isArray(chatMessages)) {
+        return chatMessages;
+    }
+    const context = getContext();
+    const chat = context.chat;
+    let injectedCount = 0;
+    // Process each message that needs context injection
+    for (const [msgIdx, ctxContent] of pendingContextMap) {
+        const originalMessage = chat[msgIdx];
+        if (!originalMessage || typeof originalMessage.mes !== 'string') {
+            continue;
+        }
+        const messageContent = originalMessage.mes;
+        // Find this message in the chat completion array by matching content
+        // Try full content first, then progressively smaller suffixes
+        let found = false;
+        for (const promptMsg of chatMessages) {
+            if (!promptMsg.content || typeof promptMsg.content !== 'string') {
+                continue;
+            }
+            // Try full content match
+            if (promptMsg.content.includes(messageContent)) {
+                const before = promptMsg.content;
+                promptMsg.content = promptMsg.content + ctxContent;
+                recordEventMutation('CHAT_COMPLETION_PROMPT_READY', msgIdx, 'appended historical tracker context to message body', before, promptMsg.content);
+                injectedCount++;
+                found = true;
+                break;
+            }
+            // Try suffix matches for truncated messages
+            const searchLengths = [500, 300, 200, 100, 50];
+            for (const len of searchLengths) {
+                if (messageContent.length <= len) {
+                    continue;
+                }
+                const searchContent = messageContent.slice(-len);
+                if (promptMsg.content.includes(searchContent)) {
+                    const before = promptMsg.content;
+                    promptMsg.content = promptMsg.content + ctxContent;
+                    recordEventMutation('CHAT_COMPLETION_PROMPT_READY', msgIdx, `appended historical tracker context (matched on last ${len} chars of message)`, before, promptMsg.content);
+                    injectedCount++;
+                    found = true;
+                    break;
+                }
+            }
+            if (found) {
+                break;
+            }
+        }
+        if (!found) {
+            console.debug(`[Dooms Tracker] Could not find message ${msgIdx} in chat prompt for context injection`);
+        }
+    }
+    if (injectedCount > 0) {
+        console.log(`[Dooms Tracker] Injected historical context into ${injectedCount} messages in chat prompt`);
+    }
+    return chatMessages;
+}
+/**
+ * Injects historical context into finalMesSend message array (text completion).
+ * Iterates through chat and finalMesSend in order, matching by content to skip injected messages.
+ *
+ * @param {Array} finalMesSend - The array of message objects {message: string, extensionPrompts: []}
+ * @returns {number} - Number of injections made
+ */
+function injectContextIntoFinalMesSend(finalMesSend) {
+    if (pendingContextMap.size === 0 || !Array.isArray(finalMesSend) || finalMesSend.length === 0) {
+        return 0;
+    }
+    const context = getContext();
+    const chat = context.chat;
+    if (!chat || chat.length === 0) {
+        return 0;
+    }
+    let injectedCount = 0;
+    // Build a map from chat index to finalMesSend index by matching content in order
+    // This handles injected messages (author's note, OOC, etc.) that exist in finalMesSend but not in chat
+    const chatToMesSendMap = new Map();
+    let mesSendIdx = 0;
+    for (let chatIdx = 0; chatIdx < chat.length && mesSendIdx < finalMesSend.length; chatIdx++) {
+        const chatMsg = chat[chatIdx];
+        if (!chatMsg || chatMsg.is_system) {
+            continue;
+        }
+        const chatContent = chatMsg.mes || '';
+        // Look for this chat message in finalMesSend starting from current position
+        // Skip any finalMesSend entries that don't match (they're injected content)
+        while (mesSendIdx < finalMesSend.length) {
+            const mesSendObj = finalMesSend[mesSendIdx];
+            if (!mesSendObj || !mesSendObj.message) {
+                mesSendIdx++;
+                continue;
+            }
+            // Check if this finalMesSend message contains the chat content
+            // Use a substring match since instruct formatting adds prefixes/suffixes
+            // Match with sufficient content (first 50 chars or full message if shorter)
+            const matchContent = chatContent.length > 50
+                ? chatContent.substring(0, 50)
+                : chatContent;
+            if (matchContent && mesSendObj.message.includes(matchContent)) {
+                // Found a match - record the mapping
+                chatToMesSendMap.set(chatIdx, mesSendIdx);
+                mesSendIdx++;
+                break;
+            }
+            // This finalMesSend entry doesn't match - it's injected content, skip it
+            mesSendIdx++;
+        }
+    }
+    // Now inject context using the map
+    for (const [chatIdx, ctxContent] of pendingContextMap) {
+        const targetMesSendIdx = chatToMesSendMap.get(chatIdx);
+        if (targetMesSendIdx === undefined) {
+            console.debug(`[Dooms Tracker] Chat message ${chatIdx} not found in finalMesSend mapping`);
+            continue;
+        }
+        const mesSendObj = finalMesSend[targetMesSendIdx];
+        if (!mesSendObj || !mesSendObj.message) {
+            continue;
+        }
+        // Append context to this message
+        const before = mesSendObj.message;
+        mesSendObj.message = mesSendObj.message + ctxContent;
+        recordEventMutation('GENERATE_BEFORE_COMBINE_PROMPTS', chatIdx, `appended historical tracker context to finalMesSend[${targetMesSendIdx}]`, before, mesSendObj.message);
+        injectedCount++;
+        console.debug(`[Dooms Tracker] Injected context for chat[${chatIdx}] into finalMesSend[${targetMesSendIdx}]`);
+    }
+    return injectedCount;
+}
+/**
+ * Event handler for GENERATE_BEFORE_COMBINE_PROMPTS (text completion).
+ * Injects historical context into the finalMesSend array before prompt combination.
+ * This is more reliable than post-combine string searching.
+ *
+ * @param {Object} eventData - Event data with finalMesSend and other properties
+ */
+function onGenerateBeforeCombinePrompts(eventData) {
+    if (!eventData || !Array.isArray(eventData.finalMesSend)) {
+        return;
+    }
+    // Defense in depth: if the user has DES disabled, never inject —
+    // even if pendingContextMap somehow has stale data from before the
+    // toggle. onGenerationStarted's disabled branch is supposed to clear
+    // the map, but a regression there must not silently leak content.
+    if (!extensionSettings.enabled) {
+        return;
+    }
+    // Skip when the tracker itself is generating (separate/external mode) —
+    // generateSeparateUpdatePrompt() builds its own context; injecting here
+    // would double-inject and corrupt the tracker prompt.
+    if (isGenerating) {
+        return;
+    }
+    // Skip for OpenAI (uses chat completion)
+    if (eventData.api === 'openai') {
+        return;
+    }
+    // Only inject if we have pending context
+    if (pendingContextMap.size === 0) {
+        return;
+    }
+    const injectedCount = injectContextIntoFinalMesSend(eventData.finalMesSend);
+    if (injectedCount > 0) {
+        console.log(`[Dooms Tracker] Injected historical context into ${injectedCount} messages in finalMesSend`);
+        historyInjectionDone = true; // Mark as done to prevent double injection
+    }
+}
+/**
+ * Event handler for GENERATE_AFTER_COMBINE_PROMPTS (text completion).
+ * This is now a backup/fallback - primary injection happens in BEFORE_COMBINE.
+ * Also fixes newline spacing after </context> tag.
+ *
+ * @param {Object} eventData - Event data with prompt property
+ */
+function onGenerateAfterCombinePrompts(eventData) {
+    if (!eventData || typeof eventData.prompt !== 'string') {
+        return;
+    }
+    // Defense in depth — see onGenerateBeforeCombinePrompts.
+    if (!extensionSettings.enabled) {
+        return;
+    }
+    if (eventData.dryRun) {
+        return;
+    }
+    // Skip when the tracker itself is generating (separate/external mode)
+    if (isGenerating) {
+        return;
+    }
+    let didInjectHistory = false;
+    // Inject historical context if available and not already done
+    if (!historyInjectionDone && pendingContextMap.size > 0) {
+        // Fallback injection for edge cases where BEFORE_COMBINE didn't work
+        console.log('[Dooms Tracker] Using fallback string-based injection (AFTER_COMBINE)');
+        eventData.prompt = injectContextIntoTextPrompt(eventData.prompt);
+        didInjectHistory = true;
+    }
+    // Always fix newlines around context tags (whether we just injected or not)
+    if (eventData.prompt.includes('<context>') || eventData.prompt.includes('</context>')) {
+        const before = eventData.prompt;
+        eventData.prompt = eventData.prompt.replace(/<context>/g, '\n<context>');
+        eventData.prompt = eventData.prompt.replace(/<\/context>/g, '</context>\n');
+        if (before !== eventData.prompt) {
+            recordEventMutation('GENERATE_AFTER_COMBINE_PROMPTS', null, '<context>/</context> newline fixup on assembled prompt', before, eventData.prompt);
+        }
+    }
+}
+/**
+ * Event handler for CHAT_COMPLETION_PROMPT_READY.
+ * Injects historical context into the chat message array.
+ * Also fixes newline spacing around <context> tags.
+ *
+ * @param {Object} eventData - Event data with chat property
+ */
+function onChatCompletionPromptReady(eventData) {
+    if (!eventData || !Array.isArray(eventData.chat)) {
+        return;
+    }
+    // Defense in depth — see onGenerateBeforeCombinePrompts. This is the
+    // listener that actually leaked yu's `[Characters are currently
+    // thinking: …]` system messages: every chat-completion call shipped
+    // the stale pendingContextMap until ST was reloaded.
+    if (!extensionSettings.enabled) {
+        return;
+    }
+    if (eventData.dryRun) {
+        return;
+    }
+    // Skip when the tracker itself is generating (separate/external mode) —
+    // the tracker prompt built by generateSeparateUpdatePrompt() already
+    // includes its own historical context.  Injecting here would corrupt it.
+    if (isGenerating) {
+        return;
+    }
+    // Inject historical context if we have pending context
+    if (pendingContextMap.size > 0) {
+        eventData.chat = injectContextIntoChatPrompt(eventData.chat);
+        // DON'T clear pendingContextMap here - let it persist for other generations
+        // (e.g., prewarm extensions). It will be cleared on GENERATION_ENDED.
+    }
+    // Fix newlines around context tags for all messages
+    for (let i = 0; i < eventData.chat.length; i++) {
+        const message = eventData.chat[i];
+        if (message.content && typeof message.content === 'string'
+            && (message.content.includes('<context>') || message.content.includes('</context>'))) {
+            const before = message.content;
+            message.content = message.content.replace(/<context>/g, '\n<context>');
+            message.content = message.content.replace(/<\/context>/g, '</context>\n');
+            if (before !== message.content) {
+                recordEventMutation('CHAT_COMPLETION_PROMPT_READY', i, `<context>/</context> newline fixup on chat[${i}] (role=${message.role || 'unknown'})`, before, message.content);
+            }
+        }
+    }
+}
+/**
+ * Event handler for generation start.
+ * Manages tracker data commitment and prompt injection based on generation mode.
+ *
+ * @param {string} type - Event type
+ * @param {Object} data - Event data
+ * @param {boolean} dryRun - If true, this is a dry run (page reload, prompt preview, etc.) - skip all logic
+ */
+export async function onGenerationStarted(type, data, dryRun) {
+    // Skip dry runs (page reload, prompt manager preview, etc.)
+    if (dryRun) {
+        return;
+    }
+    // Cache args for the AFTER_COMMANDS late-suppression check below.
+    // Cleared on GENERATION_ENDED/STOPPED via the same listener wiring.
+    lastGenerationArgs = { type, data, dryRun };
+    // Skip tracker injection for image generation requests
+    if (data?.quietImage || data?.quiet_image || data?.isImageGeneration) {
+        return;
+    }
+    // Character Stats: a swipe or regenerate replaces the last reply, so roll
+    // back the stat changes it made before the prompt reads them. (A new
+    // swipe also does this in onMessageSwiped; the undo record is consumed
+    // once, so running both is harmless.)
+    if (type === 'swipe' || type === 'regenerate') {
+        try {
+            const ctxChat = getContext().chat;
+            const last = Array.isArray(ctxChat) ? ctxChat.length - 1 : undefined;
+            revertAIStatsForReplacedMessage(last);
+            revertAIMemoriesForReplacedMessage(last);
+            revertAIEquipmentForReplacedMessage(last);
+            revertAIConditionsForReplacedMessage(last);
+            revertAIAbilitiesForReplacedMessage(last);
+            revertAIProgressForReplacedMessage(last);
+            revertAIMoneyForReplacedMessage(last);
+            revertAIAffinityForReplacedMessage(last);
+            revertAIChecksForReplacedMessage(last);
+        } catch (e) { /* best-effort */ }
+    }
+    if (!extensionSettings.enabled) {
+        // Extension is disabled - clear any existing prompts to ensure nothing is injected
+        setExtensionPrompt('dooms-tracker-inject', '', extension_prompt_types.IN_CHAT, 0, false);
+        setExtensionPrompt('dooms-tracker-example', '', extension_prompt_types.IN_CHAT, 0, false);
+        setExtensionPrompt('dooms-tracker-html', '', extension_prompt_types.IN_CHAT, 0, false);
+        setExtensionPrompt('dooms-tracker-dialogue-coloring', '', extension_prompt_types.IN_CHAT, 0, false);
+        setExtensionPrompt('dooms-tracker-context', '', extension_prompt_types.IN_CHAT, 1, false);
+        setExtensionPrompt('dooms-tracker-new-fields', '', extension_prompt_types.IN_PROMPT, 0, false);
+        // Also drop any historical-context payload queued from a prior
+        // generation while the extension was enabled. Without this, the
+        // persistent listeners (CHAT_COMPLETION_PROMPT_READY etc.) keep
+        // injecting the stale tracker JSON into every outgoing prompt
+        // even after the user toggles the extension off.
+        pendingContextMap = new Map();
+        historyInjectionDone = false;
+        return;
+    }
+    const context = getContext();
+    const chat = context.chat;
+    // Detect if a guided generation is active (GuidedGenerations and similar extensions
+    // inject an ephemeral 'instruct' injection into chatMetadata.script_injects).
+    // If present, we should avoid injecting RPG tracker instructions that ask
+    // the model to include stats/etc. This prevents conflicts when guided prompts
+    // are used (e.g., GuidedGenerations Extension).
+    // Evaluate suppression using the shared helper. `type` is forwarded so
+    // ST's native Impersonate button (type === 'impersonate') is detected
+    // even when the prompt language doesn't match the GG-flavored regex
+    // patterns inside evaluateSuppression.
+    const suppression = evaluateSuppression(extensionSettings, context, data, type);
+    const { shouldSuppress, skipMode, isGuidedGeneration, isImpersonationGeneration, hasQuietPrompt } = suppression;
+    if (shouldSuppress) {
+        // Debugging: indicate active suppression and which source triggered it
+        console.debug(`[Dooms Tracker] Suppression active (mode=${skipMode}). isGuided=${isGuidedGeneration}, isImpersonation=${isImpersonationGeneration}, hasQuietPrompt=${hasQuietPrompt} - skipping RPG tracker injections for this generation.`);
+        // Also clear any existing Dooms Tracker prompts so they do not leak into this generation
+        // (e.g., previously set extension prompts should not be used alongside a guided prompt)
+        setExtensionPrompt('dooms-tracker-inject', '', extension_prompt_types.IN_CHAT, 0, false);
+        setExtensionPrompt('dooms-tracker-example', '', extension_prompt_types.IN_CHAT, 0, false);
+        setExtensionPrompt('dooms-tracker-html', '', extension_prompt_types.IN_CHAT, 0, false);
+        setExtensionPrompt('dooms-tracker-context', '', extension_prompt_types.IN_CHAT, 1, false);
+    }
+
+    // Inject new-field boost prompt (IN_PROMPT = system level, highest priority).
+    // Fires each generation; self-clears once fields appear in AI output.
+    injectNewFieldBoost(shouldSuppress);
+
+    // ─── Doom Counter injections ──────────────────────────────────────────────
+    // 1. Inject pending twist (chosen by user) into the prompt at IN_PROMPT level.
+    //    IMPORTANT: The twist injection intentionally bypasses shouldSuppress.
+    //    The user explicitly chose a twist via the modal — suppressing it would
+    //    silently discard their choice. Tracker instructions are suppressed during
+    //    guided generations, but the twist is a one-shot user action, not a tracker.
+    if (extensionSettings.doomCounter?.enabled) {
+        const pendingTwist = getPendingTwist();
+        const twistDepth = extensionSettings.doomCounter?.twistInjectionDepth || 0;
+        if (pendingTwist) {
+            // Knives (player-authored story beats) get their own wrapper template.
+            // Read the flag BEFORE clearPendingTwist(), which resets it.
+            let twistPrompt;
+            if (isPendingTwistAKnife()) {
+                const knifeTemplate = extensionSettings.customKnifeTemplatePrompt || DEFAULT_KNIFE_TEMPLATE_PROMPT;
+                const knifeCharacter = getPendingKnifeCharacter() || 'a character in the scene';
+                twistPrompt = `\n${knifeTemplate.replace('{knife}', pendingTwist).replace('{character}', knifeCharacter)}\n`;
+            } else {
+                const twistTemplate = extensionSettings.customPlotTwistTemplatePrompt || DEFAULT_PLOT_TWIST_TEMPLATE_PROMPT;
+                twistPrompt = `\n${twistTemplate.replace('{twist}', pendingTwist)}\n`;
+            }
+            setExtensionPrompt(DOOM_TWIST_SLOT, twistPrompt, extension_prompt_types.IN_CHAT, twistDepth, false);
+            // Clear the pending twist after injecting — it's a one-shot
+            clearPendingTwist();
+            console.log(`[Doom Counter] Twist injected into prompt at depth ${twistDepth}.`);
+        } else {
+            setExtensionPrompt(DOOM_TWIST_SLOT, '', extension_prompt_types.IN_CHAT, twistDepth, false);
+        }
+    } else {
+        // Clear twist slot if disabled
+        setExtensionPrompt(DOOM_TWIST_SLOT, '', extension_prompt_types.IN_CHAT, 0, false);
+    }
+    // ──────────────────────────────────────────────────────────────────────────
+
+    const currentChatLength = chat ? chat.length : 0;
+    // For TOGETHER mode: Commit when user sends message (before first generation)
+    if (extensionSettings.generationMode === 'together') {
+        // By the time onGenerationStarted fires, ST has already added the placeholder AI message
+        // So we check the second-to-last message to see if user just sent a message
+        const secondToLastMessage = chat && chat.length > 1 ? chat[chat.length - 2] : null;
+        const isUserMessage = secondToLastMessage && secondToLastMessage.is_user;
+        // Commit if:
+        // 1. Second-to-last message is from USER (user just sent message)
+        // 2. Not a swipe (lastActionWasSwipe = false)
+        // 3. Haven't already committed for this chat length (prevent streaming duplicates)
+        const shouldCommit = isUserMessage && !lastActionWasSwipe && currentChatLength !== lastCommittedChatLength;
+        if (shouldCommit) {
+            //     userStats: committedTrackerData.userStats ? `${committedTrackerData.userStats.substring(0, 50)}...` : 'null',
+            //     infoBox: committedTrackerData.infoBox ? 'exists' : 'null',
+            //     characterThoughts: committedTrackerData.characterThoughts ? `${committedTrackerData.characterThoughts.substring(0, 100)}...` : 'null'
+            // // });
+            //     userStats: lastGeneratedData.userStats ? `${lastGeneratedData.userStats.substring(0, 50)}...` : 'null',
+            //     infoBox: lastGeneratedData.infoBox ? 'exists' : 'null',
+            //     characterThoughts: lastGeneratedData.characterThoughts ? `${lastGeneratedData.characterThoughts.substring(0, 100)}...` : 'null'
+            // });
+            // Commit displayed data (from before user sent message)
+            committedTrackerData.quests = lastGeneratedData.quests;
+            committedTrackerData.infoBox = lastGeneratedData.infoBox;
+            committedTrackerData.characterThoughts = lastGeneratedData.characterThoughts;
+            // Track chat length to prevent duplicate commits
+            lastCommittedChatLength = currentChatLength;
+            //     userStats: committedTrackerData.userStats ? `${committedTrackerData.userStats.substring(0, 50)}...` : 'null',
+            //     infoBox: committedTrackerData.infoBox ? 'exists' : 'null',
+            //     characterThoughts: committedTrackerData.characterThoughts ? `${committedTrackerData.characterThoughts.substring(0, 100)}...` : 'null'
+            // });
+        } else if (lastActionWasSwipe) {
+        } else if (!isUserMessage) {
+        }
+        //     userStats: committedTrackerData.userStats ? `${committedTrackerData.userStats.substring(0, 50)}...` : 'null',
+        //     infoBox: committedTrackerData.infoBox ? 'exists' : 'null',
+        //     characterThoughts: committedTrackerData.characterThoughts ? `${committedTrackerData.characterThoughts.substring(0, 100)}...` : 'null'
+        // });
+    }
+    // For SEPARATE and EXTERNAL modes: Check if we need to commit extension data
+    // BUT: Only do this for the MAIN generation, not the tracker update generation
+    // If isGenerating is true, this is the tracker update generation (second call), so skip flag logic
+    if ((extensionSettings.generationMode === 'separate' || extensionSettings.generationMode === 'external') && !isGenerating) {
+        // Safety net: ensure the awaiting flag is set for the main generation.
+        // MESSAGE_SENT should have set this already, but some generation paths
+        // (slash commands, group chats, Continue) may not fire MESSAGE_SENT.
+        setIsAwaitingNewMessage(true);
+        if (!lastActionWasSwipe) {
+            // User sent a new message - commit lastGeneratedData before generation
+            //      userStats: committedTrackerData.userStats ? 'exists' : 'null',
+            //      infoBox: committedTrackerData.infoBox ? 'exists' : 'null',
+            //      characterThoughts: committedTrackerData.characterThoughts ? 'exists' : 'null'
+            // // });
+            //      userStats: lastGeneratedData.userStats ? 'exists' : 'null',
+            //      infoBox: lastGeneratedData.infoBox ? 'exists' : 'null',
+            //      characterThoughts: lastGeneratedData.characterThoughts ? 'exists' : 'null'
+            // });
+            committedTrackerData.quests = lastGeneratedData.quests;
+            committedTrackerData.infoBox = lastGeneratedData.infoBox;
+            committedTrackerData.characterThoughts = lastGeneratedData.characterThoughts;
+            // Reset flag after committing (ready for next cycle)
+        } else {
+            //      userStats: committedTrackerData.userStats ? 'exists' : 'null',
+            //      infoBox: committedTrackerData.infoBox ? 'exists' : 'null',
+            //      characterThoughts: committedTrackerData.characterThoughts ? 'exists' : 'null'
+            // });
+            // Reset flag after using it (swipe generation complete, ready for next action)
+        }
+    }
+    // Use the committed tracker data as source for generation
+    // Parse quests from committed data to update extensionSettings for prompt generation
+    if (committedTrackerData.quests) {
+        parseQuests(committedTrackerData.quests);
+    }
+    if (extensionSettings.generationMode === 'together') {
+        const exampleRaw = generateTrackerExample();
+        // Wrap example in ```json``` code blocks for consistency with format instructions
+        // Add only 1 newline after the closing ``` (ST adds its own newline when injecting)
+        const example = exampleRaw ? `\`\`\`json\n${exampleRaw}\n\`\`\`\n` : null;
+        // Don't include HTML prompt in instructions - inject it separately to avoid duplication on swipes
+        const instructions = generateTrackerInstructions(false, true);
+        // Clear separate mode context injection - we don't use contextual summary in together mode
+        setExtensionPrompt('dooms-tracker-context', '', extension_prompt_types.IN_CHAT, 1, false);
+        // Find the last assistant message in the chat history
+        let lastAssistantDepth = -1; // -1 means not found
+        if (chat && chat.length > 0) {
+            // Start from depth 1 (skip depth 0 which is usually user's message or prefill)
+            for (let depth = 1; depth < chat.length; depth++) {
+                const index = chat.length - 1 - depth; // Convert depth to index
+                const message = chat[index];
+                // Check for assistant message: not user and not system
+                if (!message.is_user && !message.is_system) {
+                    // Found assistant message at this depth
+                    // Inject at the SAME depth to prepend to this assistant message
+                    lastAssistantDepth = depth;
+                    break;
+                }
+            }
+        }
+        // Helper to resolve role string to extension_prompt_roles enum
+        const resolveRole = (role) => {
+            if (role === 'user') return extension_prompt_roles.USER;
+            if (role === 'assistant') return extension_prompt_roles.ASSISTANT;
+            if (role === 'system') return extension_prompt_roles.SYSTEM;
+            return undefined; // no role override
+        };
+        const pInjection = extensionSettings.promptInjection || {};
+        // If we have previous tracker data and found an assistant message, inject it as an assistant message
+        if (!shouldSuppress && example && lastAssistantDepth > 0) {
+            setExtensionPrompt('dooms-tracker-example', example, extension_prompt_types.IN_CHAT, lastAssistantDepth, false, extension_prompt_roles.ASSISTANT);
+        } else {
+        }
+        // Inject the instructions as a user message at depth 0 (right before generation)
+        // If this is a guided generation (user explicitly injected 'instruct'), skip adding
+        // our tracker instructions to avoid clobbering the guided prompt.
+        const tiSettings = pInjection.trackerInstructions || {};
+        const tiDepth = tiSettings.depth ?? 0;
+        const tiRole = resolveRole(tiSettings.role) ?? extension_prompt_roles.USER;
+        if (!shouldSuppress) {
+            setExtensionPrompt('dooms-tracker-inject', instructions, extension_prompt_types.IN_CHAT, tiDepth, false, tiRole);
+        }
+        // Inject HTML prompt separately if enabled (prevents duplication on swipes)
+        const htmlSettings = pInjection.html || {};
+        const htmlDepth = htmlSettings.depth ?? 0;
+        const htmlRole = resolveRole(htmlSettings.role);
+        if (extensionSettings.enableHtmlPrompt && !shouldSuppress) {
+            // Use custom HTML prompt if set, otherwise use default
+            const htmlPromptText = extensionSettings.customHtmlPrompt || DEFAULT_HTML_PROMPT;
+            const htmlPrompt = `\n- ${htmlPromptText}\n`;
+            setExtensionPrompt('dooms-tracker-html', htmlPrompt, extension_prompt_types.IN_CHAT, htmlDepth, false, htmlRole);
+        } else {
+            // Clear HTML prompt if disabled
+            setExtensionPrompt('dooms-tracker-html', '', extension_prompt_types.IN_CHAT, htmlDepth, false);
+        }
+        // Inject Dialogue Coloring prompt separately if enabled
+        const dcSettings = pInjection.dialogueColoring || {};
+        const dcDepth = dcSettings.depth ?? 0;
+        const dcRole = resolveRole(dcSettings.role);
+        if (extensionSettings.enableDialogueColoring && !shouldSuppress) {
+            // Use custom Dialogue Coloring prompt if set, otherwise use default
+            const dialogueColoringPromptText = extensionSettings.customDialogueColoringPrompt || DEFAULT_DIALOGUE_COLORING_PROMPT;
+            const colorAssignments = buildColorAssignments();
+            const dialogueColoringPrompt = `\n- ${dialogueColoringPromptText}${colorAssignments}\n`;
+            setExtensionPrompt('dooms-tracker-dialogue-coloring', dialogueColoringPrompt, extension_prompt_types.IN_CHAT, dcDepth, false, dcRole);
+        } else {
+            // Clear Dialogue Coloring prompt if disabled
+            setExtensionPrompt('dooms-tracker-dialogue-coloring', '', extension_prompt_types.IN_CHAT, dcDepth, false);
+        }
+        // NOTE: Name Ban prompt injection removed — feature superseded by
+        // Character Aliases (src/systems/features/characterAliases.js).
+    } else if (extensionSettings.generationMode === 'separate' || extensionSettings.generationMode === 'external') {
+        const resolveRole = (role) => {
+            if (role === 'user') return extension_prompt_roles.USER;
+            if (role === 'assistant') return extension_prompt_roles.ASSISTANT;
+            if (role === 'system') return extension_prompt_roles.SYSTEM;
+            return undefined;
+        };
+        const pInjection = extensionSettings.promptInjection || {};
+        // In SEPARATE and EXTERNAL modes, inject the contextual summary for main roleplay generation
+        const contextSummary = generateContextualSummary();
+        const ciSettings = pInjection.contextInstructions || {};
+        const ciDepth = ciSettings.depth ?? 1;
+        const ciRole = resolveRole(ciSettings.role);
+        if (contextSummary) {
+            // Use custom context instructions prompt if set, otherwise use default
+            const contextInstructionsText = extensionSettings.customContextInstructionsPrompt || DEFAULT_CONTEXT_INSTRUCTIONS_PROMPT;
+            const wrappedContext = `
+<context>
+${contextSummary}
+${contextInstructionsText}
+</context>`;
+            // Skip when a guided generation injection is present to avoid conflicting instructions
+            if (!shouldSuppress) {
+                setExtensionPrompt('dooms-tracker-context', wrappedContext, extension_prompt_types.IN_CHAT, ciDepth, false, ciRole);
+            }
+        } else {
+            // Clear if no data yet
+            setExtensionPrompt('dooms-tracker-context', '', extension_prompt_types.IN_CHAT, ciDepth, false);
+        }
+        // Inject HTML prompt separately if enabled (same as together mode pattern)
+        const htmlSettings = pInjection.html || {};
+        const htmlDepth = htmlSettings.depth ?? 0;
+        const htmlRole = resolveRole(htmlSettings.role);
+        if (extensionSettings.enableHtmlPrompt && !shouldSuppress) {
+            // Use custom HTML prompt if set, otherwise use default
+            const htmlPromptText = extensionSettings.customHtmlPrompt || DEFAULT_HTML_PROMPT;
+            const htmlPrompt = `\n- ${htmlPromptText}\n`;
+            setExtensionPrompt('dooms-tracker-html', htmlPrompt, extension_prompt_types.IN_CHAT, htmlDepth, false, htmlRole);
+        } else {
+            // Clear HTML prompt if disabled
+            setExtensionPrompt('dooms-tracker-html', '', extension_prompt_types.IN_CHAT, htmlDepth, false);
+        }
+        // Inject Dialogue Coloring prompt separately if enabled
+        const dcSettings = pInjection.dialogueColoring || {};
+        const dcDepth = dcSettings.depth ?? 0;
+        const dcRole = resolveRole(dcSettings.role);
+        if (extensionSettings.enableDialogueColoring && !shouldSuppress) {
+            // Use custom Dialogue Coloring prompt if set, otherwise use default
+            const dialogueColoringPromptText = extensionSettings.customDialogueColoringPrompt || DEFAULT_DIALOGUE_COLORING_PROMPT;
+            const colorAssignments = buildColorAssignments();
+            const dialogueColoringPrompt = `\n- ${dialogueColoringPromptText}${colorAssignments}\n`;
+            setExtensionPrompt('dooms-tracker-dialogue-coloring', dialogueColoringPrompt, extension_prompt_types.IN_CHAT, dcDepth, false, dcRole);
+        } else {
+            // Clear Dialogue Coloring prompt if disabled
+            setExtensionPrompt('dooms-tracker-dialogue-coloring', '', extension_prompt_types.IN_CHAT, dcDepth, false);
+        }
+        // Clear together mode injections
+        setExtensionPrompt('dooms-tracker-inject', '', extension_prompt_types.IN_CHAT, 0, false);
+        setExtensionPrompt('dooms-tracker-example', '', extension_prompt_types.IN_CHAT, 0, false);
+    } else {
+        // Clear all injections
+        setExtensionPrompt('dooms-tracker-inject', '', extension_prompt_types.IN_CHAT, 0, false);
+        setExtensionPrompt('dooms-tracker-example', '', extension_prompt_types.IN_CHAT, 0, false);
+        setExtensionPrompt('dooms-tracker-context', '', extension_prompt_types.IN_CHAT, 1, false);
+        setExtensionPrompt('dooms-tracker-html', '', extension_prompt_types.IN_CHAT, 0, false);
+        setExtensionPrompt('dooms-tracker-dialogue-coloring', '', extension_prompt_types.IN_CHAT, 0, false);
+    }
+    // Set suppression state for the historical context injection
+    currentSuppressionState = shouldSuppress;
+    // Prepare historical context for injection into prompts
+    // This builds the context map but does NOT modify original chat messages
+    // The persistent event listeners will inject it into all prompts until cleared
+    prepareHistoricalContextInjection();
+}
+/**
+ * Late-suppression handler. Fires after ST has drained the slash-command queue
+ * (so GG's async `/inject id=instruct ephemeral=true` has finally written to
+ * chat_metadata.script_injects), but before the prompt is built. Re-runs
+ * evaluateSuppression and, if suppression should now apply, clears every DES
+ * extension prompt slot plus the historical-context map.
+ *
+ * Without this, the GG → ST swipe race wins: GENERATION_STARTED fires while
+ * script_injects is still empty, DES sees no guided guides, sets all of its
+ * extension prompts, and they survive into the final prompt alongside GG's
+ * injection. End result: tracker JSON stamped onto a guided swipe.
+ */
+function onGenerationAfterCommands() {
+    if (!extensionSettings.enabled) return;
+    if (!lastGenerationArgs) return;
+    const { type, data, dryRun } = lastGenerationArgs;
+    if (dryRun) return;
+
+    const context = getContext();
+    const suppression = evaluateSuppression(extensionSettings, context, data, type);
+    const { shouldSuppress, skipMode, matchedPattern } = suppression;
+
+    if (!shouldSuppress) return;
+    // Already suppressed at GENERATION_STARTED — nothing left to clear.
+    if (currentSuppressionState) return;
+
+    console.debug(`[Dooms Tracker] Late suppression fired at GENERATION_AFTER_COMMANDS (mode=${skipMode}, matched=${matchedPattern || '(none)'}) — clearing tracker prompts after slash queue drained.`);
+    setExtensionPrompt('dooms-tracker-inject', '', extension_prompt_types.IN_CHAT, 0, false);
+    setExtensionPrompt('dooms-tracker-example', '', extension_prompt_types.IN_CHAT, 0, false);
+    setExtensionPrompt('dooms-tracker-html', '', extension_prompt_types.IN_CHAT, 0, false);
+    setExtensionPrompt('dooms-tracker-dialogue-coloring', '', extension_prompt_types.IN_CHAT, 0, false);
+    setExtensionPrompt('dooms-tracker-context', '', extension_prompt_types.IN_CHAT, 1, false);
+    setExtensionPrompt('dooms-tracker-new-fields', '', extension_prompt_types.IN_PROMPT, 0, false);
+    // Drop queued historical-context payload so the persistent prompt-ready
+    // listeners (CHAT_COMPLETION_PROMPT_READY etc.) don't smuggle tracker
+    // JSON in via context injection on this generation.
+    pendingContextMap = new Map();
+    historyInjectionDone = false;
+    currentSuppressionState = true;
+}
+
+/**
+ * Drop the cached args once the generation is finished so a stale type/data
+ * pair from a prior run can't leak into the next AFTER_COMMANDS check.
+ */
+function onGenerationFinishedForSuppression() {
+    lastGenerationArgs = null;
+}
+
+/**
+ * Initialize the history injection event listeners.
+ * These are persistent listeners that inject context into ALL generations
+ * while pendingContextMap has data. Should be called once at extension init.
+ */
+export function initHistoryInjectionListeners() {
+    // Register persistent listeners for prompt injection
+    // These check pendingContextMap and only inject if there's data
+    // Primary: BEFORE_COMBINE for text completion (more reliable - modifies message objects)
+    eventSource.on(event_types.GENERATE_BEFORE_COMBINE_PROMPTS, onGenerateBeforeCombinePrompts);
+    // Fallback: AFTER_COMBINE for text completion (string-based injection)
+    eventSource.on(event_types.GENERATE_AFTER_COMBINE_PROMPTS, onGenerateAfterCombinePrompts);
+    // Chat completion (OpenAI, etc.)
+    eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, onChatCompletionPromptReady);
+    // Late-suppression: re-check after slash-command queue drains (catches
+    // GG's async /inject that misses the GENERATION_STARTED check).
+    if (event_types.GENERATION_AFTER_COMMANDS) {
+        eventSource.on(event_types.GENERATION_AFTER_COMMANDS, onGenerationAfterCommands);
+    } else {
+        console.warn('[Dooms Tracker] event_types.GENERATION_AFTER_COMMANDS is undefined on this ST build — late suppression unavailable.');
+    }
+    eventSource.on(event_types.GENERATION_ENDED, onGenerationFinishedForSuppression);
+    eventSource.on(event_types.GENERATION_STOPPED, onGenerationFinishedForSuppression);
+    console.log('[Dooms Tracker] History injection listeners initialized');
+}

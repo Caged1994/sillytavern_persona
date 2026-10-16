@@ -1,0 +1,3454 @@
+import { getContext, renderExtensionTemplateAsync, extension_settings as st_extension_settings } from '../../../extensions.js';
+import { eventSource, event_types, substituteParams, chat, saveSettingsDebounced, chat_metadata, saveChatDebounced, user_avatar, getThumbnailUrl, characters, this_chid, extension_prompt_types, extension_prompt_roles, setExtensionPrompt, reloadCurrentChat, Generate, getRequestHeaders, messageFormatting } from '../../../../script.js';
+import { selected_group, getGroupMembers } from '../../../group-chats.js';
+import { power_user } from '../../../power-user.js';
+import { callGenericPopup, POPUP_TYPE, POPUP_RESULT } from '../../../popup.js';
+// Core modules
+import { extensionName, extensionFolderPath, getExtensionVersion } from './src/core/config.js';
+import { i18n } from './src/core/i18n.js';
+import { migrateToV3JSON } from './src/utils/jsonMigration.js';
+import {
+    extensionSettings,
+    lastGeneratedData,
+    committedTrackerData,
+    lastActionWasSwipe,
+    isGenerating,
+    FALLBACK_AVATAR_DATA_URI,
+    $infoBoxContainer,
+    $thoughtsContainer,
+    $questsContainer,
+    setExtensionSettings,
+    updateExtensionSettings,
+    setLastGeneratedData,
+    updateLastGeneratedData,
+    setCommittedTrackerData,
+    updateCommittedTrackerData,
+    setLastActionWasSwipe,
+    setIsGenerating,
+    setInfoBoxContainer,
+    setThoughtsContainer,
+    setQuestsContainer,
+    clearSessionAvatarPrompts,
+    applyNewPlayerProfile
+} from './src/core/state.js';
+import { loadSettings, saveSettings, saveChatData, loadChatData, updateMessageSwipeData, setDoomKnivesEnabled } from './src/core/persistence.js';
+import { registerAllEvents } from './src/core/events.js';
+import { registerSettingsUIInitializer, ensureSettingsUI } from './src/core/lazyUI.js';
+import { ensureCss, removeCss } from './src/core/cssLoader.js';
+import { onIdle } from './src/core/scheduler.js';
+// Generation & Parsing modules
+import {
+    generateTrackerExample,
+    generateTrackerInstructions,
+    generateContextualSummary,
+    generateRPGPromptText,
+    generateSeparateUpdatePrompt
+} from './src/systems/generation/promptBuilder.js';
+import { parseResponse, parseQuests } from './src/systems/generation/parser.js';
+import { buildRelationshipSpec } from './src/systems/generation/jsonPromptHelpers.js';
+import { openEmojiPicker, closeEmojiPicker } from './src/systems/ui/emojiPicker.js';
+import { updateRPGData, testExternalAPIConnection, getAvailableConnectionProfiles } from './src/systems/generation/apiClient.js';
+import { onGenerationStarted } from './src/systems/generation/injector.js';
+// Rendering modules
+import { getSafeThumbnailUrl } from './src/utils/avatars.js';
+import { isSyntheticTrackerMessage } from './src/utils/messageGuards.js';
+import { renderInfoBox, updateInfoBoxField, initInfoBoxEventDelegation } from './src/systems/rendering/infoBox.js';
+import {
+    renderThoughts,
+    updateCharacterField,
+    removeCharacter,
+    updateChatThoughts,
+    createThoughtPanel,
+    initThoughtsEventDelegation
+} from './src/systems/rendering/thoughts.js';
+import { renderQuests, initQuestEventDelegation } from './src/systems/rendering/quests.js';
+// UI Systems modules
+import {
+    applyTheme,
+    applyCustomTheme,
+    toggleCustomColors,
+    toggleAnimations,
+    updateFeatureTogglesVisibility,
+    updateSettingsPopupTheme,
+    applyCustomThemeToSettingsPopup
+} from './src/systems/ui/theme.js';
+import {
+    SettingsModal,
+    setupSettingsPopup,
+    getSettingsModal
+} from './src/systems/ui/modals.js';
+import {
+    initPromptsEditor
+} from './src/systems/ui/promptsEditor.js';
+import {
+    updateSectionVisibility
+} from './src/systems/ui/layout.js';
+import {
+    initPortraitBar,
+    updatePortraitBar,
+    repositionPortraitBar,
+    clearPortraitCache,
+    applyPortraitBarSettings,
+    applySideModeStyling
+} from './src/systems/ui/portraitBar.js';
+import {
+    initWeatherEffects,
+    updateWeatherEffect,
+    toggleDynamicWeather,
+    cleanupWeatherEffects
+} from './src/systems/ui/weatherEffects.js';
+import {
+    applyChatBubbles,
+    applyAllChatBubbles,
+    revertAllChatBubbles,
+    revertLastMessageBubbles,
+    onChatBubbleModeChanged,
+    applyChatBubbleSettings,
+    initBubbleTtsHandlers,
+    clearBubbleState,
+    injectReasoningTtsButtons
+} from './src/systems/rendering/chatBubbles.js';
+// infoPanel.js removed — banner/hud/ticker are now layout modes in sceneHeaders.js
+// Lorebook Manager modules
+// Feature modules
+import { ensureHtmlCleaningRegex, detectConflictingRegexScripts, ensureTrackerCleaningRegex } from './src/systems/features/htmlCleaning.js';
+import { ensureJsonCleaningRegex, removeJsonCleaningRegex } from './src/systems/features/jsonCleaning.js';
+import { DEFAULT_HTML_PROMPT } from './src/systems/generation/promptBuilder.js';
+// Scene headers (inline chat rendering)
+import { updateChatSceneHeaders, applySceneTrackerSettings, resetSceneHeaderCache } from './src/systems/rendering/sceneHeaders.js';
+// Integration modules
+import {
+    commitTrackerData,
+    onMessageSent,
+    onMessageReceived,
+    onCharacterChanged,
+    onMessageSwiped,
+    onMessageDeleted,
+    updatePersonaAvatar,
+    clearExtensionPrompts,
+    onGenerationEnded,
+    initHistoryInjection,
+    initDoomCounterListener
+} from './src/systems/integration/sillytavern.js';
+import {
+    initExpressionSync,
+    queueExpressionCaptureForSpeaker,
+    syncExpressionFromLatestMessage,
+    onExpressionSyncSettingChanged,
+    onHideDefaultExpressionDisplaySettingChanged,
+    clearExpressionSyncCache,
+    onExpressionSyncChatChanged,
+    classifyActiveUserExpression,
+} from './src/systems/integration/expressionSync.js';
+// Doom Counter
+import { triggerDoomCounter, updateDoomCounterUI, resetCounters, isTrapTwistPending, clearTrapTwistFlag } from './src/systems/generation/doomCounter.js';
+// System Log & Notification Log
+import { initSystemLog, openSystemLog } from './src/systems/ui/systemLog.js';
+import { initNotificationLog } from './src/systems/ui/notificationLog.js';
+import { onChatChangedRpgMode } from './src/systems/features/rpgMode.js';
+import { migrateLegacyToChat } from './src/systems/features/chatScope.js';
+import { initTrackerJsonInline, syncTrackerJsonForMessage, updateTrackerJsonDropdowns } from './src/systems/rendering/trackerJsonInline.js';
+import { initMobileCompose, closeMobileCompose } from './src/systems/ui/mobileCompose.js';
+import { waitForAliasDecisions } from './src/systems/features/characterAliases.js';
+import { initMobileQuickJump, refreshMobileQuickJump } from './src/systems/ui/mobileQuickJump.js';
+import { escapeHtml } from './src/utils/html.js';
+import { initStatsSettings } from './src/systems/ui/statsSettings.js';
+// Context Inspector — see what DES is injecting into the prompt
+import { initInspector } from './src/systems/generation/inspector.js';
+// ============ DEBUG: Module loaded successfully ============
+console.log('[Dooms Tracker] ✅ All imports resolved successfully. Module body executing.');
+/**
+ * Renders a quick visibility toggle in the Scene Tracker menu for each custom
+ * scene field, generated from trackerConfig.
+ *
+ * The built-in rows in that menu are hardcoded markup, which is why a field you
+ * added in the Tracker Editor never showed up here — and why those built-ins
+ * drifted out of sync with the editor once already. Generating these means the
+ * two surfaces read the same source and a new field is togglable the moment
+ * it exists. Safe to call repeatedly; it rebuilds the list.
+ */
+function renderSceneCustomFieldToggles() {
+    const $host = $('#rpg-st-custom-fields');
+    if (!$host.length) return;
+    const fields = extensionSettings.trackerConfig?.infoBox?.customFields;
+    if (!Array.isArray(fields) || !fields.length) {
+        $host.empty();
+        return;
+    }
+    const rows = fields
+        .filter(f => f && f.name)
+        .map(f => {
+            const id = escapeHtml(String(f.id ?? f.name));
+            const label = escapeHtml(`${f.icon || '✨'} ${f.name}`);
+            return `
+                <div class="rpg-setting-row">
+                    <span class="rpg-setting-label">${label}</span>
+                    <label class="rpg-toggle-switch">
+                        <input type="checkbox" class="rpg-st-custom-field-toggle"
+                               data-field-id="${id}" ${f.enabled ? 'checked' : ''} />
+                        <span class="rpg-toggle-slider"></span>
+                    </label>
+                </div>`;
+        })
+        .join('');
+    $host.html(rows);
+}
+
+/**
+ * Relationship options for the Workshop settings section.
+ *
+ * These moved out of the Edit Trackers window's removed Present Characters
+ * tab. Each row is a name the AI may choose from plus the emoji shown on the
+ * portrait card. Generated from trackerConfig (rather than hardcoded markup)
+ * so the list and the prompt cannot disagree about which relationships exist.
+ *
+ * Storage keeps BOTH the modern nested shape and the legacy flat keys in
+ * step — relationshipFields is what buildCharactersJSONInstruction reads, and
+ * older saves/presets still carry the flat maps.
+ */
+function getRelationshipConfig() {
+    const pc = extensionSettings.trackerConfig?.presentCharacters;
+    if (!pc) return null;
+    if (!pc.relationships) pc.relationships = { enabled: true, relationshipEmojis: {} };
+    if (!pc.relationships.relationshipEmojis) {
+        pc.relationships.relationshipEmojis = pc.relationshipEmojis || {};
+    }
+    return pc;
+}
+
+/** Mirrors the emoji map out to the legacy keys the prompt/renderers read. */
+function syncRelationshipConfig(pc) {
+    const emojis = pc.relationships.relationshipEmojis;
+    pc.relationshipEmojis = { ...emojis };
+    pc.relationshipFields = Object.keys(emojis);
+}
+
+function renderWorkshopRelationships() {
+    const $host = $('#rpg-ws-relationship-list');
+    if (!$host.length) return;
+    // The picker is body-appended and positioned against one of these rows,
+    // so rebuilding the list would leave it anchored to a detached input.
+    closeEmojiPicker();
+    const pc = getRelationshipConfig();
+    if (!pc) { $host.empty(); return; }
+    const emojis = pc.relationships.relationshipEmojis || {};
+    $('#rpg-ws-relationships-enabled').prop('checked', pc.relationships.enabled !== false);
+    const rows = Object.entries(emojis).map(([name, emoji]) => `
+        <div class="rpg-ws-rel-row" data-relationship="${escapeHtml(name)}">
+            <input type="text" class="rpg-ws-rel-name" value="${escapeHtml(name)}"
+                   data-relationship="${escapeHtml(name)}" placeholder="Relationship" />
+            <input type="text" class="rpg-ws-rel-emoji" value="${escapeHtml(emoji)}"
+                   data-relationship="${escapeHtml(name)}" maxlength="4" placeholder="🙂" />
+            <button type="button" class="rpg-ws-rel-remove" data-relationship="${escapeHtml(name)}"
+                    title="Remove"><i class="fa-solid fa-trash"></i></button>
+        </div>`).join('');
+    $host.html(rows || '<p class="rpg-note-text">No relationships yet — add one below.</p>');
+    $('#rpg-ws-relationship-prompt').val(pc.relationships.prompt || '');
+    renderWorkshopRelationshipPreview();
+}
+
+/**
+ * Shows the exact `relationship.status` spec the AI will receive.
+ * Built by the emitter itself (buildRelationshipSpec) rather than
+ * reassembled here, so the preview cannot drift from what's actually sent.
+ */
+function renderWorkshopRelationshipPreview() {
+    const $out = $('#rpg-ws-relationship-preview');
+    if (!$out.length) return;
+    const pc = getRelationshipConfig();
+    if (!pc || pc.relationships.enabled === false) {
+        $out.text('nothing — relationship tracking is off');
+        return;
+    }
+    $out.text(`"relationship": {"status": "${buildRelationshipSpec(pc)}"}`);
+}
+
+function updatePortraitEnhancementSettingsVisibility() {
+    const enabled = extensionSettings.syncExpressionsToPresentCharacters === true;
+    const source = extensionSettings.portraitEnhancementMode || 'expressions';
+    $('#rpg-expression-options').toggle(enabled);
+    $('#rpg-expression-sprite-options').toggle(enabled && source === 'expressions');
+    $('#rpg-auto-portrait-options').toggle(enabled && source === 'autoPortraits');
+    $('#rpg-expression-batch-row').toggle(enabled && source === 'expressions' && (extensionSettings.expressionClassifierApi || 'local') === 'llm');
+}
+/**
+ * Adds the extension settings to the Extensions tab.
+ */
+async function addExtensionSettings() {
+    // Initialize log captures early so they catch all init messages
+    try { initSystemLog(); } catch (e) { console.error('[Dooms Tracker] initSystemLog() FAILED:', e); }
+    // Context Inspector — must register its GENERATION_STARTED handler before
+    // any other DES generation listener so per-gen records bracket every
+    // slot write that follows.
+    try { initInspector(); } catch (e) { console.error('[Dooms Tracker] initInspector() FAILED:', e); }
+    try { initNotificationLog(); } catch (e) { console.error('[Dooms Tracker] initNotificationLog() FAILED:', e); }
+    try { initMobileQuickJump(); } catch (e) { console.error('[Dooms Tracker] initMobileQuickJump() FAILED:', e); }
+    console.log('[Dooms Tracker] addExtensionSettings() called');
+    // Load the HTML template for the settings
+    const settingsHtml = await renderExtensionTemplateAsync(extensionName, 'settings');
+    console.log('[Dooms Tracker] Settings HTML loaded, length =', settingsHtml?.length || 0);
+    $('#extensions_settings2').append(settingsHtml);
+    console.log('[Dooms Tracker] Settings HTML appended');
+    // Set up the enable/disable toggle
+    $('#rpg-extension-enabled').prop('checked', extensionSettings.enabled).on('change', async function () {
+        const wasEnabled = extensionSettings.enabled;
+        extensionSettings.enabled = $(this).prop('checked');
+        saveSettings();
+        if (!extensionSettings.enabled && wasEnabled) {
+            // Disabling extension - remove UI elements
+            clearExtensionPrompts();
+            updateChatThoughts(); // Remove thought bubbles
+            updateChatSceneHeaders(); // Remove scene headers (handles enabled check internally)
+            clearExpressionSyncCache();
+            onHideDefaultExpressionDisplaySettingChanged(extensionSettings.hideDefaultExpressionDisplay);
+        } else if (extensionSettings.enabled && !wasEnabled) {
+            // Enabling extension - initialize UI
+            await initUI();
+            loadChatData(); // Load chat data for current chat
+            updateChatThoughts(); // Create thought bubbles if data exists
+            onHideDefaultExpressionDisplaySettingChanged(extensionSettings.hideDefaultExpressionDisplay);
+            if (extensionSettings.syncExpressionsToPresentCharacters && (extensionSettings.portraitEnhancementMode || 'expressions') === 'expressions') {
+                initExpressionSync();
+                syncExpressionFromLatestMessage();
+            }
+        }
+    });
+    // Set up "Open Settings" button in the extension dropdown
+    $('#dooms-open-settings-btn').on('click', function () {
+        ensureSettingsUI().then(() => {
+            const modal = getSettingsModal();
+            if (modal) {
+                modal.open();
+            } else {
+                $('#rpg-settings-popup').show();
+            }
+        }).catch(() => {});
+    });
+    // "Star on GitHub" button in the extension dropdown
+    $('#dooms-whats-new-btn').on('click', function () {
+        // Manual view — works on any device; the desktop-only rule applies
+        // to the AUTOMATIC popup, not a deliberate request.
+        import('./src/systems/ui/whatsNew.js')
+            .then(({ showWhatsNew }) => showWhatsNew())
+            .catch((e) => console.warn("[Dooms Tracker] What's New failed:", e));
+    });
+    $('#dooms-github-star-btn').on('click', function () {
+        window.open('https://github.com/Caged1994/sillytavern_persona', '_blank', 'noopener,noreferrer');
+    });
+    fetch('https://api.github.com/repos/Caged1994/sillytavern_persona', { headers: { 'Accept': 'application/vnd.github+json' } })
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+            if (data && typeof data.stargazers_count === 'number') {
+                $('#dooms-github-star-btn .dooms-github-star-count').text(data.stargazers_count.toLocaleString());
+            }
+        })
+        .catch(() => { });
+    // Populate version from manifest.json so the dropdown always reflects the current release
+    getExtensionVersion().then(v => {
+        if (v) $('#dooms-version-display').text(`v${v}`);
+    });
+}
+/**
+ * Populates the Connection Profile dropdown from the Connection Manager extension.
+ */
+function populateConnectionProfileDropdown() {
+    const $select = $('#rpg-connection-profile');
+    if (!$select.length) return;
+
+    const currentValue = extensionSettings.connectionProfile || '';
+    $select.empty();
+    $select.append('<option value="">Use Current</option>');
+
+    const profiles = getAvailableConnectionProfiles();
+    for (const name of profiles) {
+        $select.append($('<option>').val(name).text(name));
+    }
+
+    // Restore saved value; if saved profile no longer exists, reset
+    if (currentValue && profiles.includes(currentValue)) {
+        $select.val(currentValue);
+    } else if (currentValue && !profiles.includes(currentValue)) {
+        extensionSettings.connectionProfile = '';
+        saveSettings();
+        $select.val('');
+    }
+}
+/**
+ * Shows/hides UI elements based on the current generation mode.
+ * Together: hides manual update button, auto-update toggle, external API settings
+ * Separate: shows manual update + auto-update, hides external API settings
+ * External: shows manual update + auto-update + external API settings
+ */
+function updateGenerationModeUI() {
+    const mode = extensionSettings.generationMode || 'together';
+    if (mode === 'together') {
+        $('#rpg-manual-update').hide();
+        $('#rpg-auto-update-container').hide();
+        $('#rpg-external-api-settings').slideUp(200);
+    } else if (mode === 'separate') {
+        $('#rpg-manual-update').show();
+        $('#rpg-auto-update-container').show();
+        $('#rpg-external-api-settings').slideUp(200);
+    } else if (mode === 'external') {
+        $('#rpg-manual-update').show();
+        $('#rpg-auto-update-container').show();
+        $('#rpg-external-api-settings').slideDown(200);
+    }
+}
+/**
+ * Resolve the currently-active user character name. Manual override
+ * (extensionSettings.activeUserCharacter) wins; otherwise auto-match
+ * via linkedPersona == window.user_avatar; final fallback is the only
+ * user character if exactly one exists. Returns null if none.
+ */
+function resolveActiveUserCharacterName() {
+    const s = extensionSettings;
+    if (!s || !s.userCharacters || typeof s.userCharacters !== 'object') return null;
+    if (s.activeUserCharacter && s.userCharacters[s.activeUserCharacter]) return s.activeUserCharacter;
+    let currentAvatar = '';
+    try { currentAvatar = (typeof window !== 'undefined' && window.user_avatar) || ''; } catch (e) {}
+    if (currentAvatar) {
+        for (const [n, entry] of Object.entries(s.userCharacters)) {
+            if (entry && entry.linkedPersona === currentAvatar) return n;
+        }
+    }
+    const allNames = Object.keys(s.userCharacters);
+    if (allNames.length === 1) return allNames[0];
+    return null;
+}
+
+/**
+ * If "Show User in PCP" is on AND the active user character has a color,
+ * return that color (it overrides chatBubbleSettings.userDialogColor).
+ * Returns null otherwise.
+ */
+function getOverridingUserDialogColor() {
+    const s = extensionSettings;
+    if (!s || !s.showUserInPCP) return null;
+    const name = resolveActiveUserCharacterName();
+    if (!name) return null;
+    const entry = s.userCharacters && s.userCharacters[name];
+    return (entry && entry.color) ? entry.color : null;
+}
+
+/**
+ * Toggle the User Dialog color picker between editable and "controlled
+ * by user character settings" modes. No-ops gracefully if the picker
+ * isn't present (e.g. a build that hasn't shipped the picker yet).
+ */
+function updateUserDialogOverrideUI() {
+    const $picker = $('#rpg-cb-user-color');
+    if (!$picker.length) return;
+    const $row = $picker.closest('.rpg-setting-row');
+    const overrideColor = getOverridingUserDialogColor();
+    if (overrideColor) {
+        $picker.prop('disabled', true).val(overrideColor);
+        let $note = $row.find('.rpg-cb-user-override-note');
+        if (!$note.length) {
+            $note = $('<span class="rpg-cb-user-override-note rpg-setting-hint" style="display:block; margin-top:4px; font-style: italic; color: var(--rpg-highlight, #e94560); opacity: 0.85;"><i class="fa-solid fa-link"></i> Controlled by user character settings</span>');
+            $row.append($note);
+        }
+        $note.show();
+    } else {
+        $picker.prop('disabled', false);
+        $row.find('.rpg-cb-user-override-note').hide();
+    }
+}
+
+/**
+ * Populates the Update-section branch dropdown by mirroring SillyTavern's
+ * own "Switch branch" button flow:
+ *   1. POST /api/extensions/version — read current branch + remoteUrl
+ *   2. If the response includes a branches list, use it directly.
+ *      Otherwise pull branches from GitHub via the response's remoteUrl.
+ *   3. Cache for the lifetime of the page so reopening the settings doesn't
+ *      re-hit the network. Falls back to ["main"] on total failure.
+ */
+let _branchListPromise = null;
+function populateUpdateBranchDropdownOnce() {
+    const $sel = $('#rpg-update-branch');
+    if (!$sel.length) return;
+    if ($sel.data('populated')) return;
+    if (_branchListPromise) {
+        _branchListPromise.then((info) => fillBranchDropdown(info)).catch(() => {});
+        return;
+    }
+    _branchListPromise = (async () => {
+        const isUserExt = (import.meta.url || '').includes('/data/');
+        const bareName = extensionName.replace(/^third-party\//, '');
+        let currentBranch = '';
+        let remoteUrl = '';
+        let branches = [];
+        // 1. Ask SillyTavern for its view of this extension's git state.
+        try {
+            const resp = await fetch('/api/extensions/version', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ extensionName: bareName, global: !isUserExt }),
+            });
+            if (resp.ok) {
+                const data = await resp.json().catch(() => ({}));
+                currentBranch = String(data?.currentBranchName || data?.currentBranch || '').trim();
+                remoteUrl = String(data?.remoteUrl || data?.remote || '').trim();
+                if (Array.isArray(data?.branches)) {
+                    branches = data.branches.map(b => typeof b === 'string' ? b : String(b?.name || '')).filter(Boolean);
+                }
+            }
+        } catch (e) { /* fall through to manifest+GitHub */ }
+        // 2. If we don't have a branches list yet, fetch from GitHub. Pull
+        //    the repo slug from remoteUrl (preferred, matches what ST sees)
+        //    or from manifest.homePage as a fallback.
+        if (!branches.length) {
+            let repoSlug = '';
+            const fromRemote = remoteUrl.match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?\/?$/);
+            if (fromRemote) repoSlug = fromRemote[1];
+            if (!repoSlug) {
+                try {
+                    const manifestResp = await fetch(`/${extensionFolderPath}/manifest.json`, { cache: 'no-cache' });
+                    if (manifestResp.ok) {
+                        const manifest = await manifestResp.json();
+                        const m = String(manifest.homePage || '').match(/github\.com\/([^/]+\/[^/]+?)(?:\.git)?\/?$/);
+                        if (m) repoSlug = m[1];
+                        if (!remoteUrl) remoteUrl = manifest.homePage || '';
+                    }
+                } catch (e) { /* keep fallback */ }
+            }
+            if (!repoSlug) repoSlug = 'Caged1994/sillytavern_persona';
+            try {
+                const ghResp = await fetch(`https://api.github.com/repos/${repoSlug}/branches?per_page=100`, {
+                    headers: { 'Accept': 'application/vnd.github+json' },
+                });
+                if (ghResp.ok) {
+                    const data = await ghResp.json();
+                    if (Array.isArray(data)) {
+                        branches = data.map(b => String(b?.name || '')).filter(Boolean);
+                    }
+                }
+            } catch (e) { /* fall through to ["main"] */ }
+        }
+        if (!branches.length) branches = ['main'];
+        return { branches, currentBranch, remoteUrl };
+    })();
+    _branchListPromise
+        .then((info) => fillBranchDropdown(info))
+        .catch((err) => {
+            console.warn('[Dooms Tracker] Failed to populate branch dropdown:', err);
+            fillBranchDropdown({ branches: ['main'], currentBranch: '', remoteUrl: '' });
+        });
+}
+
+function fillBranchDropdown({ branches, currentBranch, remoteUrl }) {
+    const $sel = $('#rpg-update-branch');
+    if (!$sel.length) return;
+    // No whitelist — expose every branch the API returned. Sort: current
+    // branch first (so users instantly see what they're on), then main /
+    // master next as the canonical release lines, then every other branch
+    // alphabetical.
+    const ordered = [...branches].sort((a, b) => {
+        if (currentBranch) {
+            if (a === currentBranch) return -1;
+            if (b === currentBranch) return 1;
+        }
+        const wa = a === 'main' ? 0 : a === 'master' ? 1 : 2;
+        const wb = b === 'main' ? 0 : b === 'master' ? 1 : 2;
+        return wa !== wb ? wa - wb : a.localeCompare(b);
+    });
+    const previous = String($sel.val() || '');
+    $sel.empty();
+    for (const name of ordered) {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = (currentBranch && name === currentBranch) ? `${name} (current)` : name;
+        $sel[0].appendChild(opt);
+    }
+    if (previous && ordered.includes(previous)) {
+        $sel.val(previous);
+    } else if (currentBranch && ordered.includes(currentBranch)) {
+        $sel.val(currentBranch);
+    } else {
+        $sel.val(ordered[0] || '');
+    }
+    $sel.data('populated', true);
+    $sel.data('currentBranch', currentBranch || '');
+    $sel.data('remoteUrl', remoteUrl || '');
+}
+
+/**
+ * Populates all Chat Bubbles & Info Panel settings controls from saved state.
+ */
+function loadChatBubbleSettingsUI() {
+    const cbs = extensionSettings.chatBubbleSettings || {};
+    // Refresh the User Dialog override indicator (paired with the
+    // "Show User in PCP" toggle and the active user character's color).
+    try { updateUserDialogOverrideUI(); } catch (e) {}
+
+    // Mode selectors
+    $('#rpg-cb-bubble-mode').val(extensionSettings.chatBubbleMode || 'off');
+    $('#rpg-cb-badge').text((extensionSettings.chatBubbleMode || 'off') === 'off' ? 'off' : extensionSettings.chatBubbleMode);
+
+    // Toggles
+    $('#rpg-cb-show-avatars').prop('checked', cbs.showAvatars !== false);
+    $('#rpg-cb-skip-styled-divs').prop('checked', cbs.skipStyledDivs !== false);
+    $('#rpg-cb-show-author-names').prop('checked', cbs.showAuthorNames !== false);
+    $('#rpg-cb-show-narrator-label').prop('checked', cbs.showNarratorLabel !== false);
+    $('#rpg-cb-narrator-italic').prop('checked', cbs.narratorItalic !== false);
+    $('#rpg-cb-hide-st-avatar').prop('checked', cbs.hideStAvatar === true);
+
+    // Bubble colors
+    $('#rpg-cb-narrator-color').val(cbs.narratorTextColor || '#999999');
+    $('#rpg-cb-unknown-color').val(cbs.unknownSpeakerColor || '#aaaaaa');
+    $('#rpg-cb-accent-color').val(cbs.accentColor || '#e94560');
+    $('#rpg-cb-bg-tint').val(cbs.backgroundTint || '#1a1a2e');
+
+    // Bubble sliders
+    $('#rpg-cb-bg-opacity').val(cbs.backgroundOpacity ?? 5);
+    $('#rpg-cb-bg-opacity-value').text((cbs.backgroundOpacity ?? 5) + '%');
+    $('#rpg-cb-font-size').val(cbs.fontSize ?? 92);
+    $('#rpg-cb-font-size-value').text((cbs.fontSize ?? 92) + '%');
+    $('#rpg-cb-avatar-size').val(cbs.avatarSize ?? 40);
+    $('#rpg-cb-avatar-size-value').text((cbs.avatarSize ?? 40) + 'px');
+    $('#rpg-cb-border-radius').val(cbs.borderRadius ?? 6);
+    $('#rpg-cb-border-radius-value').text((cbs.borderRadius ?? 6) + 'px');
+    $('#rpg-cb-spacing').val(cbs.spacing ?? 12);
+    $('#rpg-cb-spacing-value').text((cbs.spacing ?? 12) + 'px');
+}
+
+/**
+ * Applies performance mode: a body class the particle engine checks, plus a
+ * kill-stylesheet (styles/perf-mode.css) that strips DES animations, blur,
+ * and transitions. The stylesheet only exists in the DOM while the mode is
+ * on, so its selectors cost nothing when the mode is off.
+ */
+function applyPerformanceMode() {
+    const on = !!extensionSettings.performanceMode;
+    document.body.classList.toggle('dooms-perf-mode', on);
+    if (on) ensureCss('perf-mode').catch(() => { });
+    else removeCss('perf-mode');
+    // Particle engines check the body class in _shouldRun() but only
+    // re-evaluate on events — without this, turning perf mode OFF leaves
+    // the weather canvas stopped (blank) until a tab switch or resize.
+    try { window.dispatchEvent(new CustomEvent('dooms:perf-mode-changed')); } catch (e) { }
+}
+
+/**
+ * Hides/shows SillyTavern's top bar based on the FAB setting. Module-scope
+ * because it must apply at startup, before the settings binder has run.
+ */
+/** One-shot flag letting a failed Lore Library load fall through to ST's native World Info drawer. */
+let _wiInterceptBypassOnce = false;
+
+function applyHideStTopBar() {
+    const shouldHide = !!(extensionSettings.fab && extensionSettings.fab.hideStTopBar);
+    document.body.classList.toggle('dooms-hide-st-topbar', shouldHide);
+    // Also hide TopInfoBar extension
+    $('#extensionTopBar').toggle(!shouldHide);
+}
+
+/**
+ * Loads template.html (the settings popup + every DES modal — none of it is
+ * needed for normal chat rendering) and runs all template-dependent setup.
+ * Invoked lazily through ensureSettingsUI() the first time a DES modal is
+ * opened, instead of spending the ~165KB HTML parse and ~800 control
+ * bindings/populations at startup.
+ */
+/**
+ * Tracks how far loadSettingsTemplate got, so the lazyUI retry path (a
+ * failed load clears its cached promise) never appends the template or
+ * binds handlers a second time — that would duplicate every modal ID and
+ * double-fire delegated handlers (e.g. accordion headers toggling twice
+ * per click). Only the not-yet-completed stages re-run on retry.
+ */
+let _settingsTemplateAppended = false;
+let _settingsUiBound = false;
+
+async function loadSettingsTemplate() {
+    console.log('[Dooms Tracker] Loading deferred settings UI...');
+    if (!_settingsTemplateAppended) {
+        // Modal styles split out of style.css — must be in place before the
+        // template is appended so the popup never flashes unstyled. Fetch
+        // CSS and template in parallel; await both before the append.
+        const cssReady = ensureCss('modals');
+        const templateHtml = await renderExtensionTemplateAsync(extensionName, 'template');
+        await cssReady;
+        console.log('[Dooms Tracker] Template loaded, length =', templateHtml?.length || 0);
+        // Append panel to body - positioning handled by CSS
+        $('body').append(templateHtml);
+        _settingsTemplateAppended = true;
+        console.log('[Dooms Tracker] Template appended to body');
+    }
+    // Cache UI elements using state setters
+    setInfoBoxContainer($('#rpg-info-box'));
+    setThoughtsContainer($('#rpg-thoughts'));
+    setQuestsContainer($('#rpg-quests'));
+    // Register delegated event handlers ONCE (instead of re-attaching on every render)
+    initInfoBoxEventDelegation();
+    initThoughtsEventDelegation();
+    initQuestEventDelegation();
+    // The modal-only modules (lorebook cluster, character workshop/
+    // roster, tracker editor) are dynamic imports so their
+    // code never downloads or parses unless a DES modal is opened.
+    const [lorebookMod, lorebookModalMod, workshopMod, rosterMod, trackerEditorMod] = await Promise.all([
+        import('./src/systems/rendering/lorebook.js'),
+        import('./src/systems/ui/lorebookModal.js'),
+        import('./src/systems/ui/characterWorkshop.js'),
+        import('./src/systems/ui/characterRoster.js'),
+        import('./src/systems/ui/trackerEditor.js'),
+    ]);
+    // Lorebook Manager init
+    try { lorebookMod.initLorebookEventDelegation(); } catch (e) { console.error('[Dooms Tracker] initLorebookEventDelegation() FAILED:', e); }
+    try { lorebookModalMod.setupLorebookModal(); } catch (e) { console.error('[Dooms Tracker] setupLorebookModal() FAILED:', e); }
+    // Re-apply translations to the entire body to catch all new elements from the template
+    i18n.applyTranslations(document.body);
+    if (!_settingsUiBound) {
+        bindSettingsUI();
+        _settingsUiBound = true;
+    }
+    try { workshopMod.initCharacterWorkshop(); console.log('[Dooms Tracker] initCharacterWorkshop() OK'); } catch (e) { console.error('[Dooms Tracker] initCharacterWorkshop() FAILED:', e); }
+    try { rosterMod.initCharacterRoster(); console.log('[Dooms Tracker] initCharacterRoster() OK'); } catch (e) { console.error('[Dooms Tracker] initCharacterRoster() FAILED:', e); }
+    try { setupSettingsPopup(); console.log('[Dooms Tracker] setupSettingsPopup() OK'); } catch (e) { console.error('[Dooms Tracker] setupSettingsPopup() FAILED:', e); }
+    try { trackerEditorMod.initTrackerEditor(); console.log('[Dooms Tracker] initTrackerEditor() OK'); } catch (e) { console.error('[Dooms Tracker] initTrackerEditor() FAILED:', e); }
+    try { initPromptsEditor(); console.log('[Dooms Tracker] initPromptsEditor() OK'); } catch (e) { console.error('[Dooms Tracker] initPromptsEditor() FAILED:', e); }
+    try {
+        const { initInspectorModal } = await import('./src/systems/ui/inspectorModal.js');
+        initInspectorModal();
+        console.log('[Dooms Tracker] initInspectorModal() OK');
+    } catch (e) { console.error('[Dooms Tracker] initInspectorModal() FAILED:', e); }
+    // The FAB was built at startup; now that the popup exists, fill its
+    // per-button toggle list and stamp the current theme on the modal.
+    if (typeof window.__doomsFabPopulateToggles === 'function') window.__doomsFabPopulateToggles();
+    try { updateSettingsPopupTheme(getSettingsModal()); } catch (_) { }
+    // Custom-colors section visibility depends on the current theme; the
+    // eager call at startup ran before the popup existed.
+    try { toggleCustomColors(); } catch (_) { }
+    console.log('[Dooms Tracker] Deferred settings UI ready');
+}
+
+/**
+ * Binds and populates every control in the settings popup. Extracted
+ * verbatim from initUI(); runs once, after template.html is appended.
+ */
+function bindSettingsUI() {
+    // ── Accordion toggle behavior ──
+    // Use delegated handler so it doesn't block other delegated handlers (like prompts editor)
+    $(document).on('click', '.rpg-accordion-header', function () {
+        const $section = $(this).closest('.rpg-accordion-section');
+        $('.rpg-accordion-section').not($section).removeClass('rpg-accordion-open');
+        $section.toggleClass('rpg-accordion-open');
+    });
+    // ── Generation settings ──
+    $('#rpg-generation-mode').on('change', function () {
+        extensionSettings.generationMode = String($(this).val());
+        saveSettings();
+        updateGenerationModeUI();
+    });
+    $('#rpg-toggle-auto-update').on('change', function () {
+        extensionSettings.autoUpdate = $(this).prop('checked');
+        saveSettings();
+    });
+    $('#rpg-update-depth').on('change', function () {
+        const value = $(this).val();
+        extensionSettings.updateDepth = parseInt(String(value));
+        saveSettings();
+    });
+    $('#rpg-manual-update').on('click', async function () {
+        const $btn = $(this);
+        const originalHtml = $btn.html();
+        $btn.html('<i class="fa-solid fa-spinner fa-spin"></i> Generating...').prop('disabled', true);
+        try {
+            await updateRPGData(renderInfoBox, renderThoughts);
+            updateChatSceneHeaders();
+            updatePortraitBar();
+            updateChatThoughts();
+        } finally {
+            $btn.html(originalHtml).prop('disabled', false);
+        }
+    });
+    // ── Display settings ──
+    $('#rpg-toggle-info-box').on('change', function () {
+        extensionSettings.showInfoBox = $(this).prop('checked');
+        saveSettings();
+        updateChatSceneHeaders();
+    });
+    $('#rpg-toggle-performance-mode').on('change', function () {
+        extensionSettings.performanceMode = $(this).prop('checked');
+        saveSettings();
+        applyPerformanceMode();
+    });
+    $('#rpg-toggle-mobile-quick-jump').on('change', function () {
+        extensionSettings.mobileQuickJumpEnabled = $(this).prop('checked');
+        saveSettings();
+        refreshMobileQuickJump();
+    });
+    $('#rpg-toggle-mobile-compose').on('change', function () {
+        extensionSettings.mobileComposeOverlay = $(this).prop('checked');
+        saveSettings();
+        if (!extensionSettings.mobileComposeOverlay) closeMobileCompose();
+    });
+    $('#rpg-toggle-whats-new').on('change', function () {
+        extensionSettings.whatsNewOptOut = !$(this).prop('checked');
+        saveSettings();
+    });
+    $('#rpg-toggle-compact-prompts').on('change', function () {
+        extensionSettings.compactPrompts = $(this).prop('checked');
+        saveSettings();
+    });
+    $('#rpg-restore-defaults').on('click', async function () {
+        const confirmed = await callGenericPopup(
+            'Restore the default Doom\'s Enhancement Suite setup?<br><br>' +
+            '<b>On:</b> Scene Tracker, Present Characters, Dialogue Coloring, Discord chat bubbles, centered D button.<br>' +
+            '<b>Off:</b> everything else.<br><br>' +
+            'Your characters, colors, avatars, presets, and lorebook organization are kept. The page will reload.',
+            POPUP_TYPE.CONFIRM
+        );
+        if (confirmed !== POPUP_RESULT.AFFIRMATIVE) return;
+        applyNewPlayerProfile();
+        saveSettings();
+        toastr.success('Defaults restored — reloading...', "Persona Stats", { timeOut: 2500 });
+        // saveSettings() only schedules SillyTavern's ~1s debounced POST; a
+        // reload before it flushes silently cancels the restore. 2.5s gives
+        // the trailing debounce + request comfortable room.
+        setTimeout(() => location.reload(), 2500);
+    });
+    $('#rpg-toggle-thoughts').on('change', function () {
+        extensionSettings.showCharacterThoughts = $(this).prop('checked');
+        saveSettings();
+        updateChatSceneHeaders();
+        updatePortraitBar();
+    });
+    $('#rpg-toggle-quests').on('change', function () {
+        extensionSettings.showQuests = $(this).prop('checked');
+        saveSettings();
+        updateChatSceneHeaders();
+    });
+    // Lock Icons toggle removed — lock UI disabled until wired into scene tracker
+    $('#rpg-toggle-portrait-bar').on('change', function () {
+        const on = $(this).prop('checked');
+        extensionSettings.showPortraitBar = on;
+        saveSettings();
+        updatePortraitBar();
+        $('#rpg-pb-badge').text(on ? 'on' : 'off');
+        // Workshop/Roster are part of PCP — track the live toggle.
+        $('#rpg-open-character-roster').toggle(on);
+        $('#dooms-pb-open-roster').toggle(on);
+    });
+    $('#rpg-portrait-alignment').on('change', function () {
+        extensionSettings.portraitAlignment = $(this).val();
+        saveSettings();
+        updatePortraitBar();
+    });
+    $('#rpg-portrait-position').on('change', function () {
+        extensionSettings.portraitPosition = $(this).val();
+        saveSettings();
+        repositionPortraitBar();
+        // Show side-only options only when a side mode is active.
+        const isSide = $(this).val() === 'left' || $(this).val() === 'right';
+        $('#rpg-pb-side-options').toggle(isSide);
+        relabelPortraitAlignmentOptions(isSide);
+    });
+    $('#rpg-pb-side-columns').on('change', function () {
+        const cols = parseInt($(this).val(), 10);
+        extensionSettings.portraitSideColumns = (cols >= 1 && cols <= 2) ? cols : 1;
+        saveSettings();
+        try { applySideModeStyling(); } catch (e) { }
+    });
+    $('#rpg-pb-side-height').on('change', function () {
+        const val = $(this).val();
+        extensionSettings.portraitSideHeight = (val === 'full') ? 'full' : 'auto';
+        saveSettings();
+        try { applySideModeStyling(); } catch (e) { }
+    });
+
+    /**
+     * Contextual labels for the Alignment dropdown.
+     * Horizontal position (above / below / top): "Inline (Left)" / "Centered"
+     * Side position (left / right): "Top" / "Bottom"
+     * Underlying values stay 'left' / 'center' so settings persist across mode changes.
+     */
+    function relabelPortraitAlignmentOptions(isSide) {
+        const $left = $('#rpg-portrait-alignment option[value="left"]');
+        const $center = $('#rpg-portrait-alignment option[value="center"]');
+        if (isSide) {
+            $left.text('Top');
+            $center.text('Bottom');
+        } else {
+            $left.text('Inline (Left)');
+            $center.text('Centered');
+        }
+    }
+    window.__doomsRelabelAlignment = relabelPortraitAlignmentOptions;
+
+    // ── Portrait Bar customization ──
+    const _pbSettings = () => {
+        if (!extensionSettings.portraitBarSettings) extensionSettings.portraitBarSettings = {};
+        return extensionSettings.portraitBarSettings;
+    };
+    const _savePb = () => { saveSettings(); applyPortraitBarSettings(); };
+
+    // Layout toggles
+    $('#rpg-pb-show-header').on('change', function () { _pbSettings().showHeader = $(this).prop('checked'); _savePb(); });
+    $('#rpg-pb-show-absent').on('change', function () { _pbSettings().showAbsentCharacters = $(this).prop('checked'); _savePb(); updatePortraitBar(); });
+    $('#rpg-pb-show-user').on('change', function () {
+        extensionSettings.showUserInPCP = $(this).prop('checked');
+        saveSettings();
+        try { updatePortraitBar(); } catch (e) {}
+        // Also re-paint the bubble settings indicator (toggle drives whether
+        // the user-character color overrides chatBubbleSettings.userDialogColor).
+        try { updateUserDialogOverrideUI(); } catch (e) {}
+    });
+    $('#rpg-pb-show-arrows').on('change', function () { _pbSettings().showScrollArrows = $(this).prop('checked'); _savePb(); });
+    $('#rpg-pb-auto-import').on('change', function () { extensionSettings.portraitAutoImport = $(this).prop('checked'); saveSettings(); });
+
+    // Export portraits as individual image downloads
+    $('#rpg-export-portraits').on('click', async function () {
+        const avatars = extensionSettings.npcAvatars || {};
+        const fullRes = extensionSettings.npcAvatarsFullRes || {};
+        const names = Object.keys({ ...avatars, ...fullRes });
+        if (names.length === 0) {
+            toastr.info('No uploaded portraits to export.', '', { timeOut: 2000 });
+            return;
+        }
+        let exported = 0;
+        for (const name of names) {
+            // Prefer full-res, fall back to cropped
+            const dataUri = fullRes[name] || avatars[name];
+            if (!dataUri) continue;
+            try {
+                // Extract mime type and extension
+                const match = dataUri.match(/^data:image\/(\w+);base64,/);
+                const ext = match ? match[1].replace('jpeg', 'jpg') : 'png';
+                // Convert base64 to blob
+                const byteString = atob(dataUri.split(',')[1]);
+                const ab = new ArrayBuffer(byteString.length);
+                const ia = new Uint8Array(ab);
+                for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+                const blob = new Blob([ab], { type: match ? `image/${match[1]}` : 'image/png' });
+                // Trigger download
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${name.replace(/[^a-zA-Z0-9_-]/g, '_')}.${ext}`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                exported++;
+                // Small delay between downloads so browser doesn't block them
+                if (names.length > 1) await new Promise(r => setTimeout(r, 300));
+            } catch (e) {
+                console.error(`[Dooms Tracker] Failed to export portrait for ${name}:`, e);
+            }
+        }
+        toastr.success(`Exported ${exported} portrait${exported !== 1 ? 's' : ''}.`, '', { timeOut: 3000 });
+    });
+
+    $('#rpg-pb-sync-expressions').on('change', function () {
+        extensionSettings.syncExpressionsToPresentCharacters = $(this).prop('checked');
+        saveSettings();
+        onExpressionSyncSettingChanged(extensionSettings.syncExpressionsToPresentCharacters && (extensionSettings.portraitEnhancementMode || 'expressions') === 'expressions');
+        updatePortraitEnhancementSettingsVisibility();
+    });
+    $('#rpg-portrait-enhancement-mode').on('change', function () {
+        extensionSettings.portraitEnhancementMode = String($(this).val() || 'expressions');
+        saveSettings();
+        onExpressionSyncSettingChanged(extensionSettings.syncExpressionsToPresentCharacters && extensionSettings.portraitEnhancementMode === 'expressions');
+        updatePortraitEnhancementSettingsVisibility();
+        try { updatePortraitBar(); } catch (e) { console.warn('[Dooms Tracker] updatePortraitBar() after portrait source change failed:', e); }
+    });
+    $('#rpg-auto-portrait-mode').on('change', function () {
+        extensionSettings.autoPortraitMode = String($(this).val() || 'only_missing');
+        saveSettings();
+    });
+    $('#rpg-expression-classifier-api').on('change', function () {
+        extensionSettings.expressionClassifierApi = $(this).val();
+        saveSettings();
+        updatePortraitEnhancementSettingsVisibility();
+    });
+    $('#rpg-expression-batch-mode').on('change', function () {
+        extensionSettings.expressionBatchMode = $(this).prop('checked');
+        saveSettings();
+    });
+    $('#rpg-pb-hide-default-expressions').on('change', function () {
+        extensionSettings.hideDefaultExpressionDisplay = $(this).prop('checked');
+        saveSettings();
+        onHideDefaultExpressionDisplaySettingChanged(extensionSettings.hideDefaultExpressionDisplay);
+    });
+    $('#rpg-pb-show-expression-in-tooltip').on('change', function () {
+        extensionSettings.showExpressionInTooltip = $(this).prop('checked');
+        saveSettings();
+        // Rebuild cards so the new title attr takes effect immediately.
+        try { updatePortraitBar(); } catch (e) { console.warn('[Dooms Tracker] updatePortraitBar() after tooltip toggle failed:', e); }
+    });
+    // Subsection info popup (DES Settings → Expressions). Click the (i) button
+    // to toggle the help card; click anywhere else or press Esc to dismiss.
+    $(document).on('click', '#rpg-expressions-info-btn', function (e) {
+        e.preventDefault(); e.stopPropagation();
+        const $popup = $('#rpg-expressions-info-popup');
+        const open = $popup.prop('hidden');
+        if (open) {
+            // Switch to position:fixed anchored to the button so the popup
+            // escapes any clipping by the accordion-body or other ancestor
+            // overflow rules. Right-align under the button; clamp to viewport.
+            const rect = this.getBoundingClientRect();
+            const popupWidth = Math.min(420, window.innerWidth - 16);
+            const rightOffset = Math.max(8, window.innerWidth - rect.right);
+            $popup.css({
+                position: 'fixed',
+                top: (rect.bottom + 6) + 'px',
+                right: rightOffset + 'px',
+                left: 'auto',
+                width: popupWidth + 'px',
+                'max-height': 'calc(100vh - ' + (rect.bottom + 24) + 'px)',
+                'overflow-y': 'auto',
+                'z-index': 1000,
+            });
+        }
+        $popup.prop('hidden', !open);
+        $(this).attr('aria-expanded', open ? 'true' : 'false');
+    });
+    // Popup body clicks shouldn't bubble — when the info popup is rendered
+    // inside a <summary> (collapsible subsection header), the click would
+    // otherwise toggle the surrounding <details>.
+    $(document).on('click', '#rpg-expressions-info-popup', function (e) {
+        e.stopPropagation();
+    });
+    $(document).on('click', function (e) {
+        const $popup = $('#rpg-expressions-info-popup');
+        if (!$popup.length || $popup.prop('hidden')) return;
+        if ($(e.target).closest('#rpg-expressions-info-popup, #rpg-expressions-info-btn').length) return;
+        $popup.prop('hidden', true);
+        $('#rpg-expressions-info-btn').attr('aria-expanded', 'false');
+    });
+    $(document).on('keydown', function (e) {
+        if (e.key !== 'Escape') return;
+        const $popup = $('#rpg-expressions-info-popup');
+        if (!$popup.length || $popup.prop('hidden')) return;
+        $popup.prop('hidden', true);
+        $('#rpg-expressions-info-btn').attr('aria-expanded', 'false');
+    });
+    $('#rpg-pb-per-chat-tracking').on('change', function () {
+        extensionSettings.perChatCharacterTracking = $(this).prop('checked');
+        saveSettings();
+        loadChatData();
+        updatePortraitBar();
+    });
+
+    // Card size sliders
+    $('#rpg-pb-card-width').on('input', function () {
+        const v = parseInt($(this).val());
+        _pbSettings().cardWidth = v;
+        $('#rpg-pb-card-width-value').text(v + 'px');
+        _savePb();
+    });
+    $('#rpg-pb-card-height').on('input', function () {
+        const v = parseInt($(this).val());
+        _pbSettings().cardHeight = v;
+        $('#rpg-pb-card-height-value').text(v + 'px');
+        _savePb();
+    });
+    $('#rpg-pb-card-gap').on('input', function () {
+        const v = parseInt($(this).val());
+        _pbSettings().cardGap = v;
+        $('#rpg-pb-card-gap-value').text(v + 'px');
+        _savePb();
+    });
+    $('#rpg-pb-card-radius').on('input', function () {
+        const v = parseInt($(this).val());
+        _pbSettings().cardBorderRadius = v;
+        $('#rpg-pb-card-radius-value').text(v + 'px');
+        _savePb();
+    });
+
+    // Restore card size defaults
+    $('#rpg-pb-reset-card-size').on('click', function () {
+        const s = _pbSettings();
+        s.cardWidth = 110;
+        s.cardHeight = 150;
+        s.cardGap = 8;
+        s.cardBorderRadius = 8;
+        $('#rpg-pb-card-width').val(110);
+        $('#rpg-pb-card-width-value').text('110px');
+        $('#rpg-pb-card-height').val(150);
+        $('#rpg-pb-card-height-value').text('150px');
+        $('#rpg-pb-card-gap').val(8);
+        $('#rpg-pb-card-gap-value').text('8px');
+        $('#rpg-pb-card-radius').val(8);
+        $('#rpg-pb-card-radius-value').text('8px');
+        _savePb();
+    });
+
+    // Color pickers
+    $('#rpg-pb-bar-bg-color').on('input', function () { _pbSettings().barBackground = $(this).val(); _savePb(); });
+    $('#rpg-pb-header-color').on('input', function () { _pbSettings().headerColor = $(this).val(); _savePb(); });
+    $('#rpg-pb-card-border-color').on('input', function () { _pbSettings().cardBorderColor = $(this).val(); _savePb(); });
+    $('#rpg-pb-hover-glow-color').on('input', function () { _pbSettings().hoverGlowColor = $(this).val(); _savePb(); });
+    $('#rpg-pb-speaking-color').on('input', function () { _pbSettings().speakingPulseColor = $(this).val(); _savePb(); });
+
+    // Opacity/intensity sliders
+    $('#rpg-pb-bar-bg-opacity').on('input', function () {
+        const v = parseInt($(this).val());
+        _pbSettings().barBackgroundOpacity = v;
+        $('#rpg-pb-bar-bg-opacity-value').text(v + '%');
+        _savePb();
+    });
+    $('#rpg-pb-card-border-opacity').on('input', function () {
+        const v = parseInt($(this).val());
+        _pbSettings().cardBorderOpacity = v;
+        $('#rpg-pb-card-border-opacity-value').text(v + '%');
+        _savePb();
+    });
+    $('#rpg-pb-hover-glow-intensity').on('input', function () {
+        const v = parseInt($(this).val());
+        _pbSettings().hoverGlowIntensity = v;
+        $('#rpg-pb-hover-glow-intensity-value').text(v + 'px');
+        _savePb();
+    });
+    $('#rpg-pb-name-opacity').on('input', function () {
+        const v = parseInt($(this).val());
+        _pbSettings().nameOverlayOpacity = v;
+        $('#rpg-pb-name-opacity-value').text(v + '%');
+        _savePb();
+    });
+    $('#rpg-pb-absent-opacity').on('input', function () {
+        const v = parseInt($(this).val());
+        _pbSettings().absentOpacity = v;
+        $('#rpg-pb-absent-opacity-value').text(v + '%');
+        _savePb();
+    });
+    // ── Scene Tracker customization ──
+    const _stSettings = () => {
+        if (!extensionSettings.sceneTracker) extensionSettings.sceneTracker = {};
+        return extensionSettings.sceneTracker;
+    };
+    // saveSettings + applySceneTrackerSettings are cheap (debounced save +
+    // style-attr updates on existing headers = live preview), but
+    // updateChatSceneHeaders is a full rebuild — during a slider/color drag
+    // the input event fires per frame, so the rebuild is debounced.
+    let _stRebuildTimer = null;
+    const _saveSt = () => {
+        saveSettings();
+        applySceneTrackerSettings();
+        clearTimeout(_stRebuildTimer);
+        _stRebuildTimer = setTimeout(() => updateChatSceneHeaders(), 150);
+    };
+
+    /**
+     * Shows/hides the color pickers and theme-controlled notice in the
+     * Scene Tracker → Colors section based on the themeControlled toggle state.
+     */
+    function _updateStThemeControlledUI(controlled) {
+        if (controlled) {
+            $('#rpg-st-colors-group').hide();
+            $('#rpg-st-theme-msg').show();
+        } else {
+            $('#rpg-st-colors-group').show();
+            $('#rpg-st-theme-msg').hide();
+        }
+    }
+
+    // Scene Tracker toggle and infoBox widget enabled flag are the same concept.
+    // Syncing both ensures the AI generates the field AND the tracker bar displays it.
+    // Also mirrors the Tracker Editor checkbox when its modal is open —
+    // .prop('checked') does not fire change events, so no sync loop.
+    const _editorCheckboxIds = {
+        time: '#rpg-widget-time',
+        date: '#rpg-widget-date',
+        location: '#rpg-widget-location',
+        recentEvents: '#rpg-widget-events',
+        weather: '#rpg-widget-weather',
+        moonPhase: '#rpg-widget-moonphase',
+        tension: '#rpg-widget-tension',
+        timeSinceRest: '#rpg-widget-timesincerest',
+        conditions: '#rpg-widget-conditions',
+        terrain: '#rpg-widget-terrain',
+    };
+    const _syncWidgetField = (widgetKey, checked) => {
+        const widgets = extensionSettings.trackerConfig?.infoBox?.widgets;
+        if (widgets) {
+            if (!widgets[widgetKey]) widgets[widgetKey] = { enabled: false, persistInHistory: false };
+            widgets[widgetKey].enabled = checked;
+        }
+        if (_editorCheckboxIds[widgetKey]) $(_editorCheckboxIds[widgetKey]).prop('checked', checked);
+    };
+    // Custom scene fields get quick toggles here too, generated from config.
+    // The built-in rows above are hardcoded markup, which is exactly why a
+    // custom field could never appear in this menu (and why the built-in
+    // toggles drifted from the Tracker Editor once already) — these are built
+    // from the same trackerConfig the editor writes, so they cannot disagree.
+    // A custom field has ONE switch (field.enabled) rather than the built-ins'
+    // separate show-flag + widget-flag pair.
+    // Saving the Tracker Editor can add/remove/rename custom fields — rebuild
+    // the quick-toggle list so a new field shows up with the built-in ones
+    // right away rather than after a reload.
+    window.addEventListener('dooms:tracker-config-saved', () => {
+        try { renderSceneCustomFieldToggles(); } catch (e) { /* non-fatal */ }
+        try { renderWorkshopRelationships(); } catch (e) { /* non-fatal */ }
+    });
+
+    // ── Workshop → Relationships ──
+    // Writes straight to extensionSettings (no snapshot/Cancel transaction
+    // here, unlike the Edit Trackers modal), so each edit saves immediately.
+    const _saveRel = (pc) => {
+        syncRelationshipConfig(pc);
+        try { saveSettings(); } catch (e) { console.warn('[Dooms Tracker] relationship save failed', e); }
+        try { renderWorkshopRelationshipPreview(); } catch (e) { /* non-fatal */ }
+        try { renderThoughts(); clearPortraitCache(); updatePortraitBar(); } catch (e) {}
+    };
+    $(document).on('change', '#rpg-ws-relationships-enabled', function () {
+        const pc = getRelationshipConfig();
+        if (!pc) return;
+        pc.relationships.enabled = $(this).prop('checked');
+        _saveRel(pc);
+    });
+    $(document).on('click', '#rpg-ws-add-relationship', function () {
+        const pc = getRelationshipConfig();
+        if (!pc) return;
+        const emojis = pc.relationships.relationshipEmojis;
+        let name = 'New Relationship';
+        let n = 1;
+        while (emojis[name]) { n++; name = `New Relationship ${n}`; }
+        emojis[name] = '🙂';
+        _saveRel(pc);
+        renderWorkshopRelationships();
+    });
+    $(document).on('click', '.rpg-ws-rel-remove', function () {
+        const pc = getRelationshipConfig();
+        if (!pc) return;
+        delete pc.relationships.relationshipEmojis[String($(this).data('relationship'))];
+        _saveRel(pc);
+        renderWorkshopRelationships();
+    });
+    // Renaming rebuilds the map in place so the row order the user sees is
+    // preserved — reinserting the key would send it to the end of the list.
+    $(document).on('blur', '.rpg-ws-rel-name', function () {
+        const pc = getRelationshipConfig();
+        if (!pc) return;
+        const oldName = String($(this).data('relationship'));
+        const newName = String($(this).val() || '').trim();
+        if (!newName || newName === oldName) { renderWorkshopRelationships(); return; }
+        const emojis = pc.relationships.relationshipEmojis;
+        if (emojis[newName] !== undefined) { renderWorkshopRelationships(); return; } // name taken
+        const rebuilt = {};
+        for (const [k, v] of Object.entries(emojis)) rebuilt[k === oldName ? newName : k] = v;
+        pc.relationships.relationshipEmojis = rebuilt;
+        _saveRel(pc);
+        renderWorkshopRelationships();
+    });
+    $(document).on('blur', '.rpg-ws-rel-emoji', function () {
+        const pc = getRelationshipConfig();
+        if (!pc) return;
+        const name = String($(this).data('relationship'));
+        if (pc.relationships.relationshipEmojis[name] === undefined) return;
+        pc.relationships.relationshipEmojis[name] = String($(this).val() || '').trim() || '🙂';
+        _saveRel(pc);
+    });
+    // Clicking the emoji field opens the picker; typing into it still works,
+    // so an emoji outside the curated set can be pasted in as before.
+    $(document).on('click', '.rpg-ws-rel-emoji', function () {
+        const input = this;
+        const name = String($(input).data('relationship'));
+        openEmojiPicker(input, (emoji) => {
+            const pc = getRelationshipConfig();
+            if (!pc || pc.relationships.relationshipEmojis[name] === undefined) return;
+            pc.relationships.relationshipEmojis[name] = emoji || '🙂';
+            $(input).val(pc.relationships.relationshipEmojis[name]);
+            _saveRel(pc);
+        });
+    });
+    // Wording override. Empty string is meaningful (= use the bare option
+    // list), so it's stored as '' rather than deleted. This one skips the
+    // _saveRel repaint: the wording only ever reaches the prompt, so there's
+    // nothing on screen to redraw, and repainting per keystroke would flicker
+    // the portrait bar while typing. saveSettings is debounced internally.
+    $(document).on('input', '#rpg-ws-relationship-prompt', function () {
+        const pc = getRelationshipConfig();
+        if (!pc) return;
+        pc.relationships.prompt = String($(this).val() || '');
+        try { saveSettings(); } catch (e) { console.warn('[Dooms Tracker] relationship save failed', e); }
+        renderWorkshopRelationshipPreview();
+    });
+
+    $(document).on('change', '.rpg-st-custom-field-toggle', function () {
+        const key = String($(this).data('fieldId') || '');
+        const fields = extensionSettings.trackerConfig?.infoBox?.customFields;
+        if (!Array.isArray(fields)) return;
+        // Same id-or-name fallback the toggle was rendered with; matching on
+        // id alone left fields that carry no id (imported presets) with a
+        // toggle that flipped visually and did nothing.
+        const field = fields.find(f => f && String(f.id ?? f.name) === key);
+        if (!field) return;
+        field.enabled = $(this).prop('checked');
+        _saveSt();
+        try { resetSceneHeaderCache(); updateChatSceneHeaders(); } catch (e) { /* non-fatal */ }
+    });
+
+    // Visibility toggles. showCharacters/showQuest have no infoBox widget
+    // equivalent (their data comes from other trackers), so they don't sync.
+    const _stToggles = [
+        ['#rpg-st-show-time', 'showTime', 'time'],
+        ['#rpg-st-show-date', 'showDate', 'date'],
+        ['#rpg-st-show-location', 'showLocation', 'location'],
+        ['#rpg-st-show-characters', 'showCharacters', null],
+        ['#rpg-st-show-quest', 'showQuest', null],
+        ['#rpg-st-show-events', 'showRecentEvents', 'recentEvents'],
+        ['#rpg-st-show-moonphase', 'showMoonPhase', 'moonPhase'],
+        ['#rpg-st-show-tension', 'showTension', 'tension'],
+        ['#rpg-st-show-timesincerest', 'showTimeSinceRest', 'timeSinceRest'],
+        ['#rpg-st-show-conditions', 'showConditions', 'conditions'],
+        ['#rpg-st-show-terrain', 'showTerrain', 'terrain'],
+        ['#rpg-st-show-weather', 'showWeather', 'weather'],
+    ];
+    for (const [selector, showKey, widgetKey] of _stToggles) {
+        $(selector).on('change', function () {
+            const v = $(this).prop('checked');
+            _stSettings()[showKey] = v;
+            if (widgetKey) _syncWidgetField(widgetKey, v);
+            _saveSt();
+        });
+    }
+    // Layout
+    $('#rpg-st-layout').on('change', function () {
+        _stSettings().layout = $(this).val();
+        _saveSt();
+        // Layout change requires full DOM rebuild (different HTML structures)
+        resetSceneHeaderCache();
+        updateChatSceneHeaders();
+    });
+
+    // Sizing sliders
+    $('#rpg-st-font-size').on('input', function () {
+        const v = parseInt($(this).val());
+        _stSettings().fontSize = v;
+        $('#rpg-st-font-size-value').text(v + '%');
+        _saveSt();
+    });
+    $('#rpg-st-border-radius').on('input', function () {
+        const v = parseInt($(this).val());
+        _stSettings().borderRadius = v;
+        $('#rpg-st-border-radius-value').text(v + 'px');
+        _saveSt();
+    });
+    $('#rpg-st-padding').on('input', function () {
+        const v = parseInt($(this).val());
+        _stSettings().padding = v;
+        $('#rpg-st-padding-value').text(v + 'px');
+        _saveSt();
+    });
+    $('#rpg-st-border-width').on('input', function () {
+        const v = parseInt($(this).val());
+        _stSettings().borderWidth = v;
+        $('#rpg-st-border-width-value').text(v + 'px');
+        _saveSt();
+    });
+
+    // Color pickers
+    $('#rpg-st-bg-color').on('input', function () { _stSettings().bgColor = $(this).val(); _saveSt(); });
+    $('#rpg-st-border-color').on('input', function () { _stSettings().borderColor = $(this).val(); _saveSt(); });
+    $('#rpg-st-accent-color').on('input', function () { _stSettings().accentColor = $(this).val(); _saveSt(); });
+    $('#rpg-st-label-color').on('input', function () { _stSettings().labelColor = $(this).val(); _saveSt(); });
+    $('#rpg-st-text-color').on('input', function () { _stSettings().textColor = $(this).val(); _saveSt(); });
+    $('#rpg-st-badge-color').on('input', function () { _stSettings().charBadgeBg = $(this).val(); _saveSt(); });
+    $('#rpg-st-quest-color').on('input', function () { _stSettings().questIconColor = $(this).val(); _saveSt(); });
+    $('#rpg-st-quest-text-color').on('input', function () { _stSettings().questTextColor = $(this).val(); _saveSt(); });
+    $('#rpg-st-events-color').on('input', function () { _stSettings().eventsTextColor = $(this).val(); _saveSt(); });
+
+    // Opacity sliders
+    $('#rpg-st-bg-opacity').on('input', function () {
+        const v = parseInt($(this).val());
+        _stSettings().bgOpacity = v;
+        $('#rpg-st-bg-opacity-value').text(v + '%');
+        _saveSt();
+    });
+    $('#rpg-st-border-opacity').on('input', function () {
+        const v = parseInt($(this).val());
+        _stSettings().borderOpacity = v;
+        $('#rpg-st-border-opacity-value').text(v + '%');
+        _saveSt();
+    });
+    $('#rpg-st-badge-opacity').on('input', function () {
+        const v = parseInt($(this).val());
+        _stSettings().charBadgeOpacity = v;
+        $('#rpg-st-badge-opacity-value').text(v + '%');
+        _saveSt();
+    });
+
+    // Reset defaults
+    $('#rpg-st-reset').on('click', function () {
+        const defaults = {
+            showTime: true, showDate: true, showLocation: true,
+            showCharacters: true, showQuest: true, showRecentEvents: true,
+            layout: 'grid',
+            bgColor: '#e94560', bgOpacity: 8,
+            borderColor: '#e94560', borderOpacity: 15,
+            accentColor: '#e94560', labelColor: '#888888', textColor: '#d0d0d0',
+            charBadgeBg: '#e94560', charBadgeOpacity: 12,
+            questIconColor: '#f0c040', eventsTextColor: '#999999',
+            fontSize: 82, borderRadius: 8, padding: 10, borderWidth: 3,
+            themeControlled: false,
+        };
+        extensionSettings.sceneTracker = { ...defaults };
+        $('#rpg-st-theme-controlled').prop('checked', false);
+        _updateStThemeControlledUI(false);
+        // Update all inputs
+        $('#rpg-st-show-time').prop('checked', true);
+        $('#rpg-st-show-date').prop('checked', true);
+        $('#rpg-st-show-location').prop('checked', true);
+        $('#rpg-st-show-characters').prop('checked', true);
+        $('#rpg-st-show-quest').prop('checked', true);
+        $('#rpg-st-show-events').prop('checked', true);
+        $('#rpg-st-show-moonphase').prop('checked', false);
+        $('#rpg-st-show-tension').prop('checked', false);
+        $('#rpg-st-show-timesincerest').prop('checked', false);
+        $('#rpg-st-show-conditions').prop('checked', false);
+        $('#rpg-st-show-terrain').prop('checked', false);
+        $('#rpg-st-layout').val('grid');
+        $('#rpg-st-font-size').val(82); $('#rpg-st-font-size-value').text('82%');
+        $('#rpg-st-border-radius').val(8); $('#rpg-st-border-radius-value').text('8px');
+        $('#rpg-st-padding').val(10); $('#rpg-st-padding-value').text('10px');
+        $('#rpg-st-border-width').val(3); $('#rpg-st-border-width-value').text('3px');
+        $('#rpg-st-bg-color').val('#e94560');
+        $('#rpg-st-bg-opacity').val(8); $('#rpg-st-bg-opacity-value').text('8%');
+        $('#rpg-st-border-color').val('#e94560');
+        $('#rpg-st-border-opacity').val(15); $('#rpg-st-border-opacity-value').text('15%');
+        $('#rpg-st-accent-color').val('#e94560');
+        $('#rpg-st-label-color').val('#888888');
+        $('#rpg-st-text-color').val('#d0d0d0');
+        $('#rpg-st-badge-color').val('#e94560');
+        $('#rpg-st-badge-opacity').val(12); $('#rpg-st-badge-opacity-value').text('12%');
+        $('#rpg-st-quest-color').val('#f0c040');
+        $('#rpg-st-quest-text-color').val('#f0c040');
+        $('#rpg-st-events-color').val('#999999');
+        _saveSt();
+        updateChatSceneHeaders();
+    });
+
+    // ── Doom Counter customization ──
+    // ── Inline Banners ──
+    const _ibSettings = () => {
+        if (!extensionSettings.inlineBanners) extensionSettings.inlineBanners = {};
+        return extensionSettings.inlineBanners;
+    };
+
+    $('#rpg-ib-toggle').on('change', function () {
+        _ibSettings().enabled = $(this).prop('checked');
+        $('#rpg-ib-badge').text($(this).prop('checked') ? 'on' : 'off');
+        $('#rpg-ib-options').toggle($(this).prop('checked'));
+        saveSettings();
+        updateChatSceneHeaders();
+    });
+
+    $('#rpg-ib-style').on('change', function () {
+        _ibSettings().style = $(this).val();
+        saveSettings();
+        updateChatSceneHeaders();
+    });
+
+    // ── Doom Counter ──
+    const _dcSettings = () => {
+        if (!extensionSettings.doomCounter) extensionSettings.doomCounter = {};
+        return extensionSettings.doomCounter;
+    };
+
+    $('#rpg-toggle-doom-counter').on('change', function () {
+        _dcSettings().enabled = $(this).prop('checked');
+        saveSettings();
+        $('#rpg-dc-badge').text($(this).prop('checked') ? 'on' : 'off');
+        $('#rpg-dc-options').toggle($(this).prop('checked'));
+        updateDoomCounterUI();
+    });
+
+    $('#rpg-dc-ceiling').on('input', function () {
+        const v = parseInt($(this).val());
+        _dcSettings().lowTensionCeiling = v;
+        $('#rpg-dc-ceiling-value').text(`1-${v}`);
+        saveSettings();
+    });
+
+    $('#rpg-dc-threshold').on('input', function () {
+        const v = parseInt($(this).val());
+        _dcSettings().lowTensionThreshold = v;
+        $('#rpg-dc-threshold-value').text(v);
+        $('#rpg-dc-streak-max').text(v);
+        saveSettings();
+    });
+
+    $('#rpg-dc-countdown').on('input', function () {
+        const v = parseInt($(this).val());
+        _dcSettings().countdownLength = v;
+        $('#rpg-dc-countdown-value').text(v);
+        saveSettings();
+    });
+
+    $('#rpg-dc-choices').on('change', function () {
+        _dcSettings().twistChoiceCount = parseInt($(this).val());
+        saveSettings();
+    });
+
+    $('#rpg-dc-trap-mode').on('change', function () {
+        _dcSettings().trapMode = $(this).prop('checked');
+        saveSettings();
+        updateDoomCounterUI();
+        updateChatSceneHeaders();
+    });
+
+    // ── Advanced section toggle ──
+    $('.rpg-dc-advanced-toggle').on('click', function () {
+        const $body = $('.rpg-dc-advanced-body');
+        const $chevron = $(this).find('.rpg-dc-advanced-chevron');
+        $body.slideToggle(200);
+        $chevron.toggleClass('fa-chevron-down fa-chevron-up');
+    });
+
+    // ── Advanced: Context Messages ──
+    $('#rpg-dc-context-messages').on('input', function () {
+        const v = parseInt($(this).val());
+        _dcSettings().twistContextMessages = v;
+        $('#rpg-dc-context-messages-value').text(v);
+        saveSettings();
+    });
+
+    // ── Advanced: Message Truncation ──
+    $('#rpg-dc-msg-truncation').on('input', function () {
+        const v = parseInt($(this).val());
+        _dcSettings().twistMessageTruncation = v;
+        $('#rpg-dc-msg-truncation-value').text(v);
+        saveSettings();
+    });
+
+    // ── Advanced: Twist Injection Depth ──
+    $('#rpg-dc-injection-depth').on('input', function () {
+        const v = parseInt($(this).val());
+        _dcSettings().twistInjectionDepth = v;
+        $('#rpg-dc-injection-depth-value').text(v);
+        saveSettings();
+    });
+
+    $('#rpg-dc-debug-display').on('change', function () {
+        const isDebug = $(this).prop('checked');
+        _dcSettings().debugDisplay = isDebug;
+        saveSettings();
+        updateChatSceneHeaders();
+        // Expand threshold slider range to 0 in debug mode for quick testing
+        const $slider = $('#rpg-dc-threshold');
+        if (isDebug) {
+            $slider.attr('min', 0);
+        } else {
+            $slider.attr('min', 3);
+            // Clamp value back up if it was set below 3
+            const cur = parseInt($slider.val());
+            if (cur < 3) {
+                $slider.val(3);
+                _dcSettings().lowTensionThreshold = 3;
+                $('#rpg-dc-threshold-value').text(3);
+                $('#rpg-dc-streak-max').text(3);
+                saveSettings();
+            }
+        }
+    });
+
+    $('#rpg-dc-trigger-now').on('click', function () {
+        triggerDoomCounter().catch(err => console.error('[Doom Counter] Manual trigger failed:', err));
+    });
+
+    $('#rpg-dc-reset').on('click', function () {
+        resetCounters();
+        saveChatData();
+        updateDoomCounterUI();
+        toastr.info('Doom Counter reset.', '', { timeOut: 2000 });
+    });
+
+    // ── Knives (per-chat toggle; the knives themselves live on character
+    //    cards in the Character Workshop) ──
+    $('#rpg-dc-knives-enabled').on('change', function () {
+        setDoomKnivesEnabled($(this).prop('checked'));
+    });
+
+    // NOTE: Name Ban handlers removed — feature superseded by Character
+    // Aliases (Character Workshop → Identity → Aliases).
+
+    // ── Chat Bubbles & Info Panel customization ──
+    const _cbSettings = () => {
+        if (!extensionSettings.chatBubbleSettings) extensionSettings.chatBubbleSettings = {};
+        return extensionSettings.chatBubbleSettings;
+    };
+    const _saveCb = () => { saveSettings(); applyChatBubbleSettings(); };
+    const _saveCbRerender = () => { _saveCb(); revertAllChatBubbles(); applyAllChatBubbles(); };
+
+    // Bubble mode selector
+    $('#rpg-cb-bubble-mode').on('change', function () {
+        const oldMode = extensionSettings.chatBubbleMode;
+        extensionSettings.chatBubbleMode = $(this).val();
+        saveSettings();
+        onChatBubbleModeChanged(oldMode, extensionSettings.chatBubbleMode);
+        $('#rpg-cb-badge').text(extensionSettings.chatBubbleMode === 'off' ? 'off' : extensionSettings.chatBubbleMode);
+    });
+
+    // Bubble appearance toggles
+    $('#rpg-cb-show-avatars').on('change', function () {
+        _cbSettings().showAvatars = $(this).prop('checked');
+        _saveCb();
+        const show = $(this).prop('checked');
+        document.querySelectorAll('.dooms-bubbles').forEach(el => {
+            el.classList.toggle('dooms-bubbles--no-avatars', !show);
+        });
+    });
+    $('#rpg-cb-skip-styled-divs').on('change', function () {
+        _cbSettings().skipStyledDivs = $(this).prop('checked');
+        _saveCbRerender();
+    });
+    $('#rpg-cb-show-author-names').on('change', function () { _cbSettings().showAuthorNames = $(this).prop('checked'); _saveCbRerender(); });
+    $('#rpg-cb-show-narrator-label').on('change', function () { _cbSettings().showNarratorLabel = $(this).prop('checked'); _saveCbRerender(); });
+    $('#rpg-cb-narrator-italic').on('change', function () { _cbSettings().narratorItalic = $(this).prop('checked'); _saveCb(); });
+    $('#rpg-cb-hide-st-avatar').on('change', function () {
+        _cbSettings().hideStAvatar = $(this).prop('checked');
+        _saveCb();
+        document.body.classList.toggle('dooms-hide-st-avatar', $(this).prop('checked'));
+    });
+
+    // Bubble color pickers
+    $('#rpg-cb-narrator-color').on('input', function () { _cbSettings().narratorTextColor = $(this).val(); _saveCb(); });
+    $('#rpg-cb-unknown-color').on('input', function () { _cbSettings().unknownSpeakerColor = $(this).val(); _saveCb(); });
+    $('#rpg-cb-accent-color').on('input', function () { _cbSettings().accentColor = $(this).val(); _saveCb(); });
+    $('#rpg-cb-bg-tint').on('input', function () { _cbSettings().backgroundTint = $(this).val(); _saveCb(); });
+
+    // Bubble opacity/sizing sliders
+    $('#rpg-cb-bg-opacity').on('input', function () {
+        const v = parseInt($(this).val());
+        _cbSettings().backgroundOpacity = v;
+        $('#rpg-cb-bg-opacity-value').text(v + '%');
+        _saveCb();
+    });
+    $('#rpg-cb-font-size').on('input', function () {
+        const v = parseInt($(this).val());
+        _cbSettings().fontSize = v;
+        $('#rpg-cb-font-size-value').text(v + '%');
+        _saveCb();
+    });
+    $('#rpg-cb-avatar-size').on('input', function () {
+        const v = parseInt($(this).val());
+        _cbSettings().avatarSize = v;
+        $('#rpg-cb-avatar-size-value').text(v + 'px');
+        _saveCb();
+    });
+    $('#rpg-cb-border-radius').on('input', function () {
+        const v = parseInt($(this).val());
+        _cbSettings().borderRadius = v;
+        $('#rpg-cb-border-radius-value').text(v + 'px');
+        _saveCb();
+    });
+    $('#rpg-cb-spacing').on('input', function () {
+        const v = parseInt($(this).val());
+        _cbSettings().spacing = v;
+        $('#rpg-cb-spacing-value').text(v + 'px');
+        _saveCb();
+    });
+
+    // Reset defaults button (Chat Bubbles only)
+    $('#rpg-cb-reset').on('click', function () {
+        extensionSettings.chatBubbleSettings = {
+            narratorTextColor: '#999999',
+            unknownSpeakerColor: '#aaaaaa',
+            accentColor: '#e94560',
+            backgroundTint: '#1a1a2e',
+            backgroundOpacity: 5,
+            fontSize: 92,
+            avatarSize: 40,
+            borderRadius: 6,
+            spacing: 12,
+            showAvatars: true,
+            skipStyledDivs: true,
+            showAuthorNames: true,
+            showNarratorLabel: true,
+            narratorItalic: true,
+            hideStAvatar: false,
+        };
+        document.body.classList.remove('dooms-hide-st-avatar');
+        // Update all inputs to defaults
+        loadChatBubbleSettingsUI();
+        _saveCb();
+        revertAllChatBubbles();
+        applyAllChatBubbles();
+    });
+
+
+    $('#rpg-toggle-thoughts-in-chat').on('change', function () {
+        extensionSettings.showThoughtsInChat = $(this).prop('checked');
+        saveSettings();
+        updateChatThoughts();
+    });
+
+    $('#rpg-toggle-tracker-json-in-chat').on('change', function () {
+        extensionSettings.showTrackerJsonInChat = $(this).prop('checked');
+        saveSettings();
+        // Sync-style sweep adds or removes the dropdowns immediately.
+        updateTrackerJsonDropdowns();
+    });
+    // ── Feature pill toggles ──
+    $('#rpg-toggle-html-prompt').on('change', function () {
+        extensionSettings.enableHtmlPrompt = $(this).prop('checked');
+        saveSettings();
+    });
+    $('#rpg-toggle-dialogue-coloring').on('change', function () {
+        extensionSettings.enableDialogueColoring = $(this).prop('checked');
+        saveSettings();
+    });
+    $('#rpg-toggle-dynamic-weather').on('change', function () {
+        extensionSettings.enableDynamicWeather = $(this).prop('checked');
+        saveSettings();
+        toggleDynamicWeather(extensionSettings.enableDynamicWeather);
+    });
+    $('#rpg-toggle-auto-avatars').on('change', function () {
+        extensionSettings.autoGenerateAvatars = $(this).prop('checked');
+        saveSettings();
+    });
+    $('#rpg-toggle-narrator').on('change', function () {
+        extensionSettings.narratorMode = $(this).prop('checked');
+        saveSettings();
+    });
+    $('#rpg-skip-guided-mode').on('change', function () {
+        extensionSettings.skipInjectionsForGuided = String($(this).val());
+        saveSettings();
+    });
+    // Connection Profile dropdown
+    $('#rpg-connection-profile').on('change', function () {
+        extensionSettings.connectionProfile = String($(this).val());
+        saveSettings();
+    });
+    // ── History Persistence settings ──
+    $('#rpg-toggle-history-persistence').on('change', function () {
+        if (!extensionSettings.historyPersistence) {
+            extensionSettings.historyPersistence = { enabled: false, messageCount: 5, injectionPosition: 'assistant_message_end', sendAllEnabledOnRefresh: false };
+        }
+        extensionSettings.historyPersistence.enabled = $(this).prop('checked');
+        saveSettings();
+    });
+    $('#rpg-history-message-count').on('change', function () {
+        if (!extensionSettings.historyPersistence) {
+            extensionSettings.historyPersistence = { enabled: false, messageCount: 5, injectionPosition: 'assistant_message_end', sendAllEnabledOnRefresh: false };
+        }
+        extensionSettings.historyPersistence.messageCount = parseInt(String($(this).val()));
+        saveSettings();
+    });
+    $('#rpg-history-injection-position').on('change', function () {
+        if (!extensionSettings.historyPersistence) {
+            extensionSettings.historyPersistence = { enabled: false, messageCount: 5, injectionPosition: 'assistant_message_end', sendAllEnabledOnRefresh: false };
+        }
+        extensionSettings.historyPersistence.injectionPosition = String($(this).val());
+        saveSettings();
+    });
+    $('#rpg-toggle-send-all-on-refresh').on('change', function () {
+        if (!extensionSettings.historyPersistence) {
+            extensionSettings.historyPersistence = { enabled: false, messageCount: 5, injectionPosition: 'assistant_message_end', sendAllEnabledOnRefresh: false };
+        }
+        extensionSettings.historyPersistence.sendAllEnabledOnRefresh = $(this).prop('checked');
+        saveSettings();
+    });
+    // ── Lorebook Manager settings ──
+    $('#rpg-toggle-lorebook').on('change', async function () {
+        if (!extensionSettings.lorebook) {
+            extensionSettings.lorebook = { enabled: true, campaigns: {}, campaignOrder: [], collapsedCampaigns: [], expandedBooks: [], lastActiveTab: 'all', lastFilter: 'all', lastSearch: '' };
+        }
+        extensionSettings.lorebook.enabled = $(this).prop('checked');
+        $('#rpg-lb-badge').text($(this).prop('checked') ? 'on' : 'off');
+        saveSettings();
+        // Turning the Lore Library off while a campaign is active would leave
+        // the character stores swapped with no UI to switch them back.
+        if (!extensionSettings.lorebook.enabled && extensionSettings.lorebook.activeCampaignId) {
+            try {
+                const { setActiveCampaign } = await import('./src/systems/lorebook/campaignManager.js');
+                await setActiveCampaign(null);
+            } catch (e) {
+                console.warn('[Dooms Tracker] could not deactivate the campaign', e);
+            }
+        }
+    });
+    // Auto-link books by character name (autoLink.js). Turning it on runs a
+    // sync straight away so matching books for the current cast light up.
+    $('#rpg-toggle-lorebook-autolink').on('change', async function () {
+        if (!extensionSettings.lorebook) {
+            extensionSettings.lorebook = { enabled: true, campaigns: {}, campaignOrder: [], collapsedCampaigns: [], expandedBooks: [], lastActiveTab: 'all', lastFilter: 'all', lastSearch: '' };
+        }
+        extensionSettings.lorebook.autoLinkByName = $(this).prop('checked');
+        saveSettings();
+        if (extensionSettings.lorebook.autoLinkByName) {
+            try {
+                const { syncAutoLinkedLorebooks } = await import('./src/systems/lorebook/autoLink.js');
+                await syncAutoLinkedLorebooks();
+            } catch (e) {
+                console.warn('[DES AutoLink] sync failed', e);
+            }
+        }
+    });
+    $('#rpg-open-lorebook').on('click', async function () {
+        const { getLorebookModal } = await import('./src/systems/ui/lorebookModal.js');
+        const modal = getLorebookModal();
+        if (modal) modal.open();
+    });
+    // ── Theme selection ──
+    $('#rpg-theme-select').on('change', function () {
+        const theme = String($(this).val());
+        extensionSettings.theme = theme;
+        saveSettings();
+        applyTheme();
+        toggleCustomColors();
+        updateSettingsPopupTheme(getSettingsModal());
+        updateChatThoughts();
+        // Update badge
+        $('#rpg-theme-badge').text(theme);
+        // Re-render scene tracker if theme-controlled colors are active
+        if (extensionSettings.sceneTracker?.themeControlled) {
+            applySceneTrackerSettings();
+            updateChatSceneHeaders();
+        }
+    });
+    // ── Animations toggle ──
+    $('#rpg-toggle-animations').on('change', function () {
+        extensionSettings.enableAnimations = $(this).prop('checked');
+        saveSettings();
+        toggleAnimations();
+    });
+    // ── Theme Controls Scene Tracker toggle ──
+    $('#rpg-st-theme-controlled').on('change', function () {
+        const controlled = $(this).prop('checked');
+        extensionSettings.sceneTracker.themeControlled = controlled;
+        saveSettings();
+        _updateStThemeControlledUI(controlled);
+        applySceneTrackerSettings();
+        updateChatSceneHeaders();
+    });
+    // Custom color pickers
+    $('#rpg-custom-bg').on('change', function () {
+        extensionSettings.customColors.bg = String($(this).val());
+        saveSettings();
+        if (extensionSettings.theme === 'custom') {
+            applyCustomTheme();
+            updateSettingsPopupTheme(getSettingsModal()); // Update popup theme instantly
+            updateChatThoughts(); // Update thought bubbles
+        }
+    });
+    $('#rpg-custom-bg-opacity').on('input', function () {
+        const opacity = Number($(this).val());
+        extensionSettings.customColors.bgOpacity = opacity;
+        $('#rpg-custom-bg-opacity-value').text(opacity + '%');
+        if (extensionSettings.theme === 'custom') {
+            applyCustomTheme();
+            updateSettingsPopupTheme(getSettingsModal());
+            updateChatThoughts();
+        }
+    }).on('change', function () {
+        saveSettings();
+    });
+    $('#rpg-custom-accent').on('change', function () {
+        extensionSettings.customColors.accent = String($(this).val());
+        saveSettings();
+        if (extensionSettings.theme === 'custom') {
+            applyCustomTheme();
+            updateSettingsPopupTheme(getSettingsModal()); // Update popup theme instantly
+            updateChatThoughts(); // Update thought bubbles
+        }
+    });
+    $('#rpg-custom-accent-opacity').on('input', function () {
+        const opacity = Number($(this).val());
+        extensionSettings.customColors.accentOpacity = opacity;
+        $('#rpg-custom-accent-opacity-value').text(opacity + '%');
+        if (extensionSettings.theme === 'custom') {
+            applyCustomTheme();
+            updateSettingsPopupTheme(getSettingsModal());
+            updateChatThoughts();
+        }
+    }).on('change', function () {
+        saveSettings();
+    });
+    $('#rpg-custom-text').on('change', function () {
+        extensionSettings.customColors.text = String($(this).val());
+        saveSettings();
+        if (extensionSettings.theme === 'custom') {
+            applyCustomTheme();
+            updateSettingsPopupTheme(getSettingsModal()); // Update popup theme instantly
+            updateChatThoughts(); // Update thought bubbles
+        }
+    });
+    $('#rpg-custom-text-opacity').on('input', function () {
+        const opacity = Number($(this).val());
+        extensionSettings.customColors.textOpacity = opacity;
+        $('#rpg-custom-text-opacity-value').text(opacity + '%');
+        if (extensionSettings.theme === 'custom') {
+            applyCustomTheme();
+            updateSettingsPopupTheme(getSettingsModal());
+            updateChatThoughts();
+        }
+    }).on('change', function () {
+        saveSettings();
+    });
+    $('#rpg-custom-highlight').on('change', function () {
+        extensionSettings.customColors.highlight = String($(this).val());
+        saveSettings();
+        if (extensionSettings.theme === 'custom') {
+            applyCustomTheme();
+            updateSettingsPopupTheme(getSettingsModal()); // Update popup theme instantly
+            updateChatThoughts(); // Update thought bubbles
+        }
+    });
+    $('#rpg-custom-highlight-opacity').on('input', function () {
+        const opacity = Number($(this).val());
+        extensionSettings.customColors.highlightOpacity = opacity;
+        $('#rpg-custom-highlight-opacity-value').text(opacity + '%');
+        if (extensionSettings.theme === 'custom') {
+            applyCustomTheme();
+            updateSettingsPopupTheme(getSettingsModal());
+            updateChatThoughts();
+        }
+    }).on('change', function () {
+        saveSettings();
+    });
+    // External API settings event handlers
+    $('#rpg-external-base-url').on('change', function () {
+        if (!extensionSettings.externalApiSettings) {
+            extensionSettings.externalApiSettings = {
+                baseUrl: '', apiKey: '', model: '', maxTokens: 8192, temperature: 0.7
+            };
+        }
+        extensionSettings.externalApiSettings.baseUrl = String($(this).val()).trim();
+        saveSettings();
+    });
+    $('#rpg-external-api-key').on('change', function () {
+        // Securely store API key in localStorage instead of shared extension settings
+        const apiKey = String($(this).val()).trim();
+        localStorage.setItem('dooms_tracker_external_api_key', apiKey);
+        // Ensure the externalApiSettings object exists, but don't store the key in it
+        if (!extensionSettings.externalApiSettings) {
+            extensionSettings.externalApiSettings = {
+                baseUrl: '', model: '', maxTokens: 8192, temperature: 0.7
+            };
+            saveSettings();
+        }
+    });
+    $('#rpg-external-model').on('change', function () {
+        if (!extensionSettings.externalApiSettings) {
+            extensionSettings.externalApiSettings = {
+                baseUrl: '', apiKey: '', model: '', maxTokens: 8192, temperature: 0.7
+            };
+        }
+        extensionSettings.externalApiSettings.model = String($(this).val()).trim();
+        saveSettings();
+    });
+    $('#rpg-external-max-tokens').on('change', function () {
+        if (!extensionSettings.externalApiSettings) {
+            extensionSettings.externalApiSettings = {
+                baseUrl: '', apiKey: '', model: '', maxTokens: 8192, temperature: 0.7
+            };
+        }
+        extensionSettings.externalApiSettings.maxTokens = parseInt(String($(this).val()));
+        saveSettings();
+    });
+    $('#rpg-external-temperature').on('change', function () {
+        if (!extensionSettings.externalApiSettings) {
+            extensionSettings.externalApiSettings = {
+                baseUrl: '', apiKey: '', model: '', maxTokens: 8192, temperature: 0.7
+            };
+        }
+        extensionSettings.externalApiSettings.temperature = parseFloat(String($(this).val()));
+        saveSettings();
+    });
+    $('#rpg-toggle-api-key-visibility').on('click', function () {
+        const $input = $('#rpg-external-api-key');
+        const type = $input.attr('type') === 'password' ? 'text' : 'password';
+        $input.attr('type', type);
+        $(this).find('i').toggleClass('fa-eye fa-eye-slash');
+    });
+    $('#rpg-test-external-api').on('click', async function () {
+        const $result = $('#rpg-external-api-test-result');
+        const $btn = $(this);
+        const originalText = $btn.html();
+        $btn.html('<i class="fa-solid fa-spinner fa-spin"></i> Testing...').prop('disabled', true);
+        $result.hide().removeClass('rpg-success-message rpg-error-message');
+        try {
+            const result = await testExternalAPIConnection();
+            if (result.success) {
+                $result.addClass('rpg-success-message')
+                    .html(`<i class="fa-solid fa-check-circle"></i> ${result.message}`)
+                    .slideDown();
+                toastr.success(result.message);
+            } else {
+                $result.addClass('rpg-error-message')
+                    .html(`<i class="fa-solid fa-exclamation-circle"></i> ${result.message}`)
+                    .slideDown();
+                toastr.error(result.message);
+            }
+        } catch (error) {
+            $result.addClass('rpg-error-message')
+                .html(`<i class="fa-solid fa-exclamation-circle"></i> Error: ${error.message}`)
+                .slideDown();
+        } finally {
+            $btn.html(originalText).prop('disabled', false);
+        }
+    });
+    // ── Initialize UI state ──
+    // Character Stats: one switch per built-in stat
+    try { initStatsSettings(); } catch (e) { console.warn('[Dooms Tracker] Stats settings failed to initialise', e); }
+    // Generation
+    $('#rpg-generation-mode').val(extensionSettings.generationMode || 'together');
+    $('#rpg-toggle-auto-update').prop('checked', extensionSettings.autoUpdate);
+    $('#rpg-update-depth').val(extensionSettings.updateDepth);
+    $('#rpg-toggle-narrator').prop('checked', extensionSettings.narratorMode);
+    $('#rpg-skip-guided-mode').val(extensionSettings.skipInjectionsForGuided);
+    populateConnectionProfileDropdown();
+    updateGenerationModeUI();
+    // Display
+    $('#rpg-toggle-info-box').prop('checked', extensionSettings.showInfoBox);
+    $('#rpg-toggle-performance-mode').prop('checked', !!extensionSettings.performanceMode);
+    $('#rpg-toggle-mobile-quick-jump').prop('checked', extensionSettings.mobileQuickJumpEnabled !== false);
+    $('#rpg-toggle-mobile-compose').prop('checked', !!extensionSettings.mobileComposeOverlay);
+    $('#rpg-toggle-whats-new').prop('checked', !extensionSettings.whatsNewOptOut);
+    $('#rpg-toggle-compact-prompts').prop('checked', extensionSettings.compactPrompts !== false);
+    $('#rpg-toggle-thoughts').prop('checked', extensionSettings.showCharacterThoughts);
+    $('#rpg-toggle-quests').prop('checked', extensionSettings.showQuests);
+    // Lock Icons toggle removed — lock UI disabled until wired into scene tracker
+    $('#rpg-toggle-portrait-bar').prop('checked', extensionSettings.showPortraitBar ?? true);
+    $('#rpg-portrait-alignment').val(extensionSettings.portraitAlignment || 'left');
+    $('#rpg-portrait-position').val(extensionSettings.portraitPosition || 'above');
+    // Side-mode subordinate settings
+    $('#rpg-pb-side-columns').val(String(extensionSettings.portraitSideColumns || 1));
+    $('#rpg-pb-side-height').val(extensionSettings.portraitSideHeight === 'full' ? 'full' : 'auto');
+    {
+        const sideOpen = extensionSettings.portraitPosition === 'left' || extensionSettings.portraitPosition === 'right';
+        $('#rpg-pb-side-options').toggle(sideOpen);
+        try { applySideModeStyling(); } catch (e) { }
+        // Relabel the alignment dropdown so side mode shows Top/Bottom.
+        try { (window.__doomsRelabelAlignment || (() => { }))(sideOpen); } catch (e) { }
+    }
+    // Portrait Bar customization
+    const pb = extensionSettings.portraitBarSettings || {};
+    $('#rpg-pb-badge').text((extensionSettings.showPortraitBar ?? true) ? 'on' : 'off');
+    $('#rpg-pb-show-header').prop('checked', pb.showHeader !== false);
+    $('#rpg-pb-show-absent').prop('checked', pb.showAbsentCharacters !== false);
+    $('#rpg-pb-show-user').prop('checked', extensionSettings.showUserInPCP === true);
+    $('#rpg-pb-show-arrows').prop('checked', pb.showScrollArrows !== false);
+    $('#rpg-pb-auto-import').prop('checked', extensionSettings.portraitAutoImport !== false);
+    $('#rpg-pb-sync-expressions').prop('checked', extensionSettings.syncExpressionsToPresentCharacters === true);
+    $('#rpg-portrait-enhancement-mode').val(extensionSettings.portraitEnhancementMode || 'expressions');
+    $('#rpg-auto-portrait-mode').val(extensionSettings.autoPortraitMode || 'only_missing');
+    $('#rpg-expression-classifier-api').val(extensionSettings.expressionClassifierApi || 'local');
+    $('#rpg-expression-batch-mode').prop('checked', extensionSettings.expressionBatchMode !== false);
+    updatePortraitEnhancementSettingsVisibility();
+    $('#rpg-pb-hide-default-expressions').prop('checked', extensionSettings.hideDefaultExpressionDisplay === true);
+    $('#rpg-pb-show-expression-in-tooltip').prop('checked', extensionSettings.showExpressionInTooltip === true);
+    // Hide the 'Open Character Roster' settings button when PCP is off —
+    // the Workshop is part of the Present Characters Panel feature set.
+    $('#rpg-open-character-roster').toggle(extensionSettings.showPortraitBar !== false);
+    // Per-chat character tracking is always on now; force the setting
+    // and the (hidden) toggle to true so legacy users with it off are
+    // migrated and any code reading the toggle still gets a truthy value.
+    if (extensionSettings.perChatCharacterTracking !== true) {
+        extensionSettings.perChatCharacterTracking = true;
+        try { saveSettings(); } catch (e) {}
+    }
+    $('#rpg-pb-per-chat-tracking').prop('checked', true);
+    $('#rpg-pb-card-width').val(pb.cardWidth ?? 110);
+    $('#rpg-pb-card-width-value').text((pb.cardWidth ?? 110) + 'px');
+    $('#rpg-pb-card-height').val(pb.cardHeight ?? 150);
+    $('#rpg-pb-card-height-value').text((pb.cardHeight ?? 150) + 'px');
+    $('#rpg-pb-card-gap').val(pb.cardGap ?? 8);
+    $('#rpg-pb-card-gap-value').text((pb.cardGap ?? 8) + 'px');
+    $('#rpg-pb-card-radius').val(pb.cardBorderRadius ?? 8);
+    $('#rpg-pb-card-radius-value').text((pb.cardBorderRadius ?? 8) + 'px');
+    $('#rpg-pb-bar-bg-color').val(pb.barBackground || '#000000');
+    $('#rpg-pb-bar-bg-opacity').val(pb.barBackgroundOpacity ?? 20);
+    $('#rpg-pb-bar-bg-opacity-value').text((pb.barBackgroundOpacity ?? 20) + '%');
+    $('#rpg-pb-header-color').val(pb.headerColor || '#e94560');
+    $('#rpg-pb-card-border-color').val(pb.cardBorderColor || '#ffffff');
+    $('#rpg-pb-card-border-opacity').val(pb.cardBorderOpacity ?? 6);
+    $('#rpg-pb-card-border-opacity-value').text((pb.cardBorderOpacity ?? 6) + '%');
+    $('#rpg-pb-hover-glow-color').val(pb.hoverGlowColor || '#e94560');
+    $('#rpg-pb-hover-glow-intensity').val(pb.hoverGlowIntensity ?? 12);
+    $('#rpg-pb-hover-glow-intensity-value').text((pb.hoverGlowIntensity ?? 12) + 'px');
+    $('#rpg-pb-speaking-color').val(pb.speakingPulseColor || '#e94560');
+    $('#rpg-pb-name-opacity').val(pb.nameOverlayOpacity ?? 85);
+    $('#rpg-pb-name-opacity-value').text((pb.nameOverlayOpacity ?? 85) + '%');
+    $('#rpg-pb-absent-opacity').val(pb.absentOpacity ?? 45);
+    $('#rpg-pb-absent-opacity-value').text((pb.absentOpacity ?? 45) + '%');
+    applyPortraitBarSettings();
+    $('#rpg-toggle-thoughts-in-chat').prop('checked', extensionSettings.showThoughtsInChat);
+    $('#rpg-toggle-tracker-json-in-chat').prop('checked', !!extensionSettings.showTrackerJsonInChat);
+    // Scene Tracker customization
+    const st = extensionSettings.sceneTracker || {};
+    $('#rpg-st-show-time').prop('checked', st.showTime !== false);
+    $('#rpg-st-show-date').prop('checked', st.showDate !== false);
+    $('#rpg-st-show-location').prop('checked', st.showLocation !== false);
+    $('#rpg-st-show-characters').prop('checked', st.showCharacters !== false);
+    $('#rpg-st-show-quest').prop('checked', st.showQuest !== false);
+    $('#rpg-st-show-events').prop('checked', st.showRecentEvents !== false);
+    $('#rpg-st-show-moonphase').prop('checked', st.showMoonPhase === true);
+    $('#rpg-st-show-tension').prop('checked', st.showTension === true);
+    $('#rpg-st-show-timesincerest').prop('checked', st.showTimeSinceRest === true);
+    $('#rpg-st-show-conditions').prop('checked', st.showConditions === true);
+    $('#rpg-st-show-terrain').prop('checked', st.showTerrain === true);
+    $('#rpg-st-show-weather').prop('checked', st.showWeather === true);
+    renderSceneCustomFieldToggles();
+    renderWorkshopRelationships();
+    $('#rpg-st-layout').val(st.layout || 'grid');
+    $('#rpg-st-font-size').val(st.fontSize ?? 82);
+    $('#rpg-st-font-size-value').text((st.fontSize ?? 82) + '%');
+    $('#rpg-st-border-radius').val(st.borderRadius ?? 8);
+    $('#rpg-st-border-radius-value').text((st.borderRadius ?? 8) + 'px');
+    $('#rpg-st-padding').val(st.padding ?? 10);
+    $('#rpg-st-padding-value').text((st.padding ?? 10) + 'px');
+    $('#rpg-st-border-width').val(st.borderWidth ?? 3);
+    $('#rpg-st-border-width-value').text((st.borderWidth ?? 3) + 'px');
+    $('#rpg-st-bg-color').val(st.bgColor || '#e94560');
+    $('#rpg-st-bg-opacity').val(st.bgOpacity ?? 8);
+    $('#rpg-st-bg-opacity-value').text((st.bgOpacity ?? 8) + '%');
+    $('#rpg-st-border-color').val(st.borderColor || '#e94560');
+    $('#rpg-st-border-opacity').val(st.borderOpacity ?? 15);
+    $('#rpg-st-border-opacity-value').text((st.borderOpacity ?? 15) + '%');
+    $('#rpg-st-accent-color').val(st.accentColor || '#e94560');
+    $('#rpg-st-label-color').val(st.labelColor || '#888888');
+    $('#rpg-st-text-color').val(st.textColor || '#d0d0d0');
+    $('#rpg-st-badge-color').val(st.charBadgeBg || '#e94560');
+    $('#rpg-st-badge-opacity').val(st.charBadgeOpacity ?? 12);
+    $('#rpg-st-badge-opacity-value').text((st.charBadgeOpacity ?? 12) + '%');
+    $('#rpg-st-quest-color').val(st.questIconColor || '#f0c040');
+    $('#rpg-st-quest-text-color').val(st.questTextColor || st.questIconColor || '#f0c040');
+    $('#rpg-st-events-color').val(st.eventsTextColor || '#999999');
+    applySceneTrackerSettings();
+    // Feature pills
+    $('#rpg-toggle-html-prompt').prop('checked', extensionSettings.enableHtmlPrompt);
+    $('#rpg-toggle-dialogue-coloring').prop('checked', extensionSettings.enableDialogueColoring);
+    $('#rpg-toggle-dynamic-weather').prop('checked', extensionSettings.enableDynamicWeather ?? true);
+    $('#rpg-toggle-auto-avatars').prop('checked', extensionSettings.autoGenerateAvatars ?? true);
+    // Theme
+    $('#rpg-theme-select').val(extensionSettings.theme);
+    $('#rpg-theme-badge').text(extensionSettings.theme || 'default');
+    $('#rpg-toggle-animations').prop('checked', extensionSettings.enableAnimations ?? true);
+    // Theme Controls Scene Tracker
+    const _tcst = extensionSettings.sceneTracker?.themeControlled ?? false;
+    $('#rpg-st-theme-controlled').prop('checked', _tcst);
+    _updateStThemeControlledUI(_tcst);
+    // Custom colors
+    $('#rpg-custom-bg').val(extensionSettings.customColors.bg);
+    $('#rpg-custom-bg-opacity').val(extensionSettings.customColors.bgOpacity ?? 100);
+    $('#rpg-custom-bg-opacity-value').text((extensionSettings.customColors.bgOpacity ?? 100) + '%');
+    $('#rpg-custom-accent').val(extensionSettings.customColors.accent);
+    $('#rpg-custom-accent-opacity').val(extensionSettings.customColors.accentOpacity ?? 100);
+    $('#rpg-custom-accent-opacity-value').text((extensionSettings.customColors.accentOpacity ?? 100) + '%');
+    $('#rpg-custom-text').val(extensionSettings.customColors.text);
+    $('#rpg-custom-text-opacity').val(extensionSettings.customColors.textOpacity ?? 100);
+    $('#rpg-custom-text-opacity-value').text((extensionSettings.customColors.textOpacity ?? 100) + '%');
+    $('#rpg-custom-highlight').val(extensionSettings.customColors.highlight);
+    $('#rpg-custom-highlight-opacity').val(extensionSettings.customColors.highlightOpacity ?? 100);
+    $('#rpg-custom-highlight-opacity-value').text((extensionSettings.customColors.highlightOpacity ?? 100) + '%');
+    // External API
+    if (extensionSettings.externalApiSettings) {
+        $('#rpg-external-base-url').val(extensionSettings.externalApiSettings.baseUrl || '');
+        const storedApiKey = localStorage.getItem('dooms_tracker_external_api_key') || '';
+        $('#rpg-external-api-key').val(storedApiKey);
+        $('#rpg-external-model').val(extensionSettings.externalApiSettings.model || '');
+        $('#rpg-external-max-tokens').val(extensionSettings.externalApiSettings.maxTokens || 8192);
+        $('#rpg-external-temperature').val(extensionSettings.externalApiSettings.temperature ?? 0.7);
+    }
+    // History Persistence
+    const hp = extensionSettings.historyPersistence || {};
+    $('#rpg-toggle-history-persistence').prop('checked', hp.enabled || false);
+    $('#rpg-history-message-count').val(hp.messageCount ?? 5);
+    $('#rpg-history-injection-position').val(hp.injectionPosition || 'assistant_message_end');
+    $('#rpg-toggle-send-all-on-refresh').prop('checked', hp.sendAllEnabledOnRefresh || false);
+    // Lorebook Manager
+    const lbEnabled = extensionSettings.lorebook?.enabled ?? true;
+    $('#rpg-toggle-lorebook').prop('checked', lbEnabled);
+    $('#rpg-lb-badge').text(lbEnabled ? 'on' : 'off');
+    $('#rpg-toggle-lorebook-autolink').prop('checked', extensionSettings.lorebook?.autoLinkByName !== false);
+
+    // Inline Banners
+    const ib = extensionSettings.inlineBanners || {};
+    $('#rpg-ib-toggle').prop('checked', ib.enabled || false);
+    $('#rpg-ib-badge').text(ib.enabled ? 'on' : 'off');
+    $('#rpg-ib-options').toggle(ib.enabled || false);
+    $('#rpg-ib-style').val(ib.style || 'cinematic');
+
+    // Doom Counter
+    const dc = extensionSettings.doomCounter || {};
+    $('#rpg-toggle-doom-counter').prop('checked', dc.enabled || false);
+    $('#rpg-dc-badge').text(dc.enabled ? 'on' : 'off');
+    $('#rpg-dc-options').toggle(dc.enabled || false);
+    $('#rpg-dc-ceiling').val(dc.lowTensionCeiling || 4);
+    $('#rpg-dc-ceiling-value').text(`1-${dc.lowTensionCeiling || 4}`);
+    $('#rpg-dc-threshold').attr('min', dc.debugDisplay ? 0 : 3).val(dc.lowTensionThreshold || 5);
+    $('#rpg-dc-threshold-value').text(dc.lowTensionThreshold || 5);
+    $('#rpg-dc-streak-max').text(dc.lowTensionThreshold || 5);
+    $('#rpg-dc-countdown').val(dc.countdownLength || 3);
+    $('#rpg-dc-countdown-value').text(dc.countdownLength || 3);
+    $('#rpg-dc-choices').val(dc.twistChoiceCount || 3);
+    $('#rpg-dc-context-messages').val(dc.twistContextMessages || 15);
+    $('#rpg-dc-context-messages-value').text(dc.twistContextMessages || 15);
+    $('#rpg-dc-msg-truncation').val(dc.twistMessageTruncation || 1200);
+    $('#rpg-dc-msg-truncation-value').text(dc.twistMessageTruncation || 1200);
+    $('#rpg-dc-injection-depth').val(dc.twistInjectionDepth || 0);
+    $('#rpg-dc-injection-depth-value').text(dc.twistInjectionDepth || 0);
+    $('#rpg-dc-trap-mode').prop('checked', dc.trapMode || false);
+    $('#rpg-dc-debug-display').prop('checked', dc.debugDisplay || false);
+    updateDoomCounterUI();
+    // (Doom Counter toast listener is registered eagerly in initUI — it must
+    // work before the settings UI has ever been opened.)
+
+    // NOTE: Name Ban settings init removed — feature superseded by Character Aliases.
+
+    // ── Doom Button (FAB) ──
+    if (!extensionSettings.fab || typeof extensionSettings.fab !== 'object') {
+        extensionSettings.fab = { bypassFlyout: false, hiddenButtons: [] };
+    }
+    $('#rpg-toggle-fab-bypass').prop('checked', !!extensionSettings.fab.bypassFlyout);
+    $('#rpg-toggle-fab-bypass').off('change.fab').on('change.fab', function () {
+        extensionSettings.fab.bypassFlyout = $(this).prop('checked');
+        saveSettings();
+    });
+    $('#rpg-toggle-hide-st-topbar').prop('checked', !!extensionSettings.fab.hideStTopBar);
+    $('#rpg-toggle-hide-st-topbar').off('change.fab').on('change.fab', function () {
+        extensionSettings.fab.hideStTopBar = $(this).prop('checked');
+        applyHideStTopBar();
+        saveSettings();
+    });
+    applyHideStTopBar();
+    // Per-button toggles populate dynamically (top bar may not exist yet
+    // on first call). Re-populate on every settings open so the list is fresh.
+    if (typeof window.__doomsFabPopulateToggles === 'function') {
+        window.__doomsFabPopulateToggles();
+    }
+    $(document).off('change.fabToggle', '#rpg-fab-menu-toggles input[data-fab-toggle-id]');
+    $(document).on('change.fabToggle', '#rpg-fab-menu-toggles input[data-fab-toggle-id]', function () {
+        const id = $(this).attr('data-fab-toggle-id');
+        const enabled = $(this).prop('checked');
+        const hidden = new Set(extensionSettings.fab.hiddenButtons || []);
+        if (enabled) hidden.delete(id); else hidden.add(id);
+        extensionSettings.fab.hiddenButtons = Array.from(hidden);
+        saveSettings();
+    });
+    $('#rpg-fab-reset-position').off('click.fab').on('click.fab', function () {
+        delete extensionSettings.fabPosition;
+        saveSettings();
+        const fab = document.getElementById('dooms-settings-fab');
+        if (fab) {
+            fab.style.left = '';
+            fab.style.top = '';
+            fab.style.right = '';
+            fab.style.bottom = '';
+        }
+    });
+
+    // ── Update extension (calls SillyTavern's /api/extensions/update) ──
+    getExtensionVersion().then(v => {
+        if (v) $('#rpg-current-version').text(`Currently v${v}.`);
+    });
+    // Fetch branches from GitHub and populate the dropdown. Best-effort —
+    // failures fall back to a static "main" entry.
+    populateUpdateBranchDropdownOnce();
+    // Update Extension button — git pull on the currently checked-out
+    // branch only. Branch switching is handled by the separate Switch &
+    // Reload button below; mixing the two into one button left users
+    // confused about whether picking a different branch in the dropdown
+    // before clicking Update would actually switch (it used to, but
+    // hiding that behavior behind the same button as "pull current"
+    // wasn't discoverable).
+    $('#rpg-update-extension').off('click.upd').on('click.upd', async function () {
+        const $btn = $(this);
+        if ($btn.prop('disabled')) return;
+        const $status = $('#rpg-update-status');
+        const originalHtml = $btn.html();
+        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Updating…');
+        $status.html('<span style="opacity:0.8;">Contacting SillyTavern…</span>');
+        try {
+            const isUserExt = (import.meta.url || '').includes('/data/');
+            // SillyTavern's update endpoint adds "third-party/" itself, so
+            // strip it from extensionName before posting (otherwise the
+            // server resolves to .../third-party/third-partyFoo).
+            const bareName = extensionName.replace(/^third-party\//, '');
+            const resp = await fetch('/api/extensions/update', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ extensionName: bareName, global: !isUserExt }),
+            });
+            if (!resp.ok) {
+                const text = await resp.text().catch(() => '');
+                throw new Error(text || `HTTP ${resp.status}`);
+            }
+            const result = await resp.json().catch(() => ({}));
+            if (result.isUpToDate) {
+                $status.html('<i class="fa-solid fa-check" style="color:var(--rpg-highlight,#e94560);"></i> Already up to date.');
+            } else {
+                const sha = result.shortCommitHash ? ` (${result.shortCommitHash})` : '';
+                $status.html(`<i class="fa-solid fa-check" style="color:var(--rpg-highlight,#e94560);"></i> Updated${sha}. <strong>Reload SillyTavern</strong> to apply.`);
+            }
+        } catch (err) {
+            console.error('[Dooms Tracker] Update failed:', err);
+            $status.html(`<i class="fa-solid fa-triangle-exclamation" style="color:#e94560;"></i> Update failed: ${err.message || err}`);
+        } finally {
+            $btn.prop('disabled', false).html(originalHtml);
+        }
+    });
+
+    // Switch & Reload button — checks out whatever branch is selected in
+    // the dropdown via /api/extensions/switch (the same endpoint ST's
+    // own "Switch branch" button uses), then reloads the page so the
+    // freshly-checked-out JS actually executes. Without the auto-reload
+    // users were ending up on the new branch on disk but still running
+    // the old extension code in the browser — leading to "I switched
+    // and it says I'm still on main" reports.
+    $('#rpg-switch-branch').off('click.swb').on('click.swb', async function () {
+        const $btn = $(this);
+        if ($btn.prop('disabled')) return;
+        const $status = $('#rpg-update-status');
+        const $sel = $('#rpg-update-branch');
+        const originalHtml = $btn.html();
+        const selectedBranch = String($sel.val() || '').trim();
+        const currentBranch = String($sel.data('currentBranch') || '').trim();
+        if (!selectedBranch) {
+            $status.html('<span style="opacity:0.8;">Pick a branch first.</span>');
+            return;
+        }
+        if (currentBranch && selectedBranch === currentBranch) {
+            $status.html(`<span style="opacity:0.8;">Already on <code>${selectedBranch}</code>. Use Update Extension to pull the latest commit.</span>`);
+            return;
+        }
+        const ok = window.confirm(
+            `Switch Persona Stats to the "${selectedBranch}" branch?\n\n` +
+            `SillyTavern will reload after switching. Your settings, characters, and chats won't be affected — only the extension's code is replaced.`
+        );
+        if (!ok) {
+            $status.html('<span style="opacity:0.8;">Switch cancelled.</span>');
+            return;
+        }
+        $btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Switching…');
+        try {
+            const isUserExt = (import.meta.url || '').includes('/data/');
+            const bareName = extensionName.replace(/^third-party\//, '');
+            // Step 1: pull on the current branch so freshly-pushed
+            // remote branches are fetched into local refs (best-effort —
+            // a stale upstream shouldn't block the user from switching).
+            $status.html('<span style="opacity:0.8;">Fetching latest refs…</span>');
+            try {
+                await fetch('/api/extensions/update', {
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: JSON.stringify({ extensionName: bareName, global: !isUserExt }),
+                });
+            } catch (e) { /* best-effort */ }
+            // Step 2: checkout the target branch via /api/extensions/switch.
+            // First attempt with the bare branch name (works when a local
+            // tracking branch already exists from a prior switch). If ST
+            // responds with "does not exist locally" (typical for branches
+            // the user has never switched to before — e.g. blades-in-the-
+            // dark on a fresh main install), retry with the `origin/`
+            // prefix, which tells ST to create a local tracking branch
+            // from the remote ref. This mirrors ST's own "Switch branch"
+            // button which always passes the remote-prefixed form.
+            $status.html(`<span style="opacity:0.8;">Switching to <code>${selectedBranch}</code>…</span>`);
+            const trySwitch = async (branchName) => fetch('/api/extensions/switch', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify({ extensionName: bareName, branch: branchName, global: !isUserExt }),
+            });
+            let switchResp = await trySwitch(selectedBranch);
+            if (!switchResp.ok) {
+                const firstErr = await switchResp.text().catch(() => '');
+                // Heuristic: if ST tells us the local branch doesn't
+                // exist, retry with origin/ prefix. Match liberally —
+                // ST's exact wording can vary across versions.
+                if (/does not exist|not found|unknown branch/i.test(firstErr)) {
+                    $status.html(`<span style="opacity:0.8;">Creating local tracking branch for <code>${selectedBranch}</code>…</span>`);
+                    switchResp = await trySwitch(`origin/${selectedBranch}`);
+                }
+                if (!switchResp.ok) {
+                    const finalErr = await switchResp.text().catch(() => firstErr);
+                    throw new Error(finalErr || `HTTP ${switchResp.status}`);
+                }
+            }
+            // Step 3: pull on the new branch to land on its HEAD.
+            try {
+                await fetch('/api/extensions/update', {
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: JSON.stringify({ extensionName: bareName, global: !isUserExt }),
+                });
+            } catch (e) { /* best-effort */ }
+            $sel.data('currentBranch', selectedBranch);
+            $status.html(`<i class="fa-solid fa-check" style="color:var(--rpg-highlight,#e94560);"></i> Switched to <code>${selectedBranch}</code>. Reloading…`);
+            $btn.html('<i class="fa-solid fa-rotate fa-spin"></i> Reloading…');
+            // Brief delay so the success state is visible before the
+            // page disappears, then hard-reload to bring up the new
+            // branch's JS. location.reload(true) is deprecated; the
+            // bare reload() in modern browsers does a normal reload
+            // which is enough since switch wrote new files to disk.
+            setTimeout(() => { try { window.location.reload(); } catch (e) { /* fallback */ } }, 1200);
+        } catch (err) {
+            console.error('[Dooms Tracker] Branch switch failed:', err);
+            $status.html(`<i class="fa-solid fa-triangle-exclamation" style="color:#e94560;"></i> Switch failed: ${err.message || err}`);
+            $btn.prop('disabled', false).html(originalHtml);
+        }
+    });
+
+    // Chat Bubbles & Info Panel
+    loadChatBubbleSettingsUI();
+    applyChatBubbleSettings();
+}
+
+/**
+ * Initializes the UI for the extension.
+ */
+async function initUI() {
+    console.log('[Dooms Tracker] initUI() called');
+    // Initialize i18n
+    await i18n.init();
+    console.log('[Dooms Tracker] i18n initialized');
+    // Only initialize UI if extension is enabled
+    if (!extensionSettings.enabled) {
+        console.log('[Dooms Tracker] Extension disabled - skipping UI initialization');
+        return;
+    }
+    console.log('[Dooms Tracker] Extension is enabled');
+    // The settings popup and all other DES modals (template.html) load
+    // lazily on first open — see loadSettingsTemplate().
+    registerSettingsUIInitializer(loadSettingsTemplate);
+    // Translate the eager UI (settings dropdown, FAB) now; the deferred
+    // template re-applies translations when it loads.
+    i18n.applyTranslations(document.body);
+    // Ticker click delegation — expand/collapse
+    // Uses $(document) delegation since the ticker is appended to <body> (position:fixed)
+    $(document).on('click', '.dooms-info-ticker', function () {
+        $(this).closest('.dooms-info-ticker-wrapper').toggleClass('expanded');
+    });
+    // ── Intercept ST's native World Info button ──
+    $('#WI-SP-button .drawer-toggle').on('click.rpgLorebook', function (e) {
+        // One-shot bypass: set when the Lore Library failed to load so the
+        // re-triggered click reaches ST's native drawer handler.
+        if (_wiInterceptBypassOnce) {
+            _wiInterceptBypassOnce = false;
+            return;
+        }
+        // Only intercept if lorebook manager is enabled
+        if (!extensionSettings.lorebook?.enabled) return; // let ST handle it normally
+
+        // Prevent ST's doNavbarIconClick from firing
+        e.stopImmediatePropagation();
+        e.preventDefault();
+
+        // If the WI drawer is already open, close it first
+        const $drawer = $('#WorldInfo');
+        const $icon = $('#WIDrawerIcon');
+        if ($drawer.hasClass('openDrawer')) {
+            $icon.removeClass('openIcon').addClass('closedIcon');
+            $drawer.removeClass('openDrawer').addClass('closedDrawer');
+        }
+
+        // Open our Lorebook Manager modal (loads the deferred settings UI first)
+        ensureSettingsUI().then(async () => {
+            const { getLorebookModal } = await import('./src/systems/ui/lorebookModal.js');
+            const modal = getLorebookModal();
+            if (modal) modal.open();
+        }).catch((err) => {
+            // The native drawer toggle was already suppressed above — if the
+            // deferred UI can't load, the user must not be stranded without
+            // ANY World Info access. Surface the failure and re-trigger the
+            // click with a one-shot bypass so ST's native drawer opens.
+            console.error('[Dooms Tracker] Lore Library failed to load:', err);
+            try { toastr.error('Lore Library failed to load — opening native World Info.', "Persona Stats"); } catch (e) { }
+            _wiInterceptBypassOnce = true;
+            $(this).trigger('click');
+        });
+    });
+    // Global appliers that used to run with the (now-deferred) settings
+    // binder: bubble CSS settings, ST top-bar visibility, the doom-counter
+    // trigger listener.
+    try { applyChatBubbleSettings(); } catch (e) { console.error('[Dooms Tracker] applyChatBubbleSettings() FAILED:', e); }
+    try { applyHideStTopBar(); } catch (e) { console.error('[Dooms Tracker] applyHideStTopBar() FAILED:', e); }
+    try { applyPerformanceMode(); } catch (e) { console.error('[Dooms Tracker] applyPerformanceMode() FAILED:', e); }
+    try { initDoomCounterListener(); } catch (e) { console.error('[Dooms Tracker] initDoomCounterListener() FAILED:', e); }
+    if (extensionSettings.chatBubbleSettings?.hideStAvatar) {
+        document.body.classList.add('dooms-hide-st-avatar');
+    }
+    updateSectionVisibility();
+    applyTheme();
+    toggleCustomColors();
+    toggleAnimations();
+    // Render initial data if available (still needed to populate state for scene headers)
+    console.log('[Dooms Tracker] About to render initial data...');
+    try { renderInfoBox(); console.log('[Dooms Tracker] renderInfoBox() OK'); } catch (e) { console.error('[Dooms Tracker] renderInfoBox() FAILED:', e); }
+    try { renderThoughts(); console.log('[Dooms Tracker] renderThoughts() OK'); } catch (e) { console.error('[Dooms Tracker] renderThoughts() FAILED:', e); }
+    try { renderQuests(); console.log('[Dooms Tracker] renderQuests() OK'); } catch (e) { console.error('[Dooms Tracker] renderQuests() FAILED:', e); }
+    try { updateChatSceneHeaders(); console.log('[Dooms Tracker] updateChatSceneHeaders() OK'); } catch (e) { console.error('[Dooms Tracker] updateChatSceneHeaders() FAILED:', e); }
+    // Info panel is now a scene tracker layout mode — no separate updateInfoPanel() needed
+    try { initPortraitBar(); console.log('[Dooms Tracker] initPortraitBar() OK'); } catch (e) { console.error('[Dooms Tracker] initPortraitBar() FAILED:', e); }
+    try { initExpressionSync(); console.log('[Dooms Tracker] initExpressionSync() OK'); } catch (e) { console.error('[Dooms Tracker] initExpressionSync() FAILED:', e); }
+    try { initWeatherEffects(); console.log('[Dooms Tracker] initWeatherEffects() OK'); } catch (e) { console.error('[Dooms Tracker] initWeatherEffects() FAILED:', e); }
+    // Add settings button as a fixed-position element on <body> so it's
+    // always accessible even when the portrait bar is hidden
+    if ($('#dooms-settings-fab').length === 0) {
+        // Initialize FAB-specific settings shape
+        if (!extensionSettings.fab || typeof extensionSettings.fab !== 'object') {
+            extensionSettings.fab = { bypassFlyout: false, hiddenButtons: [] };
+        }
+        if (!Array.isArray(extensionSettings.fab.hiddenButtons)) {
+            extensionSettings.fab.hiddenButtons = [];
+        }
+        if (typeof extensionSettings.fab.bypassFlyout !== 'boolean') {
+            extensionSettings.fab.bypassFlyout = false;
+        }
+        const fabHtml = `
+            <div id="dooms-settings-fab" class="dooms-settings-fab" title="Doom's Tracker Settings (right-click to move)">
+                <button id="dooms-fab-settings" class="dooms-fab-btn" title="Settings">
+                    <span class="doom-icon"></span>
+                </button>
+            </div>
+        `;
+        $('body').append(fabHtml);
+        const fabEl = document.getElementById('dooms-settings-fab');
+        let suppressClick = false;
+        const openSettingsDirect = () => {
+            ensureSettingsUI().then(() => {
+                const modal = getSettingsModal();
+                if (modal) { modal.open(); } else { $('#rpg-settings-popup').show(); }
+            }).catch(() => {});
+        };
+        const clampPosition = (left, top) => {
+            // Fall back to 40px (the FAB's CSS size) only if offsetWidth
+            // is 0 — happens if called before layout.
+            const w = fabEl.offsetWidth || 40;
+            const h = fabEl.offsetHeight || 40;
+            return {
+                left: Math.max(0, Math.min(window.innerWidth - w, left)),
+                top: Math.max(0, Math.min(window.innerHeight - h, top)),
+            };
+        };
+        const applySavedPosition = () => {
+            const pos = extensionSettings.fabPosition;
+            if (pos === 'center') {
+                // New-player default: centered on screen (drag to move;
+                // dragging stores concrete coords and replaces the sentinel).
+                const w = fabEl.offsetWidth || 40;
+                const h = fabEl.offsetHeight || 40;
+                fabEl.style.left = Math.round((window.innerWidth - w) / 2) + 'px';
+                fabEl.style.top = Math.round((window.innerHeight - h) / 2) + 'px';
+                fabEl.style.right = 'auto';
+                fabEl.style.bottom = 'auto';
+                return;
+            }
+            if (pos && typeof pos.left === 'number' && typeof pos.top === 'number') {
+                const c = clampPosition(pos.left, pos.top);
+                fabEl.style.left = c.left + 'px';
+                fabEl.style.top = c.top + 'px';
+                fabEl.style.right = 'auto';
+                fabEl.style.bottom = 'auto';
+            }
+        };
+        applySavedPosition();
+        // Re-clamp if the viewport shrinks below the saved position
+        window.addEventListener('resize', applySavedPosition);
+        // Fly-out menu: DES Settings + each button from SillyTavern's top bar.
+        // Built dynamically so the menu always reflects whatever the host UI shows.
+        const $menuList = $('<ul class="dooms-fab-menu" role="menu"></ul>');
+        $(fabEl).append($menuList);
+        // Returns every possible flyout entry (without filtering). Used for
+        // both the live menu and the settings panel toggle list. Doom's
+        // Settings is appended LAST so it ends up at the bottom of the
+        // upward-opening fly-out — i.e. closest to the D button.
+        const buildAllMenuItems = () => {
+            const items = [];
+            $('#top-settings-holder .drawer-icon').each(function () {
+                const $icon = $(this);
+                const label = ($icon.attr('title') || $icon.attr('aria-label') || 'Untitled').trim();
+                const rawClass = ($icon.attr('class') || '');
+                const iconClass = rawClass.split(/\s+/)
+                    .filter(c => c.startsWith('fa-'))
+                    .join(' ') || 'fa-solid fa-square';
+                items.push({
+                    id: $icon.attr('id') || label.toLowerCase().replace(/\s+/g, '-'),
+                    label,
+                    iconClass,
+                    action: () => { $icon.trigger('click'); },
+                });
+            });
+
+            items.push({
+                id: 'character-roster',
+                label: 'Workshop',
+                iconClass: 'fa-solid fa-users-rectangle',
+                action: () => {
+                    // The roster listener registers when the deferred settings
+                    // UI loads, so make sure that's done before dispatching.
+                    ensureSettingsUI().then(() => {
+                        try {
+                            window.dispatchEvent(new CustomEvent('dooms:open-roster'));
+                        } catch (e) {
+                            const $btn = $('#rpg-open-character-roster');
+                            if ($btn.length) $btn.trigger('click');
+                        }
+                    }).catch(() => {});
+                },
+            });
+            items.push({
+                id: 'des-settings',
+                label: "Doom's Settings",
+                iconClass: 'fa-solid fa-gear',
+                action: openSettingsDirect,
+            });
+
+            return items;
+        };
+        const buildMenuItems = () => {
+            const hidden = new Set(extensionSettings.fab.hiddenButtons || []);
+            return buildAllMenuItems().filter(i => !hidden.has(i.id));
+        };
+        // Settings panel: list every entry as an enable/disable row
+        const populateFabSettingsToggles = () => {
+            const $container = $('#rpg-fab-menu-toggles');
+            if (!$container.length) return;
+            const items = buildAllMenuItems();
+            $container.empty();
+            for (const item of items) {
+                const hidden = (extensionSettings.fab.hiddenButtons || []).includes(item.id);
+                const $row = $('<div class="rpg-setting-row"></div>');
+                const $label = $('<div class="rpg-setting-label-group"></div>')
+                    .append($('<span class="rpg-setting-label"></span>')
+                        .append($('<i></i>').attr('class', item.iconClass).css({ marginRight: '8px', opacity: 0.85 }))
+                        .append(document.createTextNode(item.label)));
+                const $toggle = $('<label class="rpg-toggle-switch"></label>')
+                    .append($('<input type="checkbox">').prop('checked', !hidden).attr('data-fab-toggle-id', item.id))
+                    .append($('<span class="rpg-toggle-slider"></span>'));
+                $row.append($label).append($toggle);
+                $container.append($row);
+            }
+        };
+        // Expose for the settings UI binder below
+        window.__doomsFabPopulateToggles = populateFabSettingsToggles;
+        const renderMenuItems = () => {
+            $menuList.empty();
+            for (const item of buildMenuItems()) {
+                const $li = $('<li></li>');
+                const $btn = $('<button type="button" class="dooms-fab-menu-item"></button>')
+                    .attr('data-action', item.id)
+                    .append($('<i></i>').attr('class', item.iconClass))
+                    .append($('<span></span>').text(item.label));
+                $btn.on('click', function (ev) {
+                    ev.stopPropagation();
+                    closeFlyout();
+                    if (typeof item.action === 'function') item.action();
+                });
+                $li.append($btn);
+                $menuList.append($li);
+            }
+        };
+        const closeFlyout = () => {
+            $menuList.removeClass('open');
+            fabEl.classList.remove('dooms-fab-open');
+            $(document).off('mousedown.fabflyout keydown.fabflyout');
+        };
+        const openFlyout = () => {
+            renderMenuItems();
+            // Choose direction (up vs down) based on space available
+            const rect = fabEl.getBoundingClientRect();
+            const spaceAbove = rect.top;
+            const spaceBelow = window.innerHeight - rect.bottom;
+            const $items = $menuList.children('li');
+            const total = $items.length;
+            // Estimate: ~36px per item + 8px margin
+            const estimated = total * 44 + 20;
+            const direction = (spaceAbove < estimated && spaceBelow > spaceAbove) ? 'down' : 'up';
+            $menuList.attr('data-direction', direction);
+            // Stagger: item nearest the button animates first
+            $items.each(function (idx) {
+                const stagger = direction === 'up' ? (total - 1 - idx) : idx;
+                this.style.transitionDelay = (stagger * 0.04) + 's';
+            });
+            $menuList.addClass('open');
+            fabEl.classList.add('dooms-fab-open');
+            setTimeout(() => {
+                $(document).on('mousedown.fabflyout', function (ev) {
+                    if (!$(ev.target).closest('#dooms-settings-fab').length) closeFlyout();
+                });
+                $(document).on('keydown.fabflyout', function (ev) {
+                    if (ev.key === 'Escape') closeFlyout();
+                });
+            }, 0);
+        };
+        $('#dooms-fab-settings').on('click', function (e) {
+            if (suppressClick) {
+                suppressClick = false;
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            if (extensionSettings.fab.bypassFlyout) {
+                if ($menuList.hasClass('open')) closeFlyout();
+                openSettingsDirect();
+                return;
+            }
+            if ($menuList.hasClass('open')) closeFlyout();
+            else openFlyout();
+        });
+        // Right-click context menu: Move / Reset
+        const closeContextMenu = () => {
+            $('.dooms-fab-context-menu').remove();
+            $(document).off('mousedown.fabctx keydown.fabctx');
+        };
+        const showContextMenu = (x, y) => {
+            closeContextMenu();
+            const hasCustom = !!extensionSettings.fabPosition;
+            const $menu = $(`
+                <div class="dooms-fab-context-menu" role="menu">
+                    <button type="button" class="dooms-fab-context-item" data-action="move">
+                        <i class="fa-solid fa-arrows-up-down-left-right"></i><span>Move button</span>
+                    </button>
+                    ${hasCustom ? `
+                    <button type="button" class="dooms-fab-context-item" data-action="reset">
+                        <i class="fa-solid fa-rotate-left"></i><span>Reset to bottom-left</span>
+                    </button>` : ''}
+                </div>
+            `);
+            $('body').append($menu);
+            const m = $menu[0];
+            m.style.left = x + 'px';
+            m.style.top = y + 'px';
+            const rect = m.getBoundingClientRect();
+            if (rect.right > window.innerWidth) m.style.left = Math.max(0, window.innerWidth - rect.width - 8) + 'px';
+            if (rect.bottom > window.innerHeight) m.style.top = Math.max(0, window.innerHeight - rect.height - 8) + 'px';
+            $menu.on('click', '.dooms-fab-context-item', function (ev) {
+                ev.stopPropagation();
+                const action = $(this).data('action');
+                closeContextMenu();
+                if (action === 'move') startMoveMode();
+                else if (action === 'reset') resetPosition();
+            });
+            // Defer outside-click binding so the opening contextmenu event doesn't immediately dismiss it
+            setTimeout(() => {
+                $(document).on('mousedown.fabctx', function (ev) {
+                    if (!$(ev.target).closest('.dooms-fab-context-menu').length) closeContextMenu();
+                });
+                $(document).on('keydown.fabctx', function (ev) {
+                    if (ev.key === 'Escape') closeContextMenu();
+                });
+            }, 0);
+        };
+        $('#dooms-settings-fab').on('contextmenu', function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            showContextMenu(e.clientX, e.clientY);
+        });
+        const resetPosition = () => {
+            delete extensionSettings.fabPosition;
+            saveSettings();
+            fabEl.style.left = '';
+            fabEl.style.top = '';
+            fabEl.style.right = '';
+            fabEl.style.bottom = '';
+        };
+        // Move mode: arm one drag session, persist position on release.
+        const startMoveMode = () => {
+            // Re-entry guard — bail if move mode is already armed so the
+            // pointerdown / keydown listeners don't accumulate.
+            if (fabEl.classList.contains('dooms-fab-moving')) return;
+            fabEl.classList.add('dooms-fab-moving');
+            let dragging = false, moved = false;
+            let startX = 0, startY = 0, startLeft = 0, startTop = 0, activePointerId = null;
+            const onPointerDown = (ev) => {
+                if (ev.button !== 0 && ev.pointerType === 'mouse') return;
+                ev.preventDefault();
+                ev.stopPropagation();
+                dragging = true;
+                moved = false;
+                activePointerId = ev.pointerId;
+                try { fabEl.setPointerCapture(ev.pointerId); } catch (_) { }
+                const rect = fabEl.getBoundingClientRect();
+                startX = ev.clientX;
+                startY = ev.clientY;
+                startLeft = rect.left;
+                startTop = rect.top;
+                fabEl.style.left = startLeft + 'px';
+                fabEl.style.top = startTop + 'px';
+                fabEl.style.right = 'auto';
+                fabEl.style.bottom = 'auto';
+                fabEl.classList.add('dooms-fab-dragging');
+                fabEl.addEventListener('pointermove', onPointerMove);
+                fabEl.addEventListener('pointerup', onPointerUp);
+                fabEl.addEventListener('pointercancel', onPointerUp);
+            };
+            const onPointerMove = (ev) => {
+                if (!dragging || ev.pointerId !== activePointerId) return;
+                const dx = ev.clientX - startX;
+                const dy = ev.clientY - startY;
+                if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moved = true;
+                const c = clampPosition(startLeft + dx, startTop + dy);
+                fabEl.style.left = c.left + 'px';
+                fabEl.style.top = c.top + 'px';
+            };
+            const onPointerUp = (ev) => {
+                if (!dragging || ev.pointerId !== activePointerId) return;
+                dragging = false;
+                try { fabEl.releasePointerCapture(ev.pointerId); } catch (_) { }
+                fabEl.removeEventListener('pointermove', onPointerMove);
+                fabEl.removeEventListener('pointerup', onPointerUp);
+                fabEl.removeEventListener('pointercancel', onPointerUp);
+                fabEl.removeEventListener('pointerdown', onPointerDown);
+                document.removeEventListener('keydown', onEsc);
+                fabEl.classList.remove('dooms-fab-moving');
+                fabEl.classList.remove('dooms-fab-dragging');
+                if (moved) {
+                    const left = parseFloat(fabEl.style.left) || 0;
+                    const top = parseFloat(fabEl.style.top) || 0;
+                    extensionSettings.fabPosition = { left, top };
+                    saveSettings();
+                }
+                // Suppress the click that follows pointerup so move-mode
+                // never accidentally opens the flyout.
+                suppressClick = true;
+            };
+            const onEsc = (ev) => {
+                if (ev.key !== 'Escape') return;
+                fabEl.removeEventListener('pointerdown', onPointerDown);
+                document.removeEventListener('keydown', onEsc);
+                fabEl.classList.remove('dooms-fab-moving');
+            };
+            fabEl.addEventListener('pointerdown', onPointerDown);
+            document.addEventListener('keydown', onEsc);
+        };
+        // Now that the FAB is built and __doomsFabPopulateToggles exists,
+        // populate the settings panel's per-button toggle list. The settings
+        // init code earlier in initUI() ran before this, so the placeholder
+        // is still showing — refresh it.
+        populateFabSettingsToggles();
+        // applyTheme() ran before the FAB existed, so stamp the theme now.
+        try { applyTheme(); } catch (_) { }
+    }
+    try { initBubbleTtsHandlers(); console.log('[Dooms Tracker] initBubbleTtsHandlers() OK'); } catch (e) { console.error('[Dooms Tracker] initBubbleTtsHandlers() FAILED:', e); }
+    console.log('[Dooms Tracker] initUI() rendering complete');
+}
+/**
+ * Main initialization function.
+ */
+jQuery(async () => {
+    try {
+        console.log('[Dooms Tracker] jQuery ready - Starting initialization...');
+        console.log('[Dooms Tracker] extensionName:', extensionName);
+        console.log('[Dooms Tracker] extensionSettings.enabled:', extensionSettings.enabled);
+        // Load settings with validation
+        try {
+            console.log('[Dooms Tracker] Loading settings...');
+            loadSettings();
+            console.log('[Dooms Tracker] Settings loaded OK. enabled =', extensionSettings.enabled);
+        } catch (error) {
+            console.error('[Dooms Tracker] Settings load failed, continuing with defaults:', error);
+        }
+        // Check if migration to v3 JSON format is needed
+        try {
+            if (extensionSettings.settingsVersion < 3) {
+                await migrateToV3JSON();
+                updateExtensionSettings({ settingsVersion: 3 });
+                await saveSettings();
+            }
+        } catch (error) {
+            console.error('[Dooms Tracker] Migration to v3 failed:', error);
+            // Non-critical - extension can still work with v2 format
+        }
+        // Initialize i18n early for the settings panel
+        await i18n.init();
+        // Add extension settings to Extensions tab
+        try {
+            await addExtensionSettings();
+        } catch (error) {
+            console.error('[Dooms Tracker] Failed to add extension settings tab:', error);
+            // Don't throw - extension can still work without settings tab
+        }
+        // Initialize UI
+        try {
+            console.log('[Dooms Tracker] About to call initUI()...');
+            await initUI();
+            console.log('[Dooms Tracker] initUI() completed OK');
+        } catch (error) {
+            console.error('[Dooms Tracker] UI initialization failed:', error);
+            console.error('[Dooms Tracker] UI error stack:', error.stack);
+            throw error; // This is critical - can't continue without UI
+        }
+        // Mobile keyboard resize fix — when the on-screen keyboard opens/closes
+        // the viewport height changes and CSS transitions try to smoothly animate
+        // viewport-relative properties, causing a slow "rubber-band" effect.
+        // We kill ALL transitions during the resize and hold the kill long enough
+        // for the keyboard animation + browser reflow to fully complete.
+        try {
+            let vkTimer;
+            let vkActive = false;
+            const killTransitions = () => {
+                // Apply the class synchronously on the FIRST fire so transitions
+                // are killed before the browser can start a transitioning layout.
+                // Subsequent fires during the same keyboard animation are no-ops
+                // (classList.add is idempotent and vkActive skips the timer reset).
+                if (!vkActive) {
+                    vkActive = true;
+                    document.body.classList.add('dooms-vk-resizing');
+                }
+                clearTimeout(vkTimer);
+                // 600ms covers the keyboard animation (~300-400ms) plus one
+                // full reflow cycle.  We only re-enable after a full rAF so the
+                // browser has actually painted the new layout before transitions
+                // can kick in again.
+                vkTimer = setTimeout(() => {
+                    requestAnimationFrame(() => {
+                        vkActive = false;
+                        document.body.classList.remove('dooms-vk-resizing');
+                    });
+                }, 600);
+            };
+            // visualViewport fires during the keyboard animation itself
+            if (window.visualViewport) {
+                window.visualViewport.addEventListener('resize', killTransitions);
+            }
+            // window resize fires as a fallback / when visualViewport isn't available
+            window.addEventListener('resize', killTransitions);
+
+            // ── Force textarea into view on keyboard open ──
+            // On mobile, the #chat flex child (100s of messages) can take seconds
+            // to reflow when #sheld shrinks.  Belt-and-suspenders: after the
+            // keyboard animation settles, explicitly scroll the focused textarea
+            // into view so users can type immediately.
+            const $textarea = document.getElementById('send_textarea');
+            if ($textarea && window.innerWidth <= 1000) {
+                $textarea.addEventListener('focus', () => {
+                    setTimeout(() => {
+                        $textarea.scrollIntoView({ behavior: 'instant', block: 'end' });
+                    }, 350);
+                });
+            }
+        } catch (error) {
+            console.error('[Dooms Tracker] Viewport resize listener failed:', error);
+        }
+        // Mobile keyboard dismissal — prevent virtual keyboard from appearing
+        // when tapping buttons, tabs, or other non-input elements while an
+        // input/contenteditable is focused. Blurs the active editable element
+        // so the keyboard is dismissed on any non-input tap.
+        try {
+            if (window.innerWidth <= 1000) {
+                document.addEventListener('touchend', function (e) {
+                    const target = e.target;
+                    // Don't blur if the user tapped an editable element (they want to type)
+                    if (target.isContentEditable ||
+                        target.tagName === 'INPUT' ||
+                        target.tagName === 'TEXTAREA' ||
+                        target.tagName === 'SELECT') {
+                        return;
+                    }
+                    // If something editable is currently focused, blur it to dismiss keyboard
+                    const active = document.activeElement;
+                    if (active && (
+                        active.isContentEditable ||
+                        active.tagName === 'INPUT' ||
+                        active.tagName === 'TEXTAREA'
+                    )) {
+                        active.blur();
+                    }
+                }, { passive: true });
+            }
+        } catch (error) {
+            console.error('[Dooms Tracker] Mobile keyboard dismissal setup failed:', error);
+        }
+        // Load chat-specific data for current chat
+        try {
+            loadChatData();
+            // Re-render sidebar panels immediately (don't depend on #chat DOM)
+            try { renderInfoBox(); } catch (e) { console.error('[Dooms Tracker] Post-load renderInfoBox() FAILED:', e); }
+            try { renderThoughts(); } catch (e) { console.error('[Dooms Tracker] Post-load renderThoughts() FAILED:', e); }
+            try { renderQuests(); } catch (e) { console.error('[Dooms Tracker] Post-load renderQuests() FAILED:', e); }
+            try { updatePortraitBar(); } catch (e) { console.error('[Dooms Tracker] Post-load updatePortraitBar() FAILED:', e); }
+            console.log('[Dooms Tracker] Post-loadChatData sidebar re-render complete');
+            // Note: DOM-dependent renders (scene headers, info panel, thoughts in chat)
+            // will be handled by the CHAT_CHANGED event handler when SillyTavern finishes
+            // loading and rendering the chat messages.
+        } catch (error) {
+            console.error('[Dooms Tracker] Chat data load failed, using defaults:', error);
+        }
+        // Import the HTML cleaning regex if needed
+        try {
+            await ensureHtmlCleaningRegex(st_extension_settings, saveSettingsDebounced);
+        } catch (error) {
+            console.error('[Dooms Tracker] HTML regex import failed:', error);
+            // Non-critical - continue without it
+        }
+        // Import the tracker cleaning regex (removes old together mode JSON from prompts)
+        try {
+            await ensureTrackerCleaningRegex(st_extension_settings, saveSettingsDebounced);
+        } catch (error) {
+            console.error('[Dooms Tracker] Tracker cleaning regex import failed:', error);
+            // Non-critical - continue without it
+        }
+        // Import the JSON cleaning regex to clean up JSON in messages
+        // This cleans historical messages when displayed
+        try {
+            await ensureJsonCleaningRegex(st_extension_settings, saveSettingsDebounced);
+        } catch (error) {
+            console.error('[Dooms Tracker] JSON cleaning regex setup failed:', error);
+            // Non-critical - continue without it
+        }
+        // Detect conflicting regex scripts from old manual formatters
+        try {
+            const conflicts = detectConflictingRegexScripts(st_extension_settings);
+            if (conflicts.length > 0) {
+                // Show user-friendly warning (non-blocking)
+                // toastr.warning(
+                //     `Found ${conflicts.length} old RPG formatting regex script(s). These may conflict with the extension. Check console for details.`,
+                //     'Dooms Tracker Warning',
+                //     { timeOut: 8000 }
+                // );
+            }
+        } catch (error) {
+            console.error('[Dooms Tracker] Conflict detection failed:', error);
+            // Non-critical - continue anyway
+        }
+        // Initialize history injection event listeners
+        // This must be done before event registration so listeners are ready
+        try {
+            initHistoryInjection();
+        } catch (error) {
+            console.error('[Dooms Tracker] History injection init failed:', error);
+            // Non-critical - continue without it
+        }
+        // Inline Tracker Data dropdowns (delegated handlers; render paths are
+        // gated on the showTrackerJsonInChat toggle, so init is always safe)
+        try {
+            initTrackerJsonInline();
+        } catch (error) {
+            console.error('[Dooms Tracker] Tracker Data dropdowns init failed:', error);
+        }
+        // Mobile compose overlay (delegated focusin; gated on its toggle)
+        try {
+            initMobileCompose();
+        } catch (error) {
+            console.error('[Dooms Tracker] Mobile compose init failed:', error);
+        }
+        // Register all event listeners
+        try {
+            // ── Named handlers for everything that used to be ad-hoc
+            // eventSource.on() subscriptions. All registration now goes through
+            // registerAllEvents so unregisterAllEvents can tear everything down.
+
+            // Re-populate connection profile dropdown when profiles are created/deleted/updated
+            const onConnectionProfilesChanged = () => populateConnectionProfileDropdown();
+
+            // TTS compatibility: remove any stale display_text that prior versions
+            // may have saved to chat messages.  SillyTavern uses display_text for
+            // RENDERING as well as TTS, so setting it to a font-stripped copy was
+            // causing dialogue colors to disappear on chat reload.
+            //
+            // Instead of display_text we now auto-enable the TTS regex filter to
+            // strip <font> tags at narration time only, keeping colors in the UI.
+            const onChatChangedTtsCleanup = () => {
+                // Clean up stale display_text from ALL messages so SillyTavern
+                // renders from msg.mes (which contains the <font> colour tags).
+                // Prior versions set display_text to a font-stripped copy for TTS,
+                // but SillyTavern also uses display_text for RENDERING — causing
+                // dialogue colours to vanish on reload.
+                //
+                // Chunked into batches via requestAnimationFrame to avoid blocking
+                // the main thread on large chats (perf fix).
+                const CHUNK_SIZE = 50;
+                let cursor = 0;
+                const affectedIds = [];
+
+                function processChunk() {
+                    const end = Math.min(cursor + CHUNK_SIZE, chat.length);
+                    for (let i = cursor; i < end; i++) {
+                        const msg = chat[i];
+                        if (!msg || msg.is_user || !msg.extra) continue;
+                        if (msg.extra.display_text !== undefined) {
+                            delete msg.extra.display_text;
+                            if (msg.mes && /<font\s/i.test(msg.mes)) {
+                                affectedIds.push(i);
+                            }
+                        }
+                    }
+                    cursor = end;
+                    if (cursor < chat.length) {
+                        requestAnimationFrame(processChunk);
+                    } else {
+                        // All messages scanned — re-render affected ones in chunks too
+                        if (affectedIds.length > 0) {
+                            console.log(`[Dooms Tracker] Re-rendering ${affectedIds.length} messages to restore dialogue colours`);
+                            let renderCursor = 0;
+                            function renderChunk() {
+                                const renderEnd = Math.min(renderCursor + CHUNK_SIZE, affectedIds.length);
+                                for (let j = renderCursor; j < renderEnd; j++) {
+                                    const id = affectedIds[j];
+                                    const msg = chat[id];
+                                    const mesEl = document.querySelector(`#chat .mes[mesid="${id}"] .mes_text`);
+                                    if (mesEl && msg) {
+                                        mesEl.innerHTML = messageFormatting(
+                                            msg.mes, msg.name, msg.is_system, msg.is_user, id, {}, false
+                                        );
+                                    }
+                                }
+                                renderCursor = renderEnd;
+                                if (renderCursor < affectedIds.length) {
+                                    requestAnimationFrame(renderChunk);
+                                }
+                            }
+                            requestAnimationFrame(renderChunk);
+                        }
+                    }
+                }
+                if (chat.length > 0) {
+                    requestAnimationFrame(processChunk);
+                }
+                // Auto-configure TTS regex to strip <font> tags at narration time.
+                // This keeps colours visible in the chat while giving TTS clean text.
+                if (extensionSettings.enableDialogueColoring && st_extension_settings?.tts) {
+                    const fontRegex = '/<\\/?font[^>]*>/gi';
+                    if (!st_extension_settings.tts.apply_regex) {
+                        st_extension_settings.tts.apply_regex = true;
+                        $('#tts_regex').prop('checked', true);
+                    }
+                    if (!st_extension_settings.tts.regex_pattern ||
+                        !st_extension_settings.tts.regex_pattern.includes('font')) {
+                        // Set or append our font-stripping regex
+                        st_extension_settings.tts.regex_pattern = fontRegex;
+                        $('#tts_regex_pattern').val(fontRegex);
+                        console.log('[Dooms Tracker] Set TTS regex to strip <font> tags for dialogue coloring');
+                    }
+                }
+            };
+            // ── Chat Bubbles: revert last message before Continue ──
+            // When the user hits "Continue", SillyTavern reads/modifies .mes_text
+            // to stream new content. If bubbles are active, .mes_text contains
+            // bubble-wrapped HTML with <font> tags already stripped by
+            // stripFontColors(). Reverting to the stored original (which still
+            // has <font> tags) ensures SillyTavern sees clean HTML.
+            // IMPORTANT: Only revert for 'continue' — normal generations create a
+            // NEW message element and never touch the old one, so reverting would
+            // leave the previous message without bubbles.
+            const onGenerationStartedContinueRevert = (type) => {
+                if (type !== 'continue') return;
+                if (!extensionSettings.enabled) return;
+                if (!extensionSettings.chatBubbleMode || extensionSettings.chatBubbleMode === 'off') return;
+                revertLastMessageBubbles();
+            };
+
+            // ── Inline character thoughts: re-insert after .mes_text rewrites ──
+            // The dropdowns are appended to .mes_text, but the render/decoration
+            // pipeline rewrites that element after they go in: ST's final
+            // formatting pass, colored-dialogues' ~600ms debounced recolor, and
+            // the 800ms bubble pass. Anything inserted earlier (e.g. at
+            // MESSAGE_RECEIVED+100ms) is destroyed with no re-insertion, so the
+            // thoughts vanished on every new message until the user toggled the
+            // setting off/on. Debounced so bursts (chat load, multiple events
+            // for one message) collapse into a single pass after the last write.
+            // (scheduler.js onIdle is not usable here: requestIdleCallback may
+            // fire well before `timeout`, but this needs a minimum-delay floor.)
+            let inlineThoughtsRefreshTimer = null;
+            const scheduleInlineThoughtsRefresh = (delay = 900) => {
+                // Feature off → nothing to re-insert; don't arm a timer that
+                // would just run updateChatThoughts's global teardown for nothing.
+                if (!extensionSettings.showThoughtsInChat) return;
+                if (inlineThoughtsRefreshTimer) clearTimeout(inlineThoughtsRefreshTimer);
+                inlineThoughtsRefreshTimer = setTimeout(() => {
+                    inlineThoughtsRefreshTimer = null;
+                    updateChatThoughts();
+                }, delay);
+            };
+            // A pending refresh must not survive a chat switch: with the timer
+            // unguarded, a message rendered <900ms before switching could paint
+            // the OLD chat's thoughts into the new chat (lastGeneratedData is
+            // only overwritten when the new chat has saved tracker data). Same
+            // failure class as the tryRenderChat cancellation in 2.2.0.
+            const cancelInlineThoughtsRefresh = () => {
+                if (inlineThoughtsRefreshTimer) {
+                    clearTimeout(inlineThoughtsRefreshTimer);
+                    inlineThoughtsRefreshTimer = null;
+                }
+            };
+            // ── Chat Bubbles: apply per-character bubbles to messages ──
+            const onCharacterMessageRenderedDecorations = (messageId) => {
+                if (!extensionSettings.enabled) return;
+                // Skip GG's synthetic tracker/note messages — they get
+                // is_user=false but their .mes is HTML, not real model
+                // output. Bubble styling on the <details> markup mangles
+                // GG's tracker UI.
+                const guardIdx = parseInt(messageId, 10);
+                const guardMsg = (Array.isArray(chat) && Number.isFinite(guardIdx)) ? chat[guardIdx] : null;
+                if (isSyntheticTrackerMessage(guardMsg)) return;
+                const messageElement = document.querySelector(`#chat .mes[mesid="${messageId}"]`);
+
+                // Inject reasoning TTS button into the thinking panel
+                if (messageElement) {
+                    injectReasoningTtsButtons(messageElement);
+                }
+
+                // Apply chat bubbles if active
+                if (extensionSettings.chatBubbleMode && extensionSettings.chatBubbleMode !== 'off') {
+                    if (messageElement) {
+                        const mesText = messageElement.querySelector('.mes_text');
+                        if (mesText) {
+                            // Clear stale bubble data — content was just (re)rendered.
+                            // Without this, applyChatBubbles sees the old style attribute
+                            // and early-returns, skipping bubble re-application.
+                            clearBubbleState(mesText);
+                        }
+                        // Wait for colored-dialogues to finish adding <font color> tags
+                        // (it uses a 600ms debounce on CHARACTER_MESSAGE_RENDERED).
+                        // Also hold for any open duplicate-character decision —
+                        // attributing dialogue before the user answers bakes the
+                        // wrong speaker onto bubbles when they pick "same character".
+                        setTimeout(async () => {
+                            await waitForAliasDecisions();
+                            const freshEl = document.querySelector(`#chat .mes[mesid="${messageId}"]`);
+                            if (freshEl) applyChatBubbles(freshEl, extensionSettings.chatBubbleMode);
+                        }, 800);
+                    }
+                }
+                // Update scene tracker (new data may be available after message render)
+                setTimeout(() => updateChatSceneHeaders(), 100);
+                // Re-insert inline character thoughts once the decoration
+                // pipeline (recolor ~600ms, bubbles 800ms) has stopped
+                // rewriting .mes_text — see scheduleInlineThoughtsRefresh.
+                scheduleInlineThoughtsRefresh();
+                // Show trap mode notification on the message that received the silent twist
+                if (isTrapTwistPending() && messageElement) {
+                    clearTrapTwistFlag();
+                    const $mes = $(messageElement);
+                    if (!$mes.find('.dooms-dc-trap-badge').length) {
+                        $mes.find('.mes_block').append(`
+                            <div class="dooms-dc-trap-badge" title="A hidden plot twist was woven into this response by the Doom Counter's Trap Mode">
+                                <i class="fa-solid fa-skull"></i> Trap triggered
+                            </div>
+                        `);
+                    }
+                }
+                const renderedMessage = chat[messageId];
+                if (renderedMessage && !renderedMessage.is_user && !renderedMessage.is_system) {
+                    queueExpressionCaptureForSpeaker(renderedMessage.name);
+                    // Inline Tracker Data dropdown (optional, default off)
+                    syncTrackerJsonForMessage(messageId);
+                }
+            };
+            const onUserMessageRenderedDecorations = (messageId) => {
+                if (!extensionSettings.enabled) return;
+                // Skip synthetic tracker/note messages other extensions inject
+                // into chat (currently GuidedGenerations). They re-emit
+                // USER_MESSAGE_RENDERED but the message body is HTML/tracker
+                // markup — running chat-bubble styling or the user-expression
+                // classifier on it produces garbage and a sprite swap to
+                // whatever the classifier guesses from GG's <details> tags.
+                const guardIdx = parseInt(messageId, 10);
+                const guardMsg = (Array.isArray(chat) && Number.isFinite(guardIdx)) ? chat[guardIdx] : null;
+                if (isSyntheticTrackerMessage(guardMsg)) return;
+                // Chat bubbles styling
+                if (extensionSettings.chatBubbleMode && extensionSettings.chatBubbleMode !== 'off') {
+                    const messageElement = document.querySelector(`#chat .mes[mesid="${messageId}"]`);
+                    if (messageElement) {
+                        applyChatBubbles(messageElement, extensionSettings.chatBubbleMode);
+                    }
+                }
+                // User-character expression classification — same flow {{char}}
+                // gets after each AI reply, but on the user's outgoing text.
+                // Gated by syncExpressionsToPresentCharacters and a configured
+                // active user character with a sprite folder; otherwise no-op.
+                if (extensionSettings.syncExpressionsToPresentCharacters) {
+                    try {
+                        const text = guardMsg && guardMsg.is_user ? (guardMsg.mes || '') : '';
+                        if (text) {
+                            classifyActiveUserExpression(text)
+                                .then(() => updatePortraitBar())
+                                .catch(err => console.error('[DES] User expression classify failed:', err));
+                        }
+                    } catch (e) {}
+                }
+            };
+            const onChatChangedDecorations = () => {
+                // Always cancel a pending inline-thoughts refresh from the
+                // previous chat, even when the extension is disabled.
+                cancelInlineThoughtsRefresh();
+                if (!extensionSettings.enabled) return;
+                // Apply chat bubbles if active
+                if (extensionSettings.chatBubbleMode && extensionSettings.chatBubbleMode !== 'off') {
+                    // Delay to let SillyTavern finish rendering all messages
+                    setTimeout(() => applyAllChatBubbles(), 150);
+                }
+                // Inject reasoning TTS buttons into all messages (deferred to idle)
+                (window.requestIdleCallback || requestAnimationFrame)(() => injectReasoningTtsButtons());
+                // Re-attach expression sync / native expression visibility after chat DOM rebuilds.
+                setTimeout(() => onExpressionSyncChatChanged(), 0);
+                // Inline Tracker Data dropdowns on existing messages
+                setTimeout(() => updateTrackerJsonDropdowns(), 200);
+            };
+            // MESSAGE_UPDATED fires after the DOM is re-rendered with the edited content.
+            // CHARACTER_MESSAGE_RENDERED does NOT fire on edits.
+            // We need to re-apply chat bubbles AND re-insert inline thoughts.
+            const onMessageUpdatedDecorations = (messageId) => {
+                if (!extensionSettings.enabled) return;
+
+                // Re-apply chat bubbles if active
+                if (extensionSettings.chatBubbleMode && extensionSettings.chatBubbleMode !== 'off') {
+                    const messageElement = document.querySelector(`#chat .mes[mesid="${messageId}"]`);
+                    if (messageElement) {
+                        const mesText = messageElement.querySelector('.mes_text');
+                        if (mesText) {
+                            // Clear stale original HTML since the content was just edited
+                            clearBubbleState(mesText);
+                        }
+                        // Wait for colored-dialogues to finish recoloring.
+                        // Same gate + re-query as the render/swipe paths: an
+                        // edit while a duplicate-decision popup is open must
+                        // not bake pre-decision attribution onto the bubbles,
+                        // and the element can be replaced under us meanwhile.
+                        setTimeout(async () => {
+                            await waitForAliasDecisions();
+                            const freshEl = document.querySelector(`#chat .mes[mesid="${messageId}"]`);
+                            if (freshEl) applyChatBubbles(freshEl, extensionSettings.chatBubbleMode);
+                        }, 800);
+                    }
+                }
+
+                // Re-insert inline character thoughts (editing replaces .mes_text
+                // contents, destroying any previously appended thought elements)
+                setTimeout(() => updateChatThoughts(), 100);
+                const updatedMessage = chat[messageId];
+                if (updatedMessage && !updatedMessage.is_user && !updatedMessage.is_system) {
+                    queueExpressionCaptureForSpeaker(updatedMessage.name);
+                }
+                syncTrackerJsonForMessage(messageId);
+            };
+            // MESSAGE_DELETED does not fire the same render/update hooks as swipes or edits.
+            // Two things to do when a message is removed:
+            //   1. Roll the tracker panels (quests / info / thoughts / portrait /
+            //      weather / scene header) back to the new last assistant message's
+            //      stored swipe data, so DES isn't showing context that referred to
+            //      a turn the user just deleted. Also resets committedTrackerData so
+            //      the next generation runs with the correct prior state.
+            //   2. Reset transient expression-sync state so the observer doesn't keep
+            //      attributing later ST expression changes to the speaker of the
+            //      deleted message.
+            const onMessageDeletedDecorations = () => {
+                if (!extensionSettings.enabled) return;
+                try { onMessageDeleted(); } catch (e) {
+                    console.warn('[Dooms Tracker] onMessageDeleted failed:', e);
+                }
+                clearExpressionSyncCache();
+                setTimeout(() => onExpressionSyncChatChanged(), 0);
+            };
+            // MESSAGE_SWIPED fires when the user navigates between swipe variants.
+            // SillyTavern replaces .mes_text with the new swipe content, destroying
+            // any bubble DOM we previously rendered.  CHARACTER_MESSAGE_RENDERED does
+            // NOT fire for existing swipes, so we must re-apply bubbles here.
+            // We wait 800ms because colored-dialogues recolors on swipe with a 600ms
+            // debounce, and we need the <font color> tags in place before parsing.
+            const onMessageSwipedBubbles = (messageIndex) => {
+                const swipedMessage = chat[messageIndex];
+                if (swipedMessage && !swipedMessage.is_user && !swipedMessage.is_system) {
+                    queueExpressionCaptureForSpeaker(swipedMessage.name);
+                }
+                if (!extensionSettings.enabled) return;
+                // onMessageSwiped re-inserts inline thoughts immediately, but the
+                // ~600ms recolor pass rewrites .mes_text after that and destroys
+                // them — schedule a post-pipeline re-insert (bubbles on or off).
+                scheduleInlineThoughtsRefresh();
+                if (!extensionSettings.chatBubbleMode || extensionSettings.chatBubbleMode === 'off') return;
+
+                const messageElement = document.querySelector(`#chat .mes[mesid="${messageIndex}"]`);
+                if (!messageElement) return;
+
+                const mesText = messageElement.querySelector('.mes_text');
+                if (mesText) {
+                    // Clear stale bubble data — the swipe has new content
+                    clearBubbleState(mesText);
+                }
+                // Delay to let colored-dialogues finish recoloring (600ms debounce + processing).
+                // Re-query the DOM element inside setTimeout because a failed swipe causes ST
+                // to "swipe back" and re-render the message, replacing the DOM node entirely.
+                // Using the stale reference captured above would apply bubbles to a detached node.
+                setTimeout(async () => {
+                    await waitForAliasDecisions();
+                    const freshEl = document.querySelector(`#chat .mes[mesid="${messageIndex}"]`);
+                    if (freshEl) applyChatBubbles(freshEl, extensionSettings.chatBubbleMode);
+                }, 800);
+            };
+            // "Show more messages" clones fresh message elements and emits only
+            // MORE_MESSAGES_LOADED.
+            const onMoreMessagesLoaded = () => {
+                setTimeout(() => updateTrackerJsonDropdowns(), 100);
+            };
+            // GENERATION_STOPPED safety net — when a generation is aborted (e.g. failed
+            // swipe), ST may re-render the last message without firing MESSAGE_SWIPED or
+            // CHARACTER_MESSAGE_RENDERED. Re-apply bubbles to the last message if missing.
+            const onGenerationStoppedBubbleSafetyNet = () => {
+                if (!extensionSettings.enabled) return;
+                if (!extensionSettings.chatBubbleMode || extensionSettings.chatBubbleMode === 'off') return;
+                setTimeout(async () => {
+                    await waitForAliasDecisions();
+                    const lastMes = document.querySelector('#chat .mes:last-child');
+                    if (!lastMes) return;
+                    const mesText = lastMes.querySelector('.mes_text');
+                    if (mesText && !mesText.getAttribute('data-dooms-bubbles-applied')) {
+                        applyChatBubbles(lastMes, extensionSettings.chatBubbleMode);
+                    }
+                }, 1200);
+            };
+
+            // Single tracked registration point. Array order preserves the
+            // original relative registration order within each event type.
+            registerAllEvents({
+                [event_types.MESSAGE_SENT]: onMessageSent,
+                [event_types.GENERATION_STARTED]: [onGenerationStarted, onGenerationStartedContinueRevert],
+                [event_types.MESSAGE_RECEIVED]: onMessageReceived,
+                [event_types.GENERATION_STOPPED]: [onGenerationEnded, onGenerationStoppedBubbleSafetyNet],
+                [event_types.GENERATION_ENDED]: onGenerationEnded,
+                [event_types.CHAT_CHANGED]: [onCharacterChanged, updatePersonaAvatar, clearSessionAvatarPrompts, clearPortraitCache, clearExpressionSyncCache, migrateLegacyToChat, onChatChangedRpgMode, onChatChangedTtsCleanup, onChatChangedDecorations, refreshMobileQuickJump],
+                [event_types.MESSAGE_SWIPED]: [onMessageSwiped, onMessageSwipedBubbles, syncTrackerJsonForMessage],
+                [event_types.USER_MESSAGE_RENDERED]: [updatePersonaAvatar, onUserMessageRenderedDecorations],
+                [event_types.SETTINGS_UPDATED]: updatePersonaAvatar,
+                [event_types.CHARACTER_MESSAGE_RENDERED]: onCharacterMessageRenderedDecorations,
+                [event_types.MESSAGE_UPDATED]: onMessageUpdatedDecorations,
+                [event_types.MESSAGE_DELETED]: onMessageDeletedDecorations,
+                [event_types.CONNECTION_PROFILE_CREATED]: onConnectionProfilesChanged,
+                [event_types.CONNECTION_PROFILE_DELETED]: onConnectionProfilesChanged,
+                [event_types.CONNECTION_PROFILE_UPDATED]: onConnectionProfilesChanged,
+                // Guarded: MORE_MESSAGES_LOADED doesn't exist on some older ST
+                // builds; a spread of {} registers nothing there.
+                ...(event_types.MORE_MESSAGES_LOADED
+                    ? { [event_types.MORE_MESSAGES_LOADED]: onMoreMessagesLoaded }
+                    : {}),
+            });
+        } catch (error) {
+            console.error('[Dooms Tracker] Event registration failed:', error);
+            throw error; // This is critical - can't continue without events
+        }
+        // If CHAT_CHANGED already fired while we were initializing (e.g. while the
+        // loading intro was playing), our handlers weren't registered in time and the
+        // initial render never happened. Trigger it now as a safety net.
+        if (chat && chat.length > 0) {
+            onCharacterChanged();
+        }
+        console.log('[Dooms Tracker] ✅ Extension loaded successfully.');
+        // ── What's New screen (desktop, once per release, opt-out) ──
+        // The gate is three cheap checks; the module, its CSS, and the
+        // release-notes JSON only load when it will actually display.
+        // Scheduled to idle so it never competes with startup rendering.
+        onIdle('whatsNew', () => {
+            if (extensionSettings.whatsNewOptOut) return;
+            // Desktop only — but "Request desktop site" on a phone renders a
+            // 980px layout viewport, which the >1000px mobile breakpoint just
+            // misses. Treat >=980 as desktop so desktop-view users see it too.
+            if (window.innerWidth < 980) return;
+            getExtensionVersion().then(async (v) => {
+                if (!v || v === extensionSettings.whatsNewSeenVersion) return;
+                try {
+                    const { showWhatsNew } = await import('./src/systems/ui/whatsNew.js');
+                    await showWhatsNew();
+                } catch (e) {
+                    console.warn('[Dooms Tracker] What\'s New screen failed:', e);
+                }
+            }).catch(() => {});
+        }, 3000);
+    } catch (error) {
+        console.error('[Dooms Tracker] ❌ Critical initialization failure:', error);
+        console.error('[Dooms Tracker] Error details:', error.message, error.stack);
+        // Show user-friendly error message
+        toastr.error(
+            'Dooms Tracker failed to initialize. Check console for details. Please try refreshing the page or resetting extension settings.',
+            'Dooms Tracker Error',
+            { timeOut: 10000 }
+        );
+    }
+});

@@ -1,0 +1,10 @@
+{
+    "version": "0.1.0",
+    "title": "Persona Stats",
+    "items": [
+        {
+            "title": "Persona stats",
+            "body": "St, Ma, En, Ag and Lu replace the D&D attributes. HP and SP are shown; satiety, energy, hygiene and morale are off until you switch them on."
+        }
+    ]
+}

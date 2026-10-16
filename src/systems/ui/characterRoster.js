@@ -1,0 +1,1197 @@
+/*
+ * Doom's Enhancement Suite for SillyTavern — Character Roster
+ * Copyright (C) 2026 Jordan (DangerDaza)
+ *
+ * This file is part of Doom's Enhancement Suite and is licensed under the
+ * GNU Affero General Public License v3.0 or later. If you redistribute this
+ * file or a modified version of it, you must keep this notice intact, state
+ * your changes, and release your version under the same license.
+ *
+ * See the LICENSE file in the project root for the full terms and for
+ * additional copyright notices.
+ *
+ * https://github.com/DangerDaza/Dooms-Enhancement-Suite
+ */
+
+/**
+ * Character Roster — list view of all known characters.
+ *
+ * Opens from the "Open Character Roster" button in the DES settings popup
+ * (#rpg-open-character-roster). Renders a grid of tiles: one "+ New
+ * Character" tile first, then every character in the union of
+ *   extensionSettings.knownCharacters
+ *   extensionSettings.characterColors
+ *   extensionSettings.npcAvatars
+ * (the union is to include orphans that have portraits/colors but no
+ * roster entry). Click a tile to open the Character Workshop for that
+ * character via the same window CustomEvent the portrait-bar menu uses
+ * ('dooms:open-workshop'), so this module does not need to import
+ * characterWorkshop.js.
+ */
+
+import { extensionSettings } from '../../core/state.js';
+import { saveSettings, saveChatData, getActiveKnownCharacters, getActiveCharacterColors, getActiveRemovedCharacters, getActiveBannedCharacters } from '../../core/persistence.js';
+import { deletePortraitsIfUnreferenced, takePortraitHistoryValues } from '../../utils/avatars.js';
+// Campaign versions: the chip above the grid names the campaign whose
+// versions the tiles show; tiles with extra versions get a badge; delete
+// removes every version.
+import { countVersions, deleteCharacterEverywhere, removeFromLive, getActiveCampaignId } from '../lorebook/campaignProfiles.js';
+import { clearPortraitCache, updatePortraitBar, getCharacterList } from './portraitBar.js';
+import { refreshBanPrompt } from './characterWorkshop.js';
+import { power_user } from '../../../../../../power-user.js';
+import { characters } from '../../../../../../../script.js';
+import { escapeHtml, escapeAttr } from '../../utils/html.js';
+import { findSimilarCharacter } from '../../utils/nameSimilarity.js';
+import { addCharacterAlias } from '../features/characterAliases.js';
+import { deleteStatSheet } from '../features/characterStats.js';
+import { deleteMemoriesEverywhere } from '../features/characterMemories.js';
+import { deleteEquipmentEverywhere } from '../features/characterEquipment.js';
+import { deleteConditionsEverywhere } from '../features/characterConditions.js';
+import { deleteProgressEverywhere } from '../features/characterProgress.js';
+import { deleteMoney } from '../features/characterMoney.js';
+import { deleteAffinity } from '../features/characterAffinity.js';
+import { deleteAbilitiesEverywhere } from '../features/characterAbilities.js';
+
+let contextMenuTarget = ''; // character name currently under right-click
+
+/**
+ * Closes the roster and opens the Character Workshop for a character after
+ * the roster's fade-out. Single home for the 220ms delay and the
+ * 'dooms:open-workshop' event shape — five call sites use it.
+ */
+function openWorkshopFor(characterName, isUser) {
+    closeCharacterRoster();
+    // Defer so this modal's fade-out doesn't overlap the Workshop's fade-in
+    setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('dooms:open-workshop', { detail: { characterName, isUser: !!isUser } }));
+    }, 220);
+}
+
+
+const REL_EMOJI = {
+    Lover: '❤️',
+    Friend: '⭐',
+    Ally: '🤝',
+    Enemy: '⚔️',
+    Neutral: '⚖️',
+};
+
+let $modal = null;
+let listenersBound = false;
+let _crInitialized = false; // guard: don't double-register document/window listeners
+let searchQuery = '';
+let scope = 'all'; // 'all' | 'chat' | 'active'
+let rosterMode = 'characters'; // 'characters' (NPCs) | 'users' (player characters)
+
+function isPinned(name) {
+    const list = extensionSettings?.pinnedCharacters;
+    if (!Array.isArray(list) || !name) return false;
+    const lower = name.toLowerCase();
+    return list.some(n => typeof n === 'string' && n.toLowerCase() === lower);
+}
+function togglePin(name) {
+    if (!name) return;
+    if (!Array.isArray(extensionSettings.pinnedCharacters)) {
+        extensionSettings.pinnedCharacters = [];
+    }
+    const list = extensionSettings.pinnedCharacters;
+    const lower = name.toLowerCase();
+    const idx = list.findIndex(n => typeof n === 'string' && n.toLowerCase() === lower);
+    if (idx >= 0) list.splice(idx, 1);
+    else list.push(name);
+    saveSettings();
+}
+
+export function initCharacterRoster() {
+    // Roster is part of the Present Characters Panel feature set; when
+    // PCP is off there's nothing to roster.
+    if (extensionSettings?.showPortraitBar === false) {
+        console.log('[Dooms Tracker] Character Roster disabled (Present Characters Panel off), skipping init');
+        return;
+    }
+    // Idempotency guard: prevent double-registration of the settings-button
+    // click delegate and the window 'dooms:open-roster' listener if init
+    // runs twice.
+    if (_crInitialized) return;
+    _crInitialized = true;
+    // The button lives inside the settings popup template; delegate from
+    // document so we catch clicks even if the popup is re-rendered.
+    $(document).on('click.cr', '#rpg-open-character-roster', () => openCharacterRoster());
+    // Portrait-bar header button opens via a decoupled window event so
+    // portraitBar.js doesn't need to import this module.
+    window.addEventListener('dooms:open-roster', () => openCharacterRoster());
+}
+
+export function openCharacterRoster() {
+    if (!ensureModal()) return;
+    if (!listenersBound) {
+        bindListeners();
+        listenersBound = true;
+    }
+    searchQuery = '';
+    scope = 'all';
+    rosterMode = 'characters';
+    $modal.find('#cr-search').val('');
+    $modal.find('.cr-scope-pill').each(function () {
+        const isActive = $(this).attr('data-scope') === 'all';
+        $(this).toggleClass('is-active', isActive).attr('aria-selected', isActive ? 'true' : 'false');
+    });
+    $modal.find('.cr-mode-pill').each(function () {
+        const isActive = $(this).attr('data-mode') === 'characters';
+        $(this).toggleClass('is-active', isActive).attr('aria-selected', isActive ? 'true' : 'false');
+    });
+    $modal.attr('data-mode', 'characters');
+    $modal.find('#cr-title').text('Character Roster');
+    $modal.find('#cr-import-personas-btn').hide();
+    $modal.find('#cr-import-cards-btn').show();
+    renderGrid();
+    // Apply the active DES theme so the theme-specific token overrides
+    // take effect (matches trackerEditor / settings popup convention).
+    $modal.attr('data-theme', extensionSettings?.theme || 'default');
+    $modal.addClass('is-open').css('display', '');
+}
+
+export function closeCharacterRoster() {
+    if (!$modal || !$modal.length) return;
+    $modal.removeClass('is-open').addClass('is-closing');
+    setTimeout(() => $modal.removeClass('is-closing').hide(), 200);
+}
+
+/**
+ * Repaints the grid and campaign chip if the roster is open. Called after
+ * the active campaign changes (the tiles show the live versions) and after
+ * the Workshop adds/removes a version (the badges change).
+ */
+export function refreshRosterIfOpen() {
+    if (!$modal || !$modal.hasClass('is-open')) return;
+    try { renderGrid(); } catch (e) { console.warn('[Dooms Tracker] Roster: refresh failed', e); }
+}
+
+/**
+ * "Viewing <campaign>" chip above the grid: names the campaign whose
+ * versions the tiles (and the chat) are using. Hidden when the install has
+ * no campaigns, and in user-character mode (personas are not versioned).
+ */
+function renderCampaignChip() {
+    const $chip = $modal.find('#cr-campaign-chip');
+    if (!$chip.length) return;
+    const campaigns = extensionSettings.lorebook?.campaigns || {};
+    if (rosterMode === 'users' || !Object.keys(campaigns).length) {
+        $chip.prop('hidden', true).empty();
+        return;
+    }
+    const activeId = getActiveCampaignId();
+    const campaign = activeId ? campaigns[activeId] : null;
+    const icon = campaign ? escapeAttr(campaign.icon || 'fa-folder') : 'fa-layer-group';
+    const label = campaign ? campaign.name : 'Base';
+    const color = campaign && typeof campaign.color === 'string' && /^#[0-9a-f]{3,8}$/i.test(campaign.color) ? campaign.color : '';
+    $chip.html(`<i class="fa-solid ${icon}" aria-hidden="true"></i><span class="cr-campaign-chip-text">Viewing ${escapeHtml(label)}</span>`)
+        .attr('title', campaign
+            ? `${campaign.name} is the active campaign — tiles show its versions of each character (Base where it has none). New characters are created in Base.`
+            : 'No active campaign — tiles show the Base version of every character. Set a campaign active in the Lore Library to switch.')
+        .prop('hidden', false);
+    if (color) $chip[0].style.setProperty('--cr-campaign-accent', color);
+    else $chip[0].style.removeProperty('--cr-campaign-accent');
+}
+
+// ---------------------------------------------------------------------------
+
+function ensureModal() {
+    if ($modal && $modal.length) return true;
+    $modal = $('#character-roster-popup');
+    if (!$modal.length) {
+        console.warn('[Dooms Tracker] #character-roster-popup not in DOM — template.html missing block?');
+        $modal = null;
+        return false;
+    }
+    return true;
+}
+
+function bindListeners() {
+    // Close controls
+    $modal.on('click.cr', '#cr-close, #cr-footer-close', () => closeCharacterRoster());
+    $modal.on('click.cr', function (e) {
+        if (e.target === this) closeCharacterRoster();
+    });
+    // Esc key while modal is open
+    $(document).on('keydown.cr', (e) => {
+        if (e.key !== 'Escape') return;
+        // A missing element must read as "hidden": .prop('hidden') on an
+        // empty jQuery set is undefined, and !undefined would treat a panel
+        // that doesn't exist (stale cached template) as OPEN — turning every
+        // Escape press into a no-op that can never close the dialog.
+        const isShown = (sel) => {
+            const $el = $modal.find(sel);
+            return $el.length > 0 && !$el.prop('hidden');
+        };
+        // If the new-character dialog is open, Esc steps back: first out of
+        // the similar-name panel (to the name input), then out of the dialog.
+        if (isShown('#cr-newchar-overlay')) {
+            if (isShown('#cr-newchar-similar')) {
+                hideSimilarNamePanel();
+            } else {
+                closeNewCharacterDialog();
+            }
+            return;
+        }
+        // If the context menu is open, Esc only closes that.
+        if (isShown('#cr-context-menu')) {
+            hideContextMenu();
+            return;
+        }
+        if ($modal.hasClass('is-open')) closeCharacterRoster();
+    });
+
+    // Right-click a tile → open contextual menu
+    $modal.on('contextmenu.cr', '.cr-tile[data-character]', function (e) {
+        e.preventDefault();
+        e.stopPropagation();
+        contextMenuTarget = $(this).attr('data-character') || '';
+        showContextMenu(e.clientX, e.clientY);
+    });
+    // Plain left-click anywhere in the modal hides the menu if open.
+    $modal.on('mousedown.cr', function (e) {
+        if ($(e.target).closest('#cr-context-menu').length) return;
+        hideContextMenu();
+    });
+    // Act on menu item
+    $modal.on('click.cr', '.cr-context-item', function () {
+        const action = $(this).attr('data-action');
+        const name = contextMenuTarget;
+        hideContextMenu();
+        if (!name) return;
+        const isUser = rosterMode === 'users';
+        if (action === 'edit') {
+            openWorkshopFor(name, isUser);
+        } else if (action === 'pin') {
+            togglePin(name);
+            renderGrid();
+        } else if (action === 'delete') {
+            confirmAndDelete(name);
+        }
+    });
+
+    // Live search
+    $modal.on('input.cr', '#cr-search', function () {
+        searchQuery = ($(this).val() || '').toString().trim().toLowerCase();
+        renderGrid();
+    });
+
+    // Scope pills
+    $modal.on('click.cr', '.cr-scope-pill', function () {
+        const next = $(this).attr('data-scope') || 'all';
+        if (next === scope) return;
+        scope = next;
+        $modal.find('.cr-scope-pill').each(function () {
+            const isActive = $(this).attr('data-scope') === scope;
+            $(this).toggleClass('is-active', isActive).attr('aria-selected', isActive ? 'true' : 'false');
+        });
+        renderGrid();
+    });
+
+    // Mode pills (Characters / Users) — flips the roster's data source
+    $modal.on('click.cr', '.cr-mode-pill', function () {
+        const next = $(this).attr('data-mode') || 'characters';
+        if (next === rosterMode) return;
+        rosterMode = next;
+        $modal.find('.cr-mode-pill').each(function () {
+            const isActive = $(this).attr('data-mode') === rosterMode;
+            $(this).toggleClass('is-active', isActive).attr('aria-selected', isActive ? 'true' : 'false');
+        });
+        $modal.attr('data-mode', rosterMode);
+        // Title & footer affordances follow the mode
+        $modal.find('#cr-title').text(rosterMode === 'users' ? 'User Characters' : 'Character Roster');
+        $modal.find('#cr-import-personas-btn').toggle(rosterMode === 'users');
+        $modal.find('#cr-import-cards-btn').toggle(rosterMode === 'characters');
+        // The "active in scene" scope doesn't apply to user characters —
+        // CSS hides the pill, but if it was selected we fall back to "all".
+        if (rosterMode === 'users' && scope === 'active') {
+            scope = 'all';
+            $modal.find('.cr-scope-pill').each(function () {
+                const isActive = $(this).attr('data-scope') === scope;
+                $(this).toggleClass('is-active', isActive).attr('aria-selected', isActive ? 'true' : 'false');
+            });
+        }
+        renderGrid();
+    });
+
+    // Click a character tile → open Workshop for that name
+    $modal.on('click.cr', '.cr-tile[data-character]', function () {
+        const name = $(this).attr('data-character');
+        if (!name) return;
+        openWorkshopFor(name, rosterMode === 'users');
+    });
+
+    // "+ New Character" tile
+    $modal.on('click.cr', '.cr-tile-new', () => handleNewCharacter());
+
+    // Import from JSON file
+    $modal.on('click.cr', '#cr-import-btn', () => {
+        $modal.find('#cr-import-file').val('').trigger('click');
+    });
+
+    // Import user characters from SillyTavern personas (Users mode only)
+    $modal.on('click.cr', '#cr-import-personas-btn', () => {
+        importFromSillyTavernPersonas();
+    });
+
+    // Import characters from SillyTavern character cards (Characters mode only)
+    $modal.on('click.cr', '#cr-import-cards-btn', () => {
+        importFromSillyTavernCards();
+    });
+    $modal.on('change.cr', '#cr-import-file', function () {
+        const file = this.files && this.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            try {
+                const payload = JSON.parse(String(ev?.target?.result || ''));
+                importCharacterPayload(payload);
+            } catch (err) {
+                console.warn('[Dooms Tracker] Roster: import JSON parse failed', err);
+                if (window.toastr) window.toastr.error('Could not read that file — make sure it\'s a valid character JSON export.', 'Import failed');
+            }
+            this.value = '';
+        };
+        reader.onerror = () => {
+            if (window.toastr) window.toastr.error('Failed to read the selected file.', 'Import failed');
+        };
+        reader.readAsText(file);
+    });
+
+    // Inline new-character dialog
+    $modal.on('click.cr', '#cr-newchar-cancel', () => closeNewCharacterDialog());
+    $modal.on('click.cr', '#cr-newchar-create', () => commitNewCharacter());
+    // Similar-name panel (shown instead of creating when the new name
+    // resembles an existing character or alias)
+    $modal.on('click.cr', '#cr-similar-alias', () => {
+        if (!_pendingSimilar) return;
+        const { newName, match } = _pendingSimilar;
+        addAliasToExisting(match.canonical, newName);
+        hideSimilarNamePanel();
+        closeNewCharacterDialog();
+        // Open the EXISTING character so the user sees the alias chip land
+        // in Workshop → Identity → Aliases.
+        openWorkshopFor(match.canonical, match.isUser);
+    });
+    $modal.on('click.cr', '#cr-similar-open', () => {
+        if (!_pendingSimilar) return;
+        const { match } = _pendingSimilar;
+        hideSimilarNamePanel();
+        closeNewCharacterDialog();
+        openWorkshopFor(match.canonical, match.isUser);
+    });
+    $modal.on('click.cr', '#cr-similar-create', () => {
+        if (!_pendingSimilar) return;
+        const { newName } = _pendingSimilar;
+        hideSimilarNamePanel();
+        performCreateCharacter(newName);
+    });
+    $modal.on('click.cr', '#cr-similar-back', () => hideSimilarNamePanel());
+    $modal.on('keydown.cr', '#cr-newchar-input', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); commitNewCharacter(); }
+        else if (e.key === 'Escape') { e.stopPropagation(); closeNewCharacterDialog(); }
+    });
+    // Backdrop click closes the inline dialog (but not the roster itself).
+    $modal.on('click.cr', '#cr-newchar-overlay', function (e) {
+        if (e.target === this) closeNewCharacterDialog();
+    });
+}
+
+function handleNewCharacter() {
+    // Open the inline dialog. Actual creation happens in
+    // commitNewCharacter() wired to the Create button / Enter key.
+    const $dialog = $modal.find('#cr-newchar-overlay');
+    const $input = $modal.find('#cr-newchar-input');
+    const $error = $modal.find('#cr-newchar-error');
+    if (!$dialog.length) {
+        console.warn('[Dooms Tracker] Roster: #cr-newchar-overlay not in DOM');
+        return;
+    }
+    $input.val('');
+    $error.prop('hidden', true).text('');
+    // Reset any leftover similar-name panel state from a previous attempt.
+    _pendingSimilar = null;
+    $modal.find('#cr-newchar-similar').prop('hidden', true);
+    $modal.find('#cr-newchar-input, .cr-newchar-actions').prop('hidden', false);
+    $dialog.prop('hidden', false);
+    // Defer focus so the dialog is visible first on slow mobile browsers.
+    setTimeout(() => $input.trigger('focus'), 0);
+}
+
+function closeNewCharacterDialog() {
+    const $dialog = $modal?.find('#cr-newchar-overlay');
+    if ($dialog && $dialog.length) $dialog.prop('hidden', true);
+    // Reset similar-name panel state so a stale match can't survive into the
+    // next open (handleNewCharacter resets too — this is the belt).
+    _pendingSimilar = null;
+    $modal?.find('#cr-newchar-similar').prop('hidden', true);
+    $modal?.find('#cr-newchar-input, .cr-newchar-actions').prop('hidden', false);
+}
+
+function commitNewCharacter() {
+    const $input = $modal.find('#cr-newchar-input');
+    const $error = $modal.find('#cr-newchar-error');
+    const raw = String($input.val() || '');
+    const trimmed = raw.trim();
+    if (!trimmed) {
+        $error.prop('hidden', false).text('Name is required.');
+        return;
+    }
+    // Dedup across BOTH namespaces — preventing a user character with the
+    // same name as an existing NPC (or vice versa) is critical because
+    // resolvePortrait keys off names; collisions would confuse rendering.
+    const existing = getAllExistingCharacterNamesLower();
+    if (existing.has(trimmed.toLowerCase())) {
+        $error.prop('hidden', false).text(`A character named "${trimmed}" already exists (as user or NPC).`);
+        return;
+    }
+    // Similar-name check: "Sara" next to an existing "Sarah" (or a name that
+    // is already an alias of another card) usually means the same character —
+    // offer to record it as an alias instead of creating a duplicate card.
+    const match = findSimilarCharacter(trimmed, collectSimilarityPool());
+    if (match) {
+        showSimilarNamePanel(trimmed, match);
+        return;
+    }
+    performCreateCharacter(trimmed);
+}
+
+/**
+ * Every existing name the similarity scan should consider: NPC + user cards
+ * from both the global and chat-scoped stores, plus every alias (alias
+ * entries resolve to their owning card). First entry wins on lowercase dupes,
+ * so canonical NPC names take precedence over alias hits.
+ */
+function collectSimilarityPool() {
+    const pool = [];
+    const seen = new Set();
+    const push = (name, canonical, isUser) => {
+        const key = String(name || '').trim().toLowerCase();
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        pool.push({ name, canonical, isUser });
+    };
+    const npcSources = [
+        extensionSettings?.knownCharacters,
+        extensionSettings?.characterColors,
+        extensionSettings?.npcAvatars,
+    ];
+    // Chat-scoped stores too — getAllExistingCharacterNamesLower only reads
+    // the global ones, which misses per-chat rosters.
+    try { npcSources.push(getActiveKnownCharacters()); } catch (e) {}
+    try { npcSources.push(getActiveCharacterColors()); } catch (e) {}
+    for (const source of npcSources) {
+        if (!source || typeof source !== 'object') continue;
+        for (const name of Object.keys(source)) push(name, name, false);
+    }
+    for (const name of Object.keys(extensionSettings?.userCharacters || {})) push(name, name, true);
+    for (const [canonical, aliases] of Object.entries(extensionSettings?.characterAliases || {})) {
+        if (!Array.isArray(aliases)) continue;
+        for (const alias of aliases) push(alias, canonical, false);
+    }
+    return pool;
+}
+
+// The name + match pending in the similar-name panel, if it's showing.
+let _pendingSimilar = null;
+
+function showSimilarNamePanel(newName, match) {
+    const $panel = $modal.find('#cr-newchar-similar');
+    if (!$panel.length) {
+        // Panel markup missing (template out of date) — fall back to creating.
+        performCreateCharacter(newName);
+        return;
+    }
+    _pendingSimilar = { newName, match };
+    const safeNew = escapeHtml(newName);
+    const safeExisting = escapeHtml(match.canonical);
+    const isAliasHit = match.name !== match.canonical;
+
+    let text;
+    if (match.exactNormalized && isAliasHit) {
+        text = `"${safeNew}" is already an <strong>alias</strong> of <strong>${safeExisting}</strong>. Tracker data using this name is attributed to that character.`;
+    } else if (match.exactNormalized) {
+        text = `A character effectively named "${safeNew}" already exists: <strong>${safeExisting}</strong>.`;
+    } else if (isAliasHit) {
+        text = `"${safeNew}" looks similar to "${escapeHtml(match.name)}", an alias of <strong>${safeExisting}</strong>. Did you mean the same character?`;
+    } else {
+        text = `"${safeNew}" looks similar to existing character <strong>${safeExisting}</strong>. Did you mean the same character?`;
+    }
+    $panel.find('.cr-similar-text').html(text);
+
+    // The alias offer only makes sense for an NPC target from the NPC roster
+    // tab — aliases are an NPC-only concept and always resolve to NPC cards.
+    const canAlias = rosterMode !== 'users' && !match.isUser && !match.exactNormalized;
+    const $aliasBtn = $panel.find('#cr-similar-alias');
+    $aliasBtn.prop('hidden', !canAlias);
+    if (canAlias) $aliasBtn.text(`Add "${newName}" as alias of ${match.canonical}`);
+    $panel.find('#cr-similar-open').prop('hidden', !match.exactNormalized);
+
+    $modal.find('#cr-newchar-input, #cr-newchar-error').prop('hidden', true);
+    $modal.find('.cr-newchar-actions').prop('hidden', true);
+    $panel.prop('hidden', false);
+}
+
+function hideSimilarNamePanel() {
+    _pendingSimilar = null;
+    const $panel = $modal?.find('#cr-newchar-similar');
+    if ($panel?.length) $panel.prop('hidden', true);
+    $modal?.find('#cr-newchar-input, .cr-newchar-actions').prop('hidden', false);
+    $modal?.find('#cr-newchar-input').trigger('focus');
+}
+
+/**
+ * Records newName as an alias of an existing NPC card via the alias module's
+ * shared writer (characterAliases is global, never chat-scoped), so the
+ * Workshop's alias chips and every tracker-ingestion chokepoint pick it up
+ * with no extra plumbing.
+ */
+function addAliasToExisting(canonical, newName) {
+    addCharacterAlias(canonical, newName);
+    saveSettings();
+    if (window.toastr) {
+        window.toastr.success(`"${newName}" added as an alias of ${canonical}.`, 'Character Roster', { timeOut: 4000 });
+    }
+}
+
+function performCreateCharacter(trimmed) {
+    if (rosterMode === 'users') {
+        if (!extensionSettings.userCharacters) extensionSettings.userCharacters = {};
+        extensionSettings.userCharacters[trimmed] = {
+            color: '', avatar: '', avatarFullRes: '', pronouns: '', linkedPersona: '',
+            injection: { description: '', lorebook: '' },
+        };
+        saveSettings();
+    } else {
+        if (!extensionSettings.knownCharacters) extensionSettings.knownCharacters = {};
+        extensionSettings.knownCharacters[trimmed] = { emoji: '❓' };
+        saveSettings();
+        try {
+            clearPortraitCache();
+            updatePortraitBar();
+        } catch (e) {
+            console.warn('[Dooms Tracker] Roster: failed to refresh portrait bar after new character', e);
+        }
+    }
+    closeNewCharacterDialog();
+    openWorkshopFor(trimmed, rosterMode === 'users');
+}
+
+/**
+ * Union of every character name that has any persisted state in the
+ * extension. Defensive against orphans (e.g. a color set for a character
+ * that was removed from knownCharacters). When the roster is in "users"
+ * mode, returns the user-character names instead.
+ */
+function collectCharacterNames() {
+    if (rosterMode === 'users') {
+        const uc = extensionSettings?.userCharacters;
+        if (!uc || typeof uc !== 'object') return [];
+        return Object.keys(uc).filter(n => n && typeof n === 'string');
+    }
+    const set = new Set();
+    // knownCharacters and characterColors flip stores based on
+    // perChatCharacterTracking — read via the chat-aware getters so
+    // characters auto-discovered in this chat (e.g. new arrivals from
+    // the AI's character list) actually surface in the Roster. npcAvatars
+    // is always global; read it directly.
+    const sources = [
+        getActiveKnownCharacters(),
+        getActiveCharacterColors(),
+        extensionSettings?.npcAvatars,
+    ];
+    for (const src of sources) {
+        if (!src || typeof src !== 'object') continue;
+        for (const name of Object.keys(src)) {
+            if (name && typeof name === 'string') set.add(name);
+        }
+    }
+    return Array.from(set);
+}
+
+function resolveRelationshipEmoji(name) {
+    // Persistent user-set override wins over the AI's per-turn classification.
+    const override = extensionSettings?.characterRelationships?.[name];
+    if (override && REL_EMOJI[override]) return REL_EMOJI[override];
+    // Fallback: best-effort read from volatile lastGeneratedData.
+    try {
+        const raw = window?.dooms_lastGeneratedData?.characterThoughts;
+        if (!raw) return '';
+        const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        const list = parsed?.characters || [];
+        const found = list.find(c => c?.name === name);
+        const rel = found?.relationship?.status;
+        return rel && REL_EMOJI[rel] ? REL_EMOJI[rel] : '';
+    } catch (e) {
+        return '';
+    }
+}
+
+function renderGrid() {
+    const $grid = $modal.find('#cr-grid').empty();
+    const $empty = $modal.find('#cr-empty');
+
+    // Pull this-chat and active scopes once per render. Both come from
+    // getCharacterList(), which merges the current chat's present +
+    // absent characters.
+    const chatNames = new Set();   // all characters in this chat's panel
+    const activeSet = new Set();   // subset: currently in scene
+    try {
+        const list = getCharacterList() || [];
+        for (const c of list) {
+            if (!c?.name) continue;
+            const key = c.name.toLowerCase();
+            chatNames.add(key);
+            if (c.present) activeSet.add(key);
+        }
+    } catch (e) {
+        console.warn('[Dooms Tracker] Roster: getCharacterList failed', e);
+    }
+
+    // The "+ New Character" tile is always present regardless of search/scope.
+    $grid.append(
+        `<button type="button" class="cr-tile cr-tile-new" role="listitem" aria-label="New character">
+            <i class="fa-solid fa-plus" aria-hidden="true"></i>
+            <span>+ New Character</span>
+        </button>`
+    );
+
+    const allNames = collectCharacterNames().sort((a, b) => {
+        // Pinned first (alphabetical among themselves), then unpinned
+        // (also alphabetical). Pin state is case-insensitive.
+        const pa = isPinned(a), pb = isPinned(b);
+        if (pa && !pb) return -1;
+        if (!pa && pb) return 1;
+        return a.localeCompare(b);
+    });
+    const scopeFiltered = allNames.filter(n => {
+        if (scope === 'chat') return chatNames.has(n.toLowerCase());
+        if (scope === 'active') return activeSet.has(n.toLowerCase());
+        return true;
+    });
+    const filtered = searchQuery
+        ? scopeFiltered.filter(n => n.toLowerCase().includes(searchQuery))
+        : scopeFiltered;
+
+    for (const name of filtered) {
+        $grid.append(buildTile(name, activeSet.has(name.toLowerCase())));
+    }
+    try { renderCampaignChip(); } catch (e) {}
+
+    // Count badge — total in current scope, plus active count when any.
+    const total = scopeFiltered.length;
+    const activeCount = scopeFiltered.reduce((n, name) => n + (activeSet.has(name.toLowerCase()) ? 1 : 0), 0);
+    const activeTxt = activeCount > 0 && scope !== 'active' ? ` · ${activeCount} active` : '';
+    const scopeTxt = scope === 'chat' ? ' in this chat' : scope === 'active' ? ' active' : '';
+    $modal.find('#cr-count').text(`${total} ${total === 1 ? 'character' : 'characters'}${scopeTxt}${activeTxt}`);
+
+    // Empty state: triggered by either an empty scope or a zero-result search.
+    const noResults = filtered.length === 0;
+    $empty.prop('hidden', !noResults);
+    if (noResults) {
+        const msg = scope === 'chat'
+            ? 'No characters in this chat yet.'
+            : scope === 'active'
+            ? 'No characters currently in the scene.'
+            : 'No characters match that search.';
+        $empty.find('p').text(msg);
+    }
+}
+
+function buildTile(name, isActive) {
+    // In user-character mode the data lives in a single namespace.
+    const isUserMode = rosterMode === 'users';
+    const userEntry = isUserMode ? (extensionSettings?.userCharacters?.[name] || {}) : null;
+    const avatar = isUserMode
+        ? (userEntry.avatar || '')
+        : (extensionSettings?.npcAvatars?.[name] || '');
+    const color = isUserMode
+        ? (userEntry.color || '')
+        : (extensionSettings?.characterColors?.[name] || '');
+    const relEmoji = isUserMode ? '' : resolveRelationshipEmoji(name);
+    const isActiveUser = isUserMode && extensionSettings?.activeUserCharacter === name;
+    const safeName = escapeHtml(name);
+    const safeNameAttr = escapeAttr(name);
+    const activeSuffix = isActive ? ' (active in chat)' : '';
+    const safeLabel = escapeAttr(`Open ${name} in Workshop${activeSuffix}`);
+    const imgHtml = avatar
+        ? `<img src="${escapeAttr(avatar)}" alt="">`
+        : `<div class="cr-placeholder" aria-hidden="true">&#128100;</div>`;
+    const dotHtml = color
+        ? `<span class="cr-tile-dot" style="background:${escapeAttr(color)};" aria-hidden="true"></span>`
+        : '';
+    const relHtml = relEmoji
+        ? `<span class="cr-tile-rel" aria-hidden="true">${relEmoji}</span>`
+        : '';
+    const activeBadge = isActive
+        ? `<span class="cr-tile-active-badge" title="Currently in scene">
+                <span class="cr-tile-active-dot"></span>
+                <span class="cr-tile-active-label">ACTIVE</span>
+            </span>`
+        : '';
+    const pinned = isPinned(name);
+    const pinBadge = pinned
+        ? `<span class="cr-tile-pin" title="Pinned"><i class="fa-solid fa-thumbtack" aria-hidden="true"></i></span>`
+        : '';
+    const activeClass = (isActive ? ' cr-tile-active' : '') + (pinned ? ' cr-tile-pinned' : '');
+    const userBadge = isUserMode
+        ? `<span class="cr-tile-user-badge">${isActiveUser ? '★ Active' : 'User'}</span>`
+        : '';
+    // Campaign versions besides Base.
+    let versionsBadge = '';
+    if (!isUserMode) {
+        let versions = 1;
+        try { versions = countVersions(name); } catch (e) {}
+        if (versions > 1) {
+            versionsBadge = `<span class="cr-tile-versions" title="${versions} versions (Base + ${versions - 1} campaign)" aria-hidden="true">&#x29C9; ${versions}</span>`;
+        }
+    }
+    return (
+        `<button type="button" class="cr-tile${activeClass}" role="listitem" data-character="${safeNameAttr}" aria-label="${safeLabel}">
+            ${imgHtml}
+            ${relHtml}
+            ${dotHtml}
+            ${pinBadge}
+            ${activeBadge}
+            ${userBadge}
+            ${versionsBadge}
+            <span class="cr-tile-name">${safeName}</span>
+        </button>`
+    );
+}
+
+function showContextMenu(x, y) {
+    const $menu = $modal.find('#cr-context-menu');
+    if (!$menu.length) return;
+    // Update the Pin menu label based on the currently-targeted character.
+    const pinned = contextMenuTarget && isPinned(contextMenuTarget);
+    $menu.find('.cr-context-pin-label').text(pinned ? 'Unpin' : 'Pin to top');
+    $menu.find('[data-action="pin"] i')
+        .toggleClass('fa-thumbtack', true)
+        .css('transform', pinned ? 'rotate(45deg)' : '');
+    $menu.css({ visibility: 'hidden' }).prop('hidden', false);
+    // Clamp to viewport so the menu doesn't spill off the screen.
+    const menuW = $menu.outerWidth() || 180;
+    const menuH = $menu.outerHeight() || 80;
+    const maxX = window.innerWidth - menuW - 6;
+    const maxY = window.innerHeight - menuH - 6;
+    $menu.css({
+        left: Math.max(6, Math.min(x, maxX)) + 'px',
+        top: Math.max(6, Math.min(y, maxY)) + 'px',
+        visibility: 'visible',
+    });
+}
+
+function hideContextMenu() {
+    const $menu = $modal?.find('#cr-context-menu');
+    if ($menu && $menu.length) $menu.prop('hidden', true);
+    contextMenuTarget = '';
+}
+
+function confirmAndDelete(name) {
+    let versionsNote = '';
+    try {
+        const extra = rosterMode === 'users' ? 0 : countVersions(name) - 1;
+        if (extra > 0) versionsNote = `, and its ${extra} campaign version${extra === 1 ? '' : 's'}`;
+    } catch (e) {}
+    const ok = window.confirm(
+        `Delete "${name}" from this chat's roster?\n\n` +
+        `Removes the portrait, dialogue color, relationship/hero position, ` +
+        `known-character entry, and any Workshop injection extras (description / lorebook)${versionsNote}. ` +
+        `Sheet data is kept.`
+    );
+    if (!ok) return;
+    purgeCharacter(name);
+    renderGrid();
+    try {
+        clearPortraitCache();
+        updatePortraitBar();
+    } catch (e) {
+        console.warn('[Dooms Tracker] Roster: failed to refresh portrait bar after delete', e);
+    }
+    try {
+        if (window.toastr) window.toastr.info(`Deleted "${name}".`, 'Roster', { timeOut: 3000 });
+    } catch (e) {}
+}
+
+/**
+ * Returns a Set of every existing character name across BOTH the NPC and
+ * user-character namespaces, lowercased. Used by both import flows so a
+ * persona named the same as an existing NPC (or vice versa) is detected
+ * as a conflict and skipped.
+ */
+function getAllExistingCharacterNamesLower() {
+    const set = new Set();
+    const sources = [
+        extensionSettings?.knownCharacters,
+        extensionSettings?.characterColors,
+        extensionSettings?.npcAvatars,
+        extensionSettings?.userCharacters,
+    ];
+    // Chat-scoped stores too (perChatCharacterTracking flips the roster into
+    // chat_metadata) — without these, a name that exists only in the current
+    // chat's roster sails past the "already exists" check.
+    try { sources.push(getActiveKnownCharacters()); } catch (e) {}
+    try { sources.push(getActiveCharacterColors()); } catch (e) {}
+    for (const src of sources) {
+        if (!src || typeof src !== 'object') continue;
+        for (const name of Object.keys(src)) {
+            if (name && typeof name === 'string') set.add(name.toLowerCase());
+        }
+    }
+    return set;
+}
+
+/**
+ * Import every SillyTavern character card as an NPC. Reads the global
+ * `characters` array (imported from script.js). Skips cards whose name
+ * already exists in either the NPC or user-character namespace so we
+ * never produce a duplicate or accidental overwrite.
+ */
+function importFromSillyTavernCards() {
+    const cards = Array.isArray(characters) ? characters : [];
+    const valid = cards.filter(c => c && typeof c.name === 'string' && c.name.trim());
+    if (!valid.length) {
+        try {
+            if (window.toastr) {
+                window.toastr.info('No SillyTavern character cards found.', 'Import', { timeOut: 4000 });
+            } else {
+                window.alert('No SillyTavern character cards found.');
+            }
+        } catch (e) {}
+        return;
+    }
+    const existing = getAllExistingCharacterNamesLower();
+    const toImport = valid.filter(c => !existing.has(c.name.toLowerCase()));
+    const skipped = valid.length - toImport.length;
+    if (!toImport.length) {
+        try {
+            if (window.toastr) {
+                window.toastr.info(
+                    `All ${valid.length} card${valid.length === 1 ? '' : 's'} already exist as character${valid.length === 1 ? '' : 's'}.`,
+                    'Import',
+                    { timeOut: 4000 },
+                );
+            }
+        } catch (e) {}
+        return;
+    }
+    const lines = toImport.map(c => `  • ${c.name}`).join('\n');
+    const msg = `Import ${toImport.length} card${toImport.length === 1 ? '' : 's'} as character${toImport.length === 1 ? '' : 's'}?\n\n${lines}` +
+        (skipped > 0 ? `\n\n(${skipped} already exist and will be skipped — duplicates aren't imported.)` : '');
+    if (!window.confirm(msg)) return;
+    if (!extensionSettings.knownCharacters) extensionSettings.knownCharacters = {};
+    if (!extensionSettings.npcAvatars) extensionSettings.npcAvatars = {};
+    if (!extensionSettings.npcAvatarsFullRes) extensionSettings.npcAvatarsFullRes = {};
+    if (!extensionSettings.characterInjection) extensionSettings.characterInjection = {};
+    for (const card of toImport) {
+        const name = card.name.trim();
+        extensionSettings.knownCharacters[name] = { emoji: '👤' };
+        if (card.avatar) {
+            // ST serves character cards from /characters/<filename>.
+            const url = '/characters/' + encodeURIComponent(card.avatar);
+            extensionSettings.npcAvatars[name] = url;
+            extensionSettings.npcAvatarsFullRes[name] = url;
+        }
+        // If the card has a description, seed the Workshop Injection field
+        // so users can Inject into Scene right away.
+        const desc = String(card.description || '').trim();
+        if (desc) {
+            extensionSettings.characterInjection[name] = { description: desc, lorebook: '' };
+        }
+    }
+    saveSettings();
+    try { clearPortraitCache(); updatePortraitBar(); } catch (e) {}
+    renderGrid();
+    try {
+        if (window.toastr) {
+            window.toastr.success(
+                `Imported ${toImport.length} card${toImport.length === 1 ? '' : 's'}.`,
+                'Roster',
+                { timeOut: 4000 },
+            );
+        }
+    } catch (e) {}
+}
+
+/**
+ * Import every SillyTavern persona as a user character. Reads from
+ * power_user.personas (a map of avatar filename → persona name).
+ * Skips personas whose name already exists in EITHER the user-character
+ * namespace or the NPC namespace — no duplicates across either side.
+ */
+function importFromSillyTavernPersonas() {
+    // power_user is imported at module top — fall through to the window
+    // reference in case ST exposes it that way on some forks.
+    const pu = power_user || (typeof window !== 'undefined' && window.power_user) || null;
+    const personas = (pu && pu.personas) || {};
+    const personaDescs = (pu && pu.persona_descriptions) || {};
+    const entries = Object.entries(personas).filter(([avatarFile, name]) => avatarFile && name);
+    if (!entries.length) {
+        try {
+            if (window.toastr) {
+                window.toastr.info('No SillyTavern personas found.', 'Import', { timeOut: 4000 });
+            } else {
+                window.alert('No SillyTavern personas found.');
+            }
+        } catch (e) {}
+        return;
+    }
+    if (!extensionSettings.userCharacters) extensionSettings.userCharacters = {};
+    // Dedup across BOTH namespaces — a persona named the same as an NPC
+    // (or vice versa) shouldn't get a duplicate entry.
+    const existingNames = getAllExistingCharacterNamesLower();
+    const toImport = entries.filter(([, name]) => !existingNames.has(String(name).toLowerCase()));
+    const skipped = entries.length - toImport.length;
+    if (!toImport.length) {
+        try {
+            if (window.toastr) {
+                window.toastr.info(
+                    `All ${entries.length} persona${entries.length === 1 ? '' : 's'} already exist (as user characters or NPCs).`,
+                    'Import',
+                    { timeOut: 4000 },
+                );
+            }
+        } catch (e) {}
+        return;
+    }
+    const lines = toImport.map(([, name]) => `  • ${name}`).join('\n');
+    const msg = `Import ${toImport.length} persona${toImport.length === 1 ? '' : 's'} as user character${toImport.length === 1 ? '' : 's'}?\n\n${lines}` +
+        (skipped > 0 ? `\n\n(${skipped} already exist and will be skipped — duplicates aren't imported.)` : '');
+    if (!window.confirm(msg)) return;
+    for (const [avatarFile, name] of toImport) {
+        const description = typeof personaDescs[avatarFile] === 'object'
+            ? (personaDescs[avatarFile]?.description || '')
+            : (personaDescs[avatarFile] || '');
+        // ST serves persona avatars from /User Avatars/<filename>. The
+        // filename may contain spaces, so encode each segment.
+        const avatarUrl = '/User%20Avatars/' + encodeURIComponent(avatarFile);
+        extensionSettings.userCharacters[name] = {
+            color: '',
+            avatar: avatarUrl,
+            avatarFullRes: avatarUrl,
+            pronouns: '',
+            linkedPersona: avatarFile,
+            injection: { description: String(description || '').trim(), lorebook: '' },
+        };
+    }
+    saveSettings();
+    renderGrid();
+    try {
+        if (window.toastr) {
+            window.toastr.success(
+                `Imported ${toImport.length} persona${toImport.length === 1 ? '' : 's'}.`,
+                'Roster',
+                { timeOut: 4000 },
+            );
+        }
+    } catch (e) {}
+}
+
+/**
+ * Ingest a parsed character JSON payload (from Workshop's Export).
+ * Shape is validated loosely — only string fields are copied, and the
+ * caller may conflict-resolve by choosing to overwrite or rename.
+ */
+function importCharacterPayload(payload) {
+    if (!payload || typeof payload !== 'object') {
+        if (window.toastr) window.toastr.error('File isn\'t a character export.', 'Import failed');
+        return;
+    }
+    const rawName = typeof payload.name === 'string' ? payload.name.trim() : '';
+    if (!rawName) {
+        if (window.toastr) window.toastr.error('Export is missing a character name.', 'Import failed');
+        return;
+    }
+
+    // Conflict detection: if a character with this name (case-insensitive)
+    // already exists in any store we'd write to, prompt the user.
+    const existing = collectCharacterNames();
+    const clash = existing.find(n => n.toLowerCase() === rawName.toLowerCase());
+
+    let targetName = rawName;
+    if (clash) {
+        const choice = window.confirm(
+            `A character named "${clash}" already exists.\n\n` +
+            `OK  = overwrite "${clash}" with the imported data\n` +
+            `Cancel = import under a new name ("${rawName} (imported)")`
+        );
+        if (!choice) {
+            targetName = `${rawName} (imported)`;
+            let suffix = 2;
+            while (existing.some(n => n.toLowerCase() === targetName.toLowerCase())) {
+                targetName = `${rawName} (imported ${suffix++})`;
+            }
+        } else {
+            targetName = clash; // keep existing casing
+        }
+    }
+
+    // Copy fields defensively.
+    if (!extensionSettings.knownCharacters) extensionSettings.knownCharacters = {};
+    if (!extensionSettings.knownCharacters[targetName]) {
+        extensionSettings.knownCharacters[targetName] = { emoji: '❓' };
+    }
+
+    const color = typeof payload.color === 'string' ? payload.color.trim() : '';
+    if (color) {
+        // Chat-aware write — when perChatCharacterTracking is on the live
+        // color store is chat_metadata, not extensionSettings. A manual
+        // edit here must overwrite whatever the harvest assigned.
+        const activeColors = getActiveCharacterColors();
+        const prev = activeColors[targetName] ? String(activeColors[targetName]).toLowerCase() : '';
+        if (prev && prev !== color.toLowerCase()) {
+            const known = getActiveKnownCharacters();
+            if (known) {
+                if (!known[targetName]) known[targetName] = { emoji: '❓' };
+                const aliases = Array.isArray(known[targetName].previousColors) ? known[targetName].previousColors : [];
+                if (!aliases.includes(prev)) aliases.push(prev);
+                known[targetName].previousColors = aliases;
+            }
+        }
+        activeColors[targetName] = color;
+    }
+
+    const avatar = typeof payload.avatar === 'string' ? payload.avatar : '';
+    const avatarFull = typeof payload.avatarFullRes === 'string' ? payload.avatarFullRes : '';
+    if (avatar) {
+        if (!extensionSettings.npcAvatars) extensionSettings.npcAvatars = {};
+        if (!extensionSettings.npcAvatarsFullRes) extensionSettings.npcAvatarsFullRes = {};
+        extensionSettings.npcAvatars[targetName] = avatar;
+        extensionSettings.npcAvatarsFullRes[targetName] = avatarFull || avatar;
+    }
+
+    const rel = typeof payload.relationship === 'string' ? payload.relationship.trim() : '';
+    const RELS = ['Lover', 'Friend', 'Ally', 'Enemy', 'Neutral'];
+    if (rel && RELS.some(r => r.toLowerCase() === rel.toLowerCase())) {
+        if (!extensionSettings.characterRelationships) extensionSettings.characterRelationships = {};
+        // Canonicalize to the titlecase form the chip row uses.
+        extensionSettings.characterRelationships[targetName] = RELS.find(r => r.toLowerCase() === rel.toLowerCase());
+    }
+
+    const inj = payload.injection && typeof payload.injection === 'object' ? payload.injection : null;
+    if (inj) {
+        const desc = typeof inj.description === 'string' ? inj.description.trim() : '';
+        const book = typeof inj.lorebook === 'string' ? inj.lorebook.trim() : '';
+        const tpl = typeof inj.promptTemplate === 'string' ? inj.promptTemplate.trim() : '';
+        if (desc || book || tpl) {
+            if (!extensionSettings.characterInjection) extensionSettings.characterInjection = {};
+            const entry = { description: desc, lorebook: book };
+            if (tpl) entry.promptTemplate = tpl;
+            extensionSettings.characterInjection[targetName] = entry;
+        }
+    }
+
+    saveSettings();
+    try {
+        clearPortraitCache();
+        updatePortraitBar();
+    } catch (e) {
+        console.warn('[Dooms Tracker] Roster: failed to refresh portrait bar after import', e);
+    }
+    renderGrid();
+    if (window.toastr) {
+        window.toastr.success(`Imported "${targetName}".`, 'Character Workshop', { timeOut: 4000 });
+    }
+}
+
+function purgeCharacter(name) {
+    const s = extensionSettings;
+    if (!s) return;
+    // User-character mode purges only the userCharacters namespace and
+    // clears activeUserCharacter if it was pointing at this entry.
+    if (rosterMode === 'users') {
+        if (s.userCharacters) delete s.userCharacters[name];
+        if (s.activeUserCharacter === name) s.activeUserCharacter = null;
+        deleteStatSheet(name, true);
+        deleteEquipmentEverywhere(name, true);
+        deleteConditionsEverywhere(name, true);
+        deleteProgressEverywhere(name, true);
+        deleteMoney(name, true);
+        deleteAbilitiesEverywhere(name, true);
+        saveSettings();
+        return;
+    }
+    if (s.characterColors) delete s.characterColors[name];
+    // Portrait files: collect every value first (current, full-res, the
+    // history from Regenerate Portrait, every campaign version), remove all
+    // the settings entries, save, and only THEN delete what nothing else
+    // references (a persona copied from this NPC shares its file).
+    const portraitCandidates = [
+        s.npcAvatars?.[name],
+        s.npcAvatarsFullRes?.[name],
+        ...takePortraitHistoryValues(name),
+        ...deleteCharacterEverywhere(name),
+    ];
+    // Every version-backed store (portraits, injection extras, relationship,
+    // knives, appearance, hero position, auto-portrait meta) — the same set
+    // the Workshop's delete clears.
+    removeFromLive(name);
+    if (s.knownCharacters) delete s.knownCharacters[name];
+    // Aliases too — an orphaned alias entry would keep silently renaming a
+    // future, unrelated character to this deleted one.
+    if (s.characterAliases) delete s.characterAliases[name];
+    // Stat sheet and its per-campaign values; memories in every campaign.
+    deleteStatSheet(name, false);
+    deleteMemoriesEverywhere(name);
+    deleteEquipmentEverywhere(name, false);
+    deleteConditionsEverywhere(name, false);
+    deleteProgressEverywhere(name, false);
+    deleteMoney(name, false);
+    deleteAffinity(name);
+    deleteAbilitiesEverywhere(name, false);
+    // When perChatCharacterTracking is on, knownCharacters/characterColors
+    // live on chat_metadata, not extensionSettings. Wipe those too or the
+    // tile reappears on the next renderGrid (which reads via the active
+    // getters).
+    if (s.perChatCharacterTracking) {
+        const activeKnown = getActiveKnownCharacters();
+        if (activeKnown) delete activeKnown[name];
+        const activeColors = getActiveCharacterColors();
+        if (activeColors) delete activeColors[name];
+    }
+    // Drop from removedCharacters (both stores). The chat-load orphan-adopt
+    // routine in persistence.js re-creates a knownCharacters entry for any
+    // name still in removedCharacters — without this, a deleted character
+    // that had previously been ejected from the scene resurrects on reload.
+    // Also drop from bannedCharacters so the standing "do not include"
+    // prompt isn't pinned for a character that no longer exists.
+    const lowerName = String(name || '').toLowerCase();
+    const stripFromList = (list) => list.filter(n =>
+        typeof n !== 'string' || n.toLowerCase() !== lowerName
+    );
+    if (Array.isArray(s.removedCharacters)) {
+        s.removedCharacters = stripFromList(s.removedCharacters);
+    }
+    if (Array.isArray(s.bannedCharacters)) {
+        s.bannedCharacters = stripFromList(s.bannedCharacters);
+    }
+    if (s.perChatCharacterTracking) {
+        const activeRemoved = getActiveRemovedCharacters();
+        if (Array.isArray(activeRemoved)) {
+            const filtered = stripFromList(activeRemoved);
+            activeRemoved.length = 0;
+            activeRemoved.push(...filtered);
+        }
+        const activeBanned = getActiveBannedCharacters();
+        if (Array.isArray(activeBanned)) {
+            const filtered = stripFromList(activeBanned);
+            activeBanned.length = 0;
+            activeBanned.push(...filtered);
+        }
+    }
+    // Re-emit BAN_SLOT extension prompt so the AI stops being told to
+    // exclude a name we just deleted; without this the standing ban
+    // prompt holds the stale list until CHAT_CHANGED.
+    try { refreshBanPrompt(); } catch (e) {}
+    // Also drop the pin entry so the name doesn't linger as a ghost
+    // at the top of the roster.
+    if (Array.isArray(s.pinnedCharacters)) {
+        s.pinnedCharacters = stripFromList(s.pinnedCharacters);
+    }
+    saveSettings();
+    if (s.perChatCharacterTracking) saveChatData();
+    // Settings no longer reference the files — now the disk cleanup.
+    deletePortraitsIfUnreferenced(portraitCandidates).catch(() => {});
+}

@@ -1,0 +1,682 @@
+/**
+ * Core State Management Module
+ * Centralizes all extension state variables
+ */
+/**
+ * Extension settings - persisted to SillyTavern settings
+ */
+export let extensionSettings = {
+    settingsVersion: 15, // Version number for settings migrations (v14-v15 add Name Ban + expression classifier settings)
+    enabled: true,
+    autoUpdate: false,
+    updateDepth: 4, // How many messages to include in the context
+    generationMode: 'together', // 'together', 'separate', or 'external'
+    // Per-prompt injection depth & role settings (configured in Customize Prompts editor)
+    promptInjection: {
+        html: { depth: 0, role: '' },
+        dialogueColoring: { depth: 0, role: '' },
+        trackerInstructions: { depth: 0, role: 'user' },
+        contextInstructions: { depth: 1, role: '' },
+    },
+    connectionProfile: '', // Connection Manager profile name for tracker generation (empty = use current)
+    // NOTE: showUserStats and showInventory have been removed (see git history)
+    showInfoBox: true,
+    showCharacterThoughts: true,
+    showQuests: false, // Show quests section (off in the new-player profile)
+    showThoughtsInChat: false, // Show thoughts overlay in chat
+    showTrackerJsonInChat: false, // Inline 🗂️ Tracker Data dropdown under AI messages
+    mobileComposeOverlay: false, // Mobile: fullscreen compose box instead of resizing the chat UI
+    showPortraitBar: true, // Show collapsible portrait bar above chat input
+    narratorMode: false, // Use character card as narrator instead of fixed character references
+    customNarratorPrompt: '', // Custom narrator mode prompt text (empty = use default)
+    customContextInstructionsPrompt: '', // Custom context instructions prompt text (empty = use default)
+    enableHtmlPrompt: false, // Enable immersive HTML prompt injection
+    customHtmlPrompt: '', // Custom HTML prompt text (empty = use default)
+    enableDialogueColoring: true, // Enable dialogue coloring prompt injection (on in the new-player profile)
+    customDialogueColoringPrompt: '', // Custom dialogue coloring prompt text (empty = use default)
+    customTrackerInstructionsPrompt: '', // Custom tracker instructions prompt (empty = use default)
+    // Full hand-edited tracker block (header + instructions + FORMAT spec).
+    // Empty = build it from trackerConfig as usual. When set it is sent
+    // verbatim, so it OVERRIDES customTrackerInstructionsPrompt and any field
+    // config — that is the point of it. See the Tracker Prompt editor.
+    customTrackerPrompt: '',
+    customTrackerContinuationPrompt: '', // Custom tracker continuation prompt (empty = use default)
+    customWeatherPrompt: '', // Custom weather forecast instruction for info box JSON (empty = use default)
+    customCharacterThoughtsPrompt: '', // Custom character thoughts/present characters prompt (empty = use default)
+    customPlotTwistTemplatePrompt: '', // Custom plot twist injection template (empty = use default)
+    customKnifeTemplatePrompt: '', // Custom knife injection template (empty = use default)
+    customKnifeGeneratorRulesPrompt: '', // Custom knife generator rules prompt (empty = use default)
+    customNewFieldsBoostPrompt: '', // Custom new fields boost template (empty = use default)
+    customTwistGeneratorRulesPrompt: '', // Custom twist generator rules prompt (empty = use default)
+    // NOTE: enableDeceptionSystem, enableOmniscienceFilter, enableCYOA, enableSpotifyMusic
+    // and their custom prompt fields have been removed (see git history)
+    heroPositions: {},         // Per-character hero art positioning { characterName: { x, y } }
+    enableDynamicWeather: false, // Enable dynamic weather effects based on Info Box weather field
+    weatherBackground: true, // Show weather effects in background (behind chat)
+    weatherForeground: false, // Show weather effects in foreground (on top of chat)
+    dismissedHolidayPromo: false, // User dismissed the holiday promotion banner
+    showHtmlToggle: true, // Show Immersive HTML toggle in main panel
+    showDialogueColoringToggle: true, // Show Dialogue Coloring toggle in main panel (enabled by default)
+    // NOTE: showDeceptionToggle, showOmniscienceToggle, showCYOAToggle, showSpotifyToggle
+    // have been removed (see git history)
+    showDynamicWeatherToggle: true, // Show Dynamic Weather Effects toggle in main panel
+    showNarratorMode: true, // Show Narrator Mode toggle in main panel
+    showAutoAvatars: true, // Show Auto-generate Avatars toggle in main panel
+    skipInjectionsForGuided: 'none', // skip injections for instruct injections and quiet prompts (GuidedGenerations compatibility)
+    enableRandomizedPlot: false, // Show randomized plot progression button above chat input
+    enableNaturalPlot: false, // Show natural plot progression button above chat input
+    // Character Aliases — alternative names that resolve to an existing
+    // character card instead of creating a duplicate (Workshop → Identity)
+    characterAliases: {},             // { [canonicalName]: string[] }
+    // History persistence settings - inject selected tracker data into historical messages
+    historyPersistence: {
+        enabled: false, // Master toggle for history persistence feature
+        messageCount: 5, // Number of messages to include (0 = all available)
+        injectionPosition: 'assistant_message_end', // 'user_message_end', 'assistant_message_end', 'extra_user_message', 'extra_assistant_message'
+        contextPreamble: '', // Optional custom preamble text (empty = use default short one)
+        sendAllEnabledOnRefresh: false // If true, sends all enabled stats from preset instead of only persistInHistory-enabled stats on Refresh RPG Info
+    },
+    // Scene Tracker settings - customize the scene header bar shown after the last assistant message
+    sceneTracker: {
+        // Visibility per field
+        showTime: true,
+        showDate: true,
+        showLocation: true,
+        showCharacters: true,
+        showQuest: true,
+        showRecentEvents: true,
+        showMoonPhase: false,
+        showTension: false,
+        showTimeSinceRest: false,
+        showConditions: false,
+        showTerrain: false,
+        showWeather: false,
+        // Layout
+        layout: 'grid', // 'grid' (2-col) | 'compact' (inline flow) | 'stacked' (1-col)
+        // Colors
+        bgColor: '#e94560',
+        bgOpacity: 8,
+        borderColor: '#e94560',
+        borderOpacity: 15,
+        accentColor: '#e94560',
+        labelColor: '#888888',
+        textColor: '#d0d0d0',
+        charBadgeBg: '#e94560',
+        charBadgeOpacity: 12,
+        questIconColor: '#f0c040',
+        questTextColor: '#f0c040',
+        eventsTextColor: '#999999',
+        // Sizing
+        fontSize: 82,
+        borderRadius: 8,
+        padding: 10,
+        borderWidth: 3,
+        // Theme integration
+        themeControlled: false,
+    },
+    // Inline Banners — cinematic transition cards between messages
+    inlineBanners: {
+        enabled: false,                    // Master toggle
+        style: 'cinematic',               // 'cinematic' | 'minimal' | 'hybrid'
+    },
+    panelPosition: 'right', // 'left', 'right', or 'top'
+    theme: 'default', // Theme: default, sci-fi, fantasy, cyberpunk, custom
+    customColors: {
+        bg: '#1a1a2e',
+        bgOpacity: 100,
+        accent: '#16213e',
+        accentOpacity: 100,
+        text: '#eaeaea',
+        textOpacity: 100,
+        highlight: '#e94560',
+        highlightOpacity: 100
+    },
+    enableAnimations: true, // Enable smooth animations for content updates
+    performanceMode: false, // Kill animations/blur/transitions + pause particles for minimum GPU/CPU cost
+    fabPosition: 'center', // 'center' = centered on screen (new-player default); {left, top} after user drags
+    compactPrompts: true, // Use terser tracker instructions (~40% fewer tokens); set false to restore verbose v1 phrasing
+    mobileQuickJumpEnabled: true, // Mobile-only floating button to jump back to your last sent message
+    whatsNewSeenVersion: '', // Last extension version whose What's New screen was shown
+    whatsNewOptOut: false, // Permanent opt-out of the What's New screen (Display-settings toggle only)
+    mobileFabPosition: {
+        top: 'calc(var(--topBarBlockSize) + 60px)',
+        right: '12px'
+    }, // Saved position for mobile FAB button
+    // Mobile FAB widget display options (8-position system around the button)
+    mobileFabWidgets: {
+        enabled: true, // Master toggle for FAB widgets
+        weatherIcon: { enabled: true, position: 0 },      // Weather emoji (☀️, 🌧️, etc.)
+        weatherDesc: { enabled: true, position: 1 },      // Weather description text
+        clock: { enabled: true, position: 2 },            // Current time display
+        date: { enabled: true, position: 3 },             // Date display
+        location: { enabled: true, position: 4 }          // Location name
+        // NOTE: stats and attributes FAB widgets removed (see git history)
+    },
+    // Desktop strip widget display options (shown in collapsed panel strip)
+    desktopStripWidgets: {
+        enabled: true, // Master toggle for strip widgets (enabled by default)
+        weatherIcon: { enabled: true },      // Weather emoji (☀️, 🌧️, etc.)
+        clock: { enabled: true },            // Current time display
+        date: { enabled: true },             // Date display
+        location: { enabled: true }          // Location name
+        // NOTE: stats and attributes strip widgets removed (see git history)
+    },
+    // NOTE: userStats JSON, statNames, and trackerConfig.userStats have been removed (see git history)
+    // Tracker customization configuration
+    trackerConfig: {
+        // NOTE: userStats config (customStats, rpgAttributes, statusSection, skillsSection,
+        // inventoryPersistInHistory, questsPersistInHistory) removed (see git history)
+        // Quests tracker configuration (independent top-level tracker)
+        quests: {
+            persistInHistory: false // Persist quests in historical messages
+        },
+        infoBox: {
+            widgets: {
+                date: { enabled: true, format: 'Weekday, Month, Year', persistInHistory: true }, // Date enabled by default for history
+                weather: { enabled: true, persistInHistory: true }, // Weather enabled by default for history
+                temperature: { enabled: true, unit: 'C', persistInHistory: false }, // 'C' or 'F'
+                time: { enabled: true, persistInHistory: true }, // Time enabled by default for history
+                location: { enabled: true, persistInHistory: true }, // Location enabled by default for history
+                recentEvents: { enabled: true, persistInHistory: false },
+                moonPhase: { enabled: false, persistInHistory: false },
+                tension: { enabled: false, persistInHistory: false },
+                timeSinceRest: { enabled: false, persistInHistory: false },
+                conditions: { enabled: false, persistInHistory: false },
+                terrain: { enabled: false, persistInHistory: false }
+            },
+            // User-defined custom scene fields (shown in the Scene Tracker alongside built-in fields)
+            customFields: []
+        },
+        presentCharacters: {
+            // Fixed fields (always shown)
+            showEmoji: true,
+            showName: true,
+            // Relationship fields configuration
+            relationships: {
+                enabled: true,
+                // Relationship to emoji mapping (shown on character portraits)
+                relationshipEmojis: {
+                    'Lover': '❤️',
+                    'Friend': '⭐',
+                    'Ally': '🤝',
+                    'Enemy': '⚔️',
+                    'Neutral': '⚖️'
+                }
+            },
+            // Legacy fields kept for backward compatibility
+            relationshipFields: ['Lover', 'Friend', 'Ally', 'Enemy', 'Neutral'],
+            relationshipEmojis: {
+                'Lover': '❤️',
+                'Friend': '⭐',
+                'Ally': '🤝',
+                'Enemy': '⚔️',
+                'Neutral': '⚖️'
+            },
+            // Custom fields (appearance, demeanor, etc. - shown after relationship, separated by |)
+            customFields: [
+                { id: 'appearance', name: 'Appearance', enabled: true, description: 'Visible physical appearance (clothing, hair, notable features)', persistInHistory: false },
+                { id: 'demeanor', name: 'Demeanor', enabled: true, description: 'Observable demeanor or emotional state', persistInHistory: false }
+            ],
+            // Thoughts configuration (separate line)
+            thoughts: {
+                enabled: true,
+                name: 'Thoughts',
+                description: 'Internal Monologue (in first person from character\'s POV, up to three sentences long)',
+                persistInHistory: false
+            },
+            // Character stats toggle (optional feature)
+            characterStats: {
+                enabled: false,
+                customStats: [
+                    { id: 'health', name: 'Health', enabled: true },
+                    { id: 'arousal', name: 'Arousal', enabled: true }
+                ]
+            }
+        }
+    },
+    quests: {
+        main: "None",        // Current main quest title
+        optional: []         // Array of optional quest titles
+    },
+    infoBox: JSON.stringify({
+        date: { value: new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) },
+        weather: { emoji: '☀️', forecast: 'Clear skies' },
+        temperature: { value: 20, unit: 'C' },
+        time: { start: '00:00', end: '00:00' },
+        location: { value: 'Unknown Location' }
+    }, null, 2),
+    characterThoughts: JSON.stringify({
+        characters: []
+    }, null, 2),
+    // NOTE: level, classicStats, lastDiceRoll, showDiceDisplay, collapsedInventoryLocations,
+    // inventoryViewModes removed (see git history)
+    // npcAvatars / npcAvatarsFullRes — value is one of:
+    //   - "/user/images/des-portraits/<file>?t=<mtime>" (post v1.11 migration; on-disk PNG)
+    //   - "/characters/<file>" (ST card import — already file-backed)
+    //   - "data:image/png;base64,..." (legacy v1.10.x — auto-migrates on next boot)
+    npcAvatars: {},
+    npcAvatarsFullRes: {},
+    knownCharacters: {}, // Persistent roster of all characters ever seen (key: name, value: { emoji })
+    removedCharacters: [], // Blacklist of character names explicitly removed by the user
+    characterColors: {}, // Per-character dialogue colors (key: character name, value: hex color string e.g. "#C71585")
+    perChatCharacterTracking: true, // Always on — characters/removed/colors are tracked per-chat (no longer user-toggleable)
+    // ─── User Characters (player personas managed in DES) ───
+    // Parallel namespace to NPCs above. Same data shape (color, avatar,
+    // injection.description/lorebook/promptTemplate) plus user-specific
+    // pronouns and a linkedPersona field tying the user character to a
+    // SillyTavern persona (power_user.personas key = avatar filename).
+    userCharacters: {},          // { name: { color, avatar, avatarFullRes, pronouns, linkedPersona, injection: {...} } }
+    activeUserCharacter: null,   // Name of the currently-active user character (auto-syncs to ST persona switches)
+    showUserInPCP: false,        // Toggle: show the active user character in the Present Characters Panel
+    portraitAlignment: 'left', // Portrait bar alignment: 'left' (inline) or 'center'
+    portraitPosition: 'above', // Portrait bar position: 'above', 'below', 'top', 'left', or 'right'
+    portraitSideColumns: 1,     // Side mode: number of card columns (1 or 2)
+    portraitSideHeight: 'auto', // Side mode: 'auto' (fit content, vertical-center) or 'full' (top to bottom)
+    injectAttachPortrait: false, // Inject into Scene: also attach the character portrait to the next user message (vision models only)
+    portraitBarSettings: {
+        cardWidth: 110,              // Portrait card width in px
+        cardHeight: 150,             // Portrait card height in px
+        cardBorderRadius: 8,         // Card corner rounding in px
+        cardGap: 8,                  // Gap between cards in px
+        barBackground: '#000000',    // Bar background color
+        barBackgroundOpacity: 20,    // Bar background opacity (0-100)
+        headerColor: '#e94560',      // "Present Characters" header accent color
+        cardBorderColor: '#ffffff',  // Card border color
+        cardBorderOpacity: 6,        // Card border opacity (0-100)
+        hoverGlowColor: '#e94560',   // Hover glow / border accent color
+        hoverGlowIntensity: 12,      // Hover glow blur in px
+        speakingPulseColor: '#e94560', // Active speaker pulse dot color
+        nameOverlayOpacity: 85,      // Name overlay background opacity (0-100)
+        absentOpacity: 45,           // Absent character opacity (0-100)
+        showHeader: true,            // Show "Present Characters" header row
+        showAbsentCharacters: true,  // Show greyed-out absent characters
+        showScrollArrows: true,      // Show left/right scroll arrows on hover
+    },
+    chatBubbleMode: 'discord', // Chat bubble display mode: 'off', 'discord', or 'cards' (discord in the new-player profile)
+    infoPanelMode: 'off', // Info panel rendering in chat: 'off', 'banner', 'hud', 'ticker'
+    chatBubbleSettings: {
+        // Colors
+        narratorTextColor: '#999999',     // Narrator text color
+        unknownSpeakerColor: '#aaaaaa',   // Unknown/undetected speaker text color
+        accentColor: '#e94560',           // Accent / border highlight color
+        backgroundTint: '#1a1a2e',        // Bubble background tint color
+        backgroundOpacity: 5,             // Bubble background tint opacity (0-100)
+        // Sizing
+        fontSize: 92,                     // Font size percentage (60-120)
+        avatarSize: 40,                   // Avatar size in px (24-64)
+        borderRadius: 6,                  // Bubble border radius in px (0-20)
+        spacing: 12,                      // Gap between speaker groups in px (0-24)
+        // Toggles
+        showAvatars: true,                // Show character portrait avatars
+        showAuthorNames: true,            // Show character name headers
+        showNarratorLabel: true,          // Show "Narrator" label for narration blocks
+        skipStyledDivs: true,             // Use style-based fallback to skip likely GFX blocks when comment markers are absent
+        narratorItalic: true,             // Italicize narrator text
+        hideStAvatar: false,              // Hide SillyTavern's default character avatar when bubbles active
+    },
+    infoPanelSettings: {
+        bgColor: '#e94560',
+        bgOpacity: 8,
+        borderColor: '#e94560',
+        borderOpacity: 15,
+        accentColor: '#e94560',
+        labelColor: '#888888',
+        textColor: '#d0d0d0',
+        fontSize: 82,
+        borderRadius: 8,
+        showTime: true,
+        showDate: true,
+        showLocation: true,
+        showCharacters: true,
+        showQuest: true,
+        showRecentEvents: true,
+        hudWidth: 220,                    // HUD panel width in px
+        hudOpacity: 85,                   // HUD background opacity (0-100)
+        hudPosition: null,                // Saved drag position { left, top } in px, null = default top-right
+    },
+    // Portrait auto-import: match NPC names to SillyTavern character card avatars
+    portraitAutoImport: true,
+    syncExpressionsToPresentCharacters: false, // Classify and display per-character expressions on portrait bar
+    portraitEnhancementMode: 'expressions', // 'expressions' or 'autoPortraits'
+    autoPortraitMode: 'only_missing', // 'only_missing', 'state_changed', or 'every_reply'
+    generatedPortraits: {}, // Metadata for portraits generated by DES Auto Portraits
+    // Campaign versions of characters (see src/systems/lorebook/campaignProfiles.js).
+    // campaignProfiles[campaignId][name] is that campaign's saved version of the
+    // character; campaignBaseShadow[name] parks the base entry the ACTIVE
+    // campaign's version displaces in the flat stores above (null = the
+    // character had no base entry). Both empty = the pre-campaign behaviour.
+    campaignProfiles: {},
+    campaignBaseShadow: {},
+    hideDefaultExpressionDisplay: false, // Hide SillyTavern's built-in expression displays
+    expressionClassifierApi: 'local', // 'local' (BERT) or 'llm' (Main API)
+    expressionBatchMode: true, // Batch all characters in one LLM call (only when llm)
+    // Auto avatar generation settings
+    autoGenerateAvatars: false, // Master toggle for auto-generating avatars
+    avatarLLMCustomInstruction: '', // Custom instruction for LLM prompt generation
+    customAutoPortraitPrompt: '', // Custom instruction for Auto Portrait prompt generation
+    // External API settings for 'external' generation mode
+    externalApiSettings: {
+        baseUrl: '',           // OpenAI-compatible API base URL (e.g., "https://api.openai.com/v1")
+        // apiKey is NOT stored here for security. It is stored in localStorage('dooms_tracker_api_key')
+        model: '',             // Model identifier (e.g., "gpt-4o-mini")
+        maxTokens: 8192,       // Maximum tokens for generation
+        temperature: 0.7       // Temperature setting for generation
+    },
+    // Lock state for tracker items (v3 JSON format feature)
+    lockedItems: {
+        // NOTE: stats, skills, inventory lock arrays removed (see git history)
+        quests: {
+            main: false,        // Boolean for main quest lock
+            optional: []        // Array of locked optional quest indices (e.g., [0, 2])
+        },
+        infoBox: {
+            date: false,        // Boolean for date widget lock
+            weather: false,     // Boolean for weather widget lock
+            temperature: false, // Boolean for temperature widget lock
+            time: false,        // Boolean for time widget lock
+            location: false,    // Boolean for location widget lock
+            recentEvents: false // Boolean for recent events widget lock
+        },
+        characters: {}          // Object mapping character names to their locked fields (e.g., {"Sarah": {relationship: true, thoughts: false}})
+    },
+    // Lorebook Manager - campaign grouping for World Info lorebooks
+    lorebook: {
+        enabled: false, // (off in the new-player profile)
+        campaigns: {},          // uuid -> { id, name, icon, color, books: [WI filename strings] }
+        campaignOrder: [],      // array of campaign UUIDs for display ordering
+        collapsedCampaigns: [], // UUIDs of collapsed campaign groups (UI state)
+        expandedBooks: [],      // WI filenames of expanded book spines (UI state)
+        lastActiveTab: 'all',   // last selected campaign tab
+        lastFilter: 'all',      // 'all', 'active', 'inactive'
+        lastSearch: '',          // last search query
+        viewMode: 'list',       // 'list' | 'graph' (v2 view mode)
+        // Campaigns as an active mode (campaignManager.setActiveCampaign):
+        activeCampaignId: null, // campaign whose books + character versions are live, or null
+        globalBooks: [],        // WI filenames exempt from campaign switching (shared world packs)
+        campaignActivated: [],  // ledger: the active campaign's books as of the last switch — only these get turned off (globals exempt); books outside the campaign are never touched
+        // Auto-link by name (autoLink.js): a book named exactly like a character
+        // in the chat's cast is on while they are in the cast.
+        autoLinkByName: true,   // feature toggle (Settings → Lore Library)
+        autoLinked: [],         // ledger: the books auto-link switched on — only these get switched off
+    },
+    // Doom Counter — tension-driven plot twist system
+    // Uses its own 1-10 numeric tension scale (independent of the infoBox tension widget)
+    doomCounter: {
+        enabled: false,                        // Master toggle
+        debugDisplay: false,                   // Show debug badge in scene tracker
+        lowTensionThreshold: 5,                // Consecutive low-tension responses before countdown activates
+        countdownLength: 3,                    // Starting countdown value when phase 2 activates
+        twistChoiceCount: 3,                   // Number of twist options generated (2-6)
+        lowTensionCeiling: 4,                  // Tension values 1-N count as "low" (default: 1-4)
+        // Countdown speed by tension level (lower tension = faster countdown):
+        // tension 1 → decrement by 3, tension 2 → by 2, tension 3-4 → by 1
+        // tension 5-10 → resets streak entirely
+        // Advanced twist generation settings
+        twistContextMessages: 15,              // Number of recent chat messages included in twist prompt (1-30)
+        twistMessageTruncation: 1200,          // Max characters per message in twist prompt (200-3000)
+        twistInjectionDepth: 0,                // Insertion depth for the twist prompt (0 = bottom of context, higher = further back)
+        trapMode: false,                       // Silent mode: hides countdown, generates 1 twist, auto-injects without showing the user
+    },
+    // Preset management for tracker configurations
+    presetManager: {
+        // Map of preset ID to preset data (contains name and trackerConfig)
+        presets: {},
+        // Map of character/group entity to preset ID (e.g., "char_0": "preset_123", "group_abc": "preset_456")
+        // Note: This is stored separately and NOT exported with presets
+        characterAssociations: {},
+        // Currently active preset ID
+        activePresetId: null,
+        // Default preset ID (used when no character association exists)
+        defaultPresetId: null
+    },
+    systemLog: {
+        maxEntries: 200,                       // Ring buffer size for captured console messages
+    }
+};
+/**
+ * Last generated data from AI response
+ */
+/**
+ * The "new player experience" — the curated out-of-box configuration and
+ * the single source of truth for it: applyNewPlayerProfile() is invoked on
+ * the defaults at module init (below), so fresh installs get this profile
+ * BY CONSTRUCTION — editing a default above without updating the profile
+ * cannot desynchronize them. Existing installs are never touched by it
+ * (their saved settings override via the merge, with savedSettings-based
+ * guards in persistence.js), but can opt in via the "Restore Default
+ * Settings" button (Advanced), which applies exactly this profile while
+ * leaving user data (characters, colors, avatars, presets, lorebook
+ * organization) intact.
+ *
+ * On: scene tracker, present characters (+ panel), dialogue coloring,
+ *     Discord-style chat bubbles, D button centered.
+ * Off: everything else.
+ */
+export const NEW_PLAYER_PROFILE = {
+    'showInfoBox': true,
+    'showCharacterThoughts': true,
+    'showPortraitBar': true,
+    'enableDialogueColoring': true,
+    'chatBubbleMode': 'discord',
+    'fabPosition': 'center',
+    'showQuests': false,
+    'showThoughtsInChat': false,
+    'showTrackerJsonInChat': false,
+    'mobileComposeOverlay': false,
+    'narratorMode': false,
+    'enableHtmlPrompt': false,
+    'enableDynamicWeather': false,
+    'enableSnowflakes': false,
+    'autoGenerateAvatars': false,
+    'syncExpressionsToPresentCharacters': false,
+    'performanceMode': false,
+    'historyPersistence.enabled': false,
+    'inlineBanners.enabled': false,
+    'doomCounter.enabled': false,
+    'lorebook.enabled': false,
+};
+
+/**
+ * Applies NEW_PLAYER_PROFILE onto the live settings. Dotted keys set
+ * nested fields in place, preserving the rest of the nested object
+ * (and all user data stores) untouched.
+ */
+export function applyNewPlayerProfile() {
+    for (const [path, value] of Object.entries(NEW_PLAYER_PROFILE)) {
+        const parts = path.split('.');
+        let target = extensionSettings;
+        for (let i = 0; i < parts.length - 1; i++) {
+            if (!target[parts[i]] || typeof target[parts[i]] !== 'object') {
+                target[parts[i]] = {};
+            }
+            target = target[parts[i]];
+        }
+        target[parts[parts.length - 1]] = value;
+    }
+}
+
+// Enforce the profile on the defaults mechanically (see doc above).
+applyNewPlayerProfile();
+
+export let lastGeneratedData = {
+    quests: null,
+    infoBox: null,
+    characterThoughts: null,
+    html: null
+};
+/**
+ * Tracks the "committed" tracker data that should be used as source for next generation
+ * This gets updated when user sends a new message or first time generation
+ */
+export let committedTrackerData = {
+    quests: null,
+    infoBox: null,
+    characterThoughts: null,
+    html: null
+};
+/**
+ * Session-only storage for LLM-generated avatar prompts
+ * Maps character names to their generated prompts
+ * Resets on new chat (not persisted to extensionSettings)
+ */
+export let sessionAvatarPrompts = {};
+export function setSessionAvatarPrompt(characterName, prompt) {
+    sessionAvatarPrompts[characterName] = prompt;
+}
+export function getSessionAvatarPrompt(characterName) {
+    return sessionAvatarPrompts[characterName] || null;
+}
+export function clearSessionAvatarPrompts() {
+    sessionAvatarPrompts = {};
+}
+
+/**
+ * Session-only storage for Character Expressions portrait sync
+ * Maps character names to their last captured expression image URL
+ */
+export let syncedExpressionPortraits = {};
+export function setSyncedExpressionPortrait(characterName, src) {
+    if (!characterName || !src) return;
+    syncedExpressionPortraits[characterName] = src;
+}
+export function removeSyncedExpressionPortrait(characterName) {
+    if (!characterName) return;
+    delete syncedExpressionPortraits[characterName];
+}
+export function setSyncedExpressionPortraits(portraits) {
+    syncedExpressionPortraits = portraits && typeof portraits === 'object' ? { ...portraits } : {};
+}
+export function getSyncedExpressionPortrait(characterName) {
+    return syncedExpressionPortraits[characterName] || null;
+}
+export function clearSyncedExpressionPortraits() {
+    syncedExpressionPortraits = {};
+}
+
+/**
+ * Session-only storage for the current expression LABEL per character
+ * (e.g. "happy", "angry"). Populated alongside syncedExpressionPortraits
+ * so UI can surface the label in tooltips without re-classifying.
+ *
+ * Keys are stored lowercase + trimmed (matching expressionSync.js's
+ * normalizeName) so lookups don't have to know about normalization.
+ */
+export let syncedExpressionLabels = {};
+function _normExprKey(name) {
+    return String(name || '').trim().toLowerCase();
+}
+export function setSyncedExpressionLabel(characterName, label) {
+    if (!characterName || !label) return;
+    syncedExpressionLabels[_normExprKey(characterName)] = label;
+}
+export function setSyncedExpressionLabels(labels) {
+    if (labels && typeof labels === 'object') {
+        const next = {};
+        for (const [k, v] of Object.entries(labels)) {
+            if (k && v) next[_normExprKey(k)] = v;
+        }
+        syncedExpressionLabels = next;
+    } else {
+        syncedExpressionLabels = {};
+    }
+}
+export function getSyncedExpressionLabel(characterName) {
+    return syncedExpressionLabels[_normExprKey(characterName)] || null;
+}
+export function clearSyncedExpressionLabels() {
+    syncedExpressionLabels = {};
+}
+
+/**
+ * Tracks whether the last action was a swipe (for separate mode)
+ * Used to determine whether to commit lastGeneratedData to committedTrackerData
+ */
+export let lastActionWasSwipe = false;
+/**
+ * Flag indicating if generation is in progress
+ */
+export let isGenerating = false;
+/**
+ * Flag indicating if we're actively expecting a new message from generation
+ * (as opposed to loading chat history)
+ */
+export let isAwaitingNewMessage = false;
+/**
+ * Debug logs array for troubleshooting
+ */
+export let debugLogs = [];
+/**
+ * Add a debug log entry
+ * @param {string} message - The log message
+ * @param {any} data - Optional data to log
+ */
+export function addDebugLog(message, data = null) {
+    const timestamp = new Date().toISOString();
+    debugLogs.push({ timestamp, message, data });
+    // Keep only last 100 logs
+    if (debugLogs.length > 100) {
+        debugLogs.shift();
+    }
+}
+// NOTE: FEATURE_FLAGS.useNewInventory removed (see git history)
+/**
+ * Fallback avatar image (base64-encoded SVG with "?" icon)
+ * Using base64 to avoid quote-encoding issues in HTML attributes
+ */
+export const FALLBACK_AVATAR_DATA_URI = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxMDAiIGhlaWdodD0iMTAwIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iI2NjY2NjYyIgb3BhY2l0eT0iMC4zIi8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGR5PSIuM2VtIiBmaWxsPSIjNjY2IiBmb250LXNpemU9IjQwIj4/PC90ZXh0Pjwvc3ZnPg==';
+/**
+ * UI Element References (jQuery objects)
+ */
+export let $panelContainer = null;
+export let $infoBoxContainer = null;
+export let $thoughtsContainer = null;
+export let $questsContainer = null;
+// NOTE: $userStatsContainer, $inventoryContainer removed (see git history)
+export let $musicPlayerContainer = null;
+export let isPlotProgression = false;
+// NOTE: pendingDiceRoll removed (see git history)
+/**
+ * State setters - provide controlled mutation of state variables
+ */
+export function setExtensionSettings(newSettings) {
+    extensionSettings = newSettings;
+}
+export function updateExtensionSettings(updates) {
+    Object.assign(extensionSettings, updates);
+}
+export function setLastGeneratedData(data) {
+    lastGeneratedData = data;
+}
+export function updateLastGeneratedData(updates) {
+    Object.assign(lastGeneratedData, updates);
+}
+export function setCommittedTrackerData(data) {
+    committedTrackerData = data;
+}
+export function updateCommittedTrackerData(updates) {
+    Object.assign(committedTrackerData, updates);
+}
+export function setLastActionWasSwipe(value) {
+    lastActionWasSwipe = value;
+}
+export function setIsGenerating(value) {
+    isGenerating = value;
+}
+export function setIsAwaitingNewMessage(value) {
+    isAwaitingNewMessage = value;
+}
+export function setPanelContainer($element) {
+    $panelContainer = $element;
+}
+export function setInfoBoxContainer($element) {
+    $infoBoxContainer = $element;
+}
+export function setThoughtsContainer($element) {
+    $thoughtsContainer = $element;
+}
+export function setQuestsContainer($element) {
+    $questsContainer = $element;
+}
+// NOTE: setUserStatsContainer, setInventoryContainer, setPendingDiceRoll, getPendingDiceRoll archived
+export function setMusicPlayerContainer($element) { $musicPlayerContainer = $element; }
+export function setIsPlotProgression(value) { isPlotProgression = value; }

@@ -1,0 +1,707 @@
+/**
+ * SillyTavern Integration Module
+ * Handles all event listeners and integration with SillyTavern's event system
+ */
+import { getContext } from '../../../../../../extensions.js';
+import { chat, user_avatar, setExtensionPrompt, extension_prompt_types, saveChatDebounced } from '../../../../../../../script.js';
+// Core modules
+import {
+    extensionSettings,
+    lastGeneratedData,
+    committedTrackerData,
+    lastActionWasSwipe,
+    isAwaitingNewMessage,
+    setLastActionWasSwipe,
+    setIsGenerating,
+    setIsAwaitingNewMessage,
+    updateLastGeneratedData,
+    updateCommittedTrackerData
+} from '../../core/state.js';
+import { saveChatData, loadChatData, autoSwitchPresetForEntity } from '../../core/persistence.js';
+import { i18n } from '../../core/i18n.js';
+// Generation & Parsing
+import { parseResponse, parseQuests } from '../generation/parser.js';
+import { updateRPGData, parseCharacterEntriesFromThoughts } from '../generation/apiClient.js';
+import { removeLocks } from '../generation/lockManager.js';
+import { onGenerationStarted, initHistoryInjectionListeners, clearBoostForAppearedFields } from '../generation/injector.js';
+// Doom Counter
+import { onResponseReceived as doomCounterOnResponse, triggerDoomCounter, updateDoomCounterUI, isTriggerInProgress } from '../generation/doomCounter.js';
+// Rendering
+import { renderInfoBox } from '../rendering/infoBox.js';
+import { renderThoughts, updateChatThoughts } from '../rendering/thoughts.js';
+import { renderQuests } from '../rendering/quests.js';
+import { updateChatSceneHeaders, resetSceneHeaderCache } from '../rendering/sceneHeaders.js';
+import { harvestNewSpeakerColors } from '../rendering/chatBubbles.js';
+import { updatePortraitBar } from '../ui/portraitBar.js';
+import { updateWeatherEffect } from '../ui/weatherEffects.js';
+// Name Ban
+import { applyCharacterAliases } from '../features/characterAliases.js';
+import { applyAIStatUpdates, revertAIStatsForReplacedMessage } from '../features/characterStats.js';
+import { applyAIMemories, revertAIMemoriesForReplacedMessage } from '../features/characterMemories.js';
+import { applyAIEquipment, revertAIEquipmentForReplacedMessage, notifyBlockedRemovals } from '../features/characterEquipment.js';
+import { applyAIConditions, revertAIConditionsForReplacedMessage } from '../features/characterConditions.js';
+import { applyAIAbilities, revertAIAbilitiesForReplacedMessage } from '../features/characterAbilities.js';
+import { applyAIProgress, revertAIProgressForReplacedMessage } from '../features/characterProgress.js';
+import { applyAIMoney, applyAICurrency, revertAIMoneyForReplacedMessage } from '../features/characterMoney.js';
+import { applyAIAffinity, revertAIAffinityForReplacedMessage } from '../features/characterAffinity.js';
+import { settleChecks, revertAIChecksForReplacedMessage } from '../features/characterChecks.js';
+// Expression classification
+import { classifyAllCharacterExpressions, classifyActiveUserExpression, isExpressionSpritesModeEnabled } from './expressionSync.js';
+import { generateAutoPortraitsForCharacters, isAutoPortraitModeEnabled } from '../features/avatarGenerator.js';
+// Utils
+import { getSafeThumbnailUrl } from '../../utils/avatars.js';
+import { isSyntheticTrackerMessage } from '../../utils/messageGuards.js';
+/**
+ * Walks chat[] backwards to find the most recent real user message and
+ * returns its text. Skips system entries and synthetic tracker messages
+ * other extensions inject. Returns null if no user message exists.
+ *
+ * Used by onMessageReceived to re-run the user-character expression
+ * classifier on every AI reply (so swipes and regens update the user's
+ * portrait too — without this, the user classifier only fires when the
+ * user types a fresh message via USER_MESSAGE_RENDERED).
+ */
+function findLastUserMessageText() {
+    if (!Array.isArray(chat)) return null;
+    for (let i = chat.length - 1; i >= 0; i--) {
+        const m = chat[i];
+        if (!m || !m.is_user) continue;
+        if (isSyntheticTrackerMessage(m)) continue;
+        const text = String(m.mes || '').trim();
+        if (text) return text;
+    }
+    return null;
+}
+/**
+ * Runs one panel renderer in isolation.
+ *
+ * The message-received handler renders several panels and THEN persists the
+ * turn's tracker data. A throw from any one renderer used to abort the rest
+ * of the handler — so a single broken panel silently took out the portrait
+ * bar, auto-portraits, the doom counter, AND `saveChatData`, meaning that
+ * turn's tracker data was never written to the chat file. (Field report: a
+ * stale panel reference made renderThoughts throw on every message; the
+ * visible symptom was "the panels stopped updating and my injected
+ * character was ignored", nowhere near the actual cause.)
+ *
+ * Rendering is best-effort by nature; persistence is not. Isolate each one.
+ */
+function safeRender(label, fn) {
+    try {
+        fn();
+    } catch (e) {
+        console.error(`[Dooms Tracker] ${label} failed (continuing so tracker data still persists):`, e);
+    }
+}
+
+/**
+ * Commits the tracker data from the last assistant message to be used as source for next generation.
+ * This should be called when the user has replied to a message, ensuring all swipes of the next
+ * response use the same committed context.
+ */
+export function commitTrackerData() {
+    const chat = getContext().chat;
+    if (!chat || chat.length === 0) {
+        return;
+    }
+    // Find the last assistant message
+    for (let i = chat.length - 1; i >= 0; i--) {
+        const message = chat[i];
+        if (!message.is_user) {
+            // Found last assistant message - commit its tracker data
+            if (message.extra && message.extra.dooms_tracker_swipes) {
+                const swipeId = message.swipe_id || 0;
+                const swipeData = message.extra.dooms_tracker_swipes[swipeId];
+                if (swipeData) {
+                    committedTrackerData.quests = swipeData.quests || null;
+                    committedTrackerData.infoBox = swipeData.infoBox || null;
+                    committedTrackerData.characterThoughts = swipeData.characterThoughts || null;
+                } else {
+                }
+            } else {
+            }
+            break;
+        }
+    }
+}
+/**
+ * Event handler for when the user sends a message.
+ * Sets the flag to indicate this is NOT a swipe.
+ * In together mode, commits displayed data (only for real messages, not streaming placeholders).
+ */
+export function onMessageSent() {
+    if (!extensionSettings.enabled) return;
+    // Set flag FIRST — before the placeholder check — so separate/external
+    // mode's auto-update in onMessageReceived always knows a generation was
+    // requested by the user.  The flag must be set regardless of whether the
+    // current chat tail is the user message or the "..." streaming placeholder.
+    setIsAwaitingNewMessage(true);
+    // Check if this is a streaming placeholder message (content = "...")
+    // When streaming is on, ST sends a "..." placeholder before generation starts
+    const context = getContext();
+    const chat = context.chat;
+    const lastMessage = chat && chat.length > 0 ? chat[chat.length - 1] : null;
+    if (lastMessage && lastMessage.mes === '...') {
+        return;
+    }
+    // Note: FAB spinning is NOT shown for together mode since no extra API request is made
+    // The RPG data comes embedded in the main response
+    // FAB spinning is handled by apiClient.js for separate/external modes when updateRPGData() is called
+    // For separate/external mode with auto-update disabled, commit displayed tracker
+    if ((extensionSettings.generationMode === 'separate' || extensionSettings.generationMode === 'external') && !extensionSettings.autoUpdate) {
+        if (lastGeneratedData.quests || lastGeneratedData.infoBox || lastGeneratedData.characterThoughts) {
+            committedTrackerData.quests = lastGeneratedData.quests;
+            committedTrackerData.infoBox = lastGeneratedData.infoBox;
+            committedTrackerData.characterThoughts = lastGeneratedData.characterThoughts;
+        }
+    }
+}
+/**
+ * Event handler for when a message is generated.
+ */
+export async function onMessageReceived(data) {
+    if (!extensionSettings.enabled) {
+        return;
+    }
+    // Reset swipe flag after generation completes
+    // This ensures next user message (whether from original or swipe) triggers commit
+    setLastActionWasSwipe(false);
+    if (extensionSettings.generationMode === 'together') {
+        // In together mode, parse the response to extract RPG data
+        // Commit happens in onMessageSent (when user sends message, before generation)
+        const lastMessage = chat[chat.length - 1];
+        // Skip GG's synthetic tracker/note messages — running parseResponse on
+        // their <details> HTML would surface bogus tracker JSON and clobber
+        // the real lastGeneratedData state.
+        if (lastMessage && !lastMessage.is_user && !isSyntheticTrackerMessage(lastMessage)) {
+            const responseText = lastMessage.mes;
+            const parsedData = parseResponse(responseText);
+            // Note: Don't show parsing error here - this event fires when loading chat history too
+            // Error notification is handled in apiClient.js for fresh generations only
+            // Remove locks from parsed data (JSON format only, text format is unaffected)
+            if (parsedData.quests) {
+                parsedData.quests = removeLocks(parsedData.quests);
+            }
+            if (parsedData.infoBox) {
+                parsedData.infoBox = removeLocks(parsedData.infoBox);
+            }
+            if (parsedData.characterThoughts) {
+                parsedData.characterThoughts = removeLocks(parsedData.characterThoughts);
+                // ── Character Aliases: canonicalize names FIRST, before the color
+                // harvest, rendering, and swipe storage below see the data. An
+                // aliased name ("Sarah Greenfield" → card "Sarah") is rewritten in
+                // the tracker data only — prose stays untouched — so no duplicate
+                // card is born and colors are harvested under the canonical name.
+                parsedData.characterThoughts = applyCharacterAliases(parsedData.characterThoughts, { suggestSimilar: true });
+            }
+            // Update display data with newly parsed response
+            if (parsedData.quests) {
+                lastGeneratedData.quests = parsedData.quests;
+                parseQuests(parsedData.quests);
+            }
+            if (parsedData.infoBox) {
+                lastGeneratedData.infoBox = parsedData.infoBox;
+            }
+            if (parsedData.characterThoughts) {
+                lastGeneratedData.characterThoughts = parsedData.characterThoughts;
+                // Auto-register any new (color → speaker) pairings the AI
+                // just introduced this turn, so the bubble splitter (which
+                // runs ~800ms after CHARACTER_MESSAGE_RENDERED) finds them
+                // in the color map instead of falling back to "closest
+                // known name in narration" and misattributing the new
+                // character's lines to whoever is mentioned nearby.
+                try {
+                    harvestNewSpeakerColors(lastMessage.mes, parsedData.characterThoughts);
+                } catch (e) {
+                    console.warn('[Dooms Tracker] harvestNewSpeakerColors failed:', e);
+                }
+            }
+            // Character Stats: apply the AI's stat update for fresh replies only
+            // (this handler also runs when a chat is loaded — re-applying an old
+            // reply's values there would overwrite later manual edits).
+            // Experience and NPC levels — before stats, whose generation
+            // clears the "pending" flag the levels look at.
+            if ((parsedData.xp || parsedData.levels) && isAwaitingNewMessage) {
+                try {
+                    applyAIProgress(parsedData.xp, parsedData.levels, chat.length - 1);
+                } catch (e) {
+                    console.warn('[Dooms Tracker] XP: applying AI update failed', e);
+                }
+            }
+            // Money (and a currency for a card that has none) and affinity.
+            if ((parsedData.currency || parsedData.money || parsedData.affinity) && isAwaitingNewMessage) {
+                try { if (parsedData.currency) applyAICurrency(parsedData.currency); } catch (e) { console.warn('[Dooms Tracker] Money: currency failed', e); }
+                try { if (parsedData.money) applyAIMoney(parsedData.money, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Money: applying AI update failed', e); }
+                try { if (parsedData.affinity) applyAIAffinity(parsedData.affinity, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Affinity: applying AI update failed', e); }
+            }
+            // Checks: the AI's suggested roll; the outcome of the last one has been answered.
+            if (isAwaitingNewMessage) {
+                try { settleChecks(parsedData.check, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Checks: applying AI update failed', e); }
+            }
+            if (parsedData.stats && isAwaitingNewMessage) {
+                try {
+                    applyAIStatUpdates(parsedData.stats, chat.length - 1);
+                } catch (e) {
+                    console.warn('[Dooms Tracker] Stats: applying AI update failed', e);
+                }
+            }
+            // Character Memories: same rule — fresh replies only.
+            if (parsedData.memories && isAwaitingNewMessage) {
+                try {
+                    applyAIMemories(parsedData.memories, chat.length - 1);
+                } catch (e) {
+                    console.warn('[Dooms Tracker] Memories: applying AI update failed', e);
+                }
+            }
+            // What the reply carried for the new trackers — shown in the
+            // System Log so a missing update can be told apart from a
+            // reply that never contained one.
+            if (isAwaitingNewMessage) {
+                console.log(`[Dooms Tracker] Reply trackers — stats: ${parsedData.stats ? 'yes' : 'no'}, equipment: ${parsedData.equipment || 'no'}, conditions: ${parsedData.conditions || 'no'}, abilities: ${parsedData.abilities || 'no'}, memories: ${parsedData.memories || 'no'}, xp: ${parsedData.xp || 'no'}, levels: ${parsedData.levels || 'no'}, money: ${parsedData.money || 'no'}, affinity: ${parsedData.affinity || 'no'}`);
+            }
+            // Spells & Abilities: same rule.
+            if (parsedData.abilities && isAwaitingNewMessage) {
+                try {
+                    notifyBlockedRemovals(applyAIAbilities(parsedData.abilities, chat.length - 1));
+                } catch (e) {
+                    console.warn('[Dooms Tracker] Abilities: applying AI update failed', e);
+                }
+            }
+            // Character Conditions: same rule.
+            if (parsedData.conditions && isAwaitingNewMessage) {
+                try {
+                    applyAIConditions(parsedData.conditions, chat.length - 1);
+                } catch (e) {
+                    console.warn('[Dooms Tracker] Conditions: applying AI update failed', e);
+                }
+            }
+            // Character Equipment: same rule.
+            if (parsedData.equipment && isAwaitingNewMessage) {
+                try {
+                    notifyBlockedRemovals(applyAIEquipment(parsedData.equipment, chat.length - 1));
+                } catch (e) {
+                    console.warn('[Dooms Tracker] Equipment: applying AI update failed', e);
+                }
+            }
+            // Store RPG data for this specific swipe in the message's extra field
+            if (!lastMessage.extra) {
+                lastMessage.extra = {};
+            }
+            if (!lastMessage.extra.dooms_tracker_swipes) {
+                lastMessage.extra.dooms_tracker_swipes = {};
+            }
+            const currentSwipeId = lastMessage.swipe_id || 0;
+            lastMessage.extra.dooms_tracker_swipes[currentSwipeId] = {
+                quests: parsedData.quests,
+                infoBox: parsedData.infoBox,
+                characterThoughts: parsedData.characterThoughts
+            };
+            // Note: JSON code blocks are hidden from the display by our registered regex script
+            // (ensureJsonCleaningRegex). Legacy text format blocks (```Stats---```) are also
+            // handled by the same script. We intentionally do NOT modify lastMessage.mes here —
+            // doing so would cause SillyTavern's Expression Classifier to fire an extra classify
+            // call on the raw JSON-laden text before the regex script has a chance to clean it.
+            // Clear boost counters for any fields that now appear in the AI output
+            if (parsedData.infoBox) clearBoostForAppearedFields();
+            // Render only the sections that had new data parsed
+            if (parsedData.infoBox) safeRender('renderInfoBox', renderInfoBox);
+            if (parsedData.characterThoughts) safeRender('renderThoughts', renderThoughts);
+            if (parsedData.quests) safeRender('renderQuests', renderQuests);
+            // Scene headers, portrait bar & weather depend on any of the above
+            const hadAnyData = parsedData.infoBox || parsedData.characterThoughts || parsedData.quests;
+            if (hadAnyData) {
+                safeRender('updateChatSceneHeaders', updateChatSceneHeaders);
+                safeRender('updatePortraitBar', updatePortraitBar);
+                safeRender('updateWeatherEffect', updateWeatherEffect);
+            }
+            // ── Expression classification: classify per-character after portrait bar renders ──
+            const expressionSpritesEnabled = isExpressionSpritesModeEnabled();
+            if (expressionSpritesEnabled && parsedData.characterThoughts && isAwaitingNewMessage) {
+                classifyAllCharacterExpressions(lastMessage.mes)
+                    .then(() => updatePortraitBar())
+                    .catch(err => console.error('[DES] Expression classification failed:', err));
+            }
+            if (isAutoPortraitModeEnabled() && parsedData.characterThoughts && isAwaitingNewMessage) {
+                const charactersForPortraits = parseCharacterEntriesFromThoughts(parsedData.characterThoughts);
+                generateAutoPortraitsForCharacters(charactersForPortraits, lastMessage.mes)
+                    .then(() => updatePortraitBar())
+                    .catch(err => console.error('[DES] Auto Portrait generation failed:', err));
+            }
+            // ── Active user character expression refresh ──
+            // Without this, the user-character classifier only fires on
+            // USER_MESSAGE_RENDERED (a fresh typed message). Swipes and
+            // regenerations of the AI reply leave the user's portrait
+            // stuck on whatever was set the last time the user typed.
+            // Re-classify the user's last message text so the user's
+            // portrait reflects the current scene on every AI reply.
+            if (expressionSpritesEnabled && isAwaitingNewMessage) {
+                const lastUserText = findLastUserMessageText();
+                if (lastUserText) {
+                    classifyActiveUserExpression(lastUserText)
+                        .then(() => updatePortraitBar())
+                        .catch(err => console.error('[DES] User expression classification failed:', err));
+                }
+            }
+            // Insert inline thought dropdowns into the chat message. This is
+            // the fast first paint only — later .mes_text rewrites (ST's final
+            // formatting, colored-dialogues' ~600ms recolor, the 800ms bubble
+            // pass) destroy these; the CHARACTER_MESSAGE_RENDERED handler in
+            // index.js re-inserts them once the pipeline settles.
+            if (parsedData.characterThoughts) {
+                setTimeout(() => updateChatThoughts(), 100);
+            }
+            // Save to chat metadata (immediate: generation-end commit point)
+            saveChatData({ immediate: true });
+
+            // Doom Counter: evaluate tension after parsing (only for fresh generations, not history loads)
+            if (extensionSettings.doomCounter?.enabled && isAwaitingNewMessage) {
+                const dcResult = doomCounterOnResponse();
+                updateDoomCounterUI();
+                if (dcResult.triggered && !isTriggerInProgress()) {
+                    // Auto-launch the inline twist picker
+                    toastr.warning('☠️ The Doom Counter has triggered!', '', { timeOut: 2000 });
+                    // Small delay so the AI response finishes rendering before we append
+                    setTimeout(() => triggerDoomCounter().catch(err => console.error('[Doom Counter] Auto-trigger failed:', err)), 600);
+                } else if (dcResult.countdownActive) {
+                    toastr.info(
+                        `Countdown: ${dcResult.countdownCount} remaining (tension: ${dcResult.tensionValue}/10)`,
+                        '⏳ Doom Counter',
+                        { timeOut: 3000 }
+                    );
+                }
+            }
+        }
+    } else if (extensionSettings.generationMode === 'separate' || extensionSettings.generationMode === 'external') {
+        // In separate/external mode, no additional rendering needed for the main message
+        // The main roleplay message doesn't contain tracker data in these modes
+        // Trigger auto-update if enabled (for both separate and external modes)
+        // Only trigger if this is a newly generated message, not loading chat history
+        if (extensionSettings.autoUpdate && isAwaitingNewMessage) {
+            setTimeout(async () => {
+                // (updateRPGData canonicalizes alias names at its parse step)
+                await updateRPGData(renderInfoBox, renderThoughts);
+                updateChatSceneHeaders();
+                updatePortraitBar();
+                updateWeatherEffect();
+                updateChatThoughts();
+                // ── Expression classification (separate/external mode) ──
+                const expressionSpritesEnabled = isExpressionSpritesModeEnabled();
+                if (expressionSpritesEnabled) {
+                    const sepMsg = chat[chat.length - 1];
+                    if (sepMsg && !sepMsg.is_user && !isSyntheticTrackerMessage(sepMsg)) {
+                        classifyAllCharacterExpressions(sepMsg.mes)
+                            .then(() => updatePortraitBar())
+                            .catch(err => console.error('[DES] Expression classification failed:', err));
+                    }
+                    // Re-classify the user's last message so the active
+                    // user character's portrait refreshes alongside the AI
+                    // side. See onMessageReceived (together mode) for the
+                    // rationale — same fix, mirrored to separate/external.
+                    const lastUserText = findLastUserMessageText();
+                    if (lastUserText) {
+                        classifyActiveUserExpression(lastUserText)
+                            .then(() => updatePortraitBar())
+                            .catch(err => console.error('[DES] User expression classification failed:', err));
+                    }
+                }
+                // Doom Counter: evaluate tension after separate mode update
+                if (extensionSettings.doomCounter?.enabled) {
+                    const dcResult = doomCounterOnResponse();
+                    updateDoomCounterUI();
+                    if (dcResult.triggered && !isTriggerInProgress()) {
+                        toastr.warning('☠️ The Doom Counter has triggered!', '', { timeOut: 2000 });
+                        setTimeout(() => triggerDoomCounter().catch(err => console.error('[Doom Counter] Auto-trigger failed:', err)), 600);
+                    } else if (dcResult.countdownActive) {
+                        toastr.info(
+                            `Countdown: ${dcResult.countdownCount} remaining (tension: ${dcResult.tensionValue}/10)`,
+                            '⏳ Doom Counter',
+                            { timeOut: 3000 }
+                        );
+                    }
+                }
+            }, 500);
+        }
+    }
+    // Reset the awaiting flag after processing the message
+    setIsAwaitingNewMessage(false);
+    // Reset the swipe flag after generation completes
+    // This ensures that if the user swiped → auto-reply generated → flag is now cleared
+    // so the next user message will be treated as a new message (not a swipe)
+    if (lastActionWasSwipe) {
+        setLastActionWasSwipe(false);
+    }
+}
+/**
+ * Monotonic token for the delayed render chain below. Each CHAT_CHANGED
+ * bumps it, invalidating any polling chain scheduled by a previous chat so
+ * a slow chat switch can't paint the old chat's overlays into the new one.
+ */
+let renderChatToken = 0;
+/**
+ * Event handler for character change.
+ */
+export function onCharacterChanged() {
+    // Remove thought panel and icon when changing characters
+    $('#rpg-thought-panel').remove();
+    $('#rpg-thought-icon').remove();
+    $('#chat').off('scroll.thoughtPanel');
+    $(window).off('resize.thoughtPanel');
+    $(document).off('click.thoughtPanel');
+    // Auto-switch to the preset associated with this character/group (if any)
+    const presetSwitched = autoSwitchPresetForEntity();
+    // if (presetSwitched) {
+    // }
+    // Load chat-specific data when switching chats
+    resetSceneHeaderCache();
+    loadChatData();
+    // Don't call commitTrackerData() here - it would overwrite the loaded committedTrackerData
+    // with data from the last message, which may be null/empty. The loaded committedTrackerData
+    // already contains the committed state from when we last left this chat.
+    // commitTrackerData() will be called naturally when new messages arrive.
+    // Re-render sidebar panels immediately (they don't depend on #chat DOM)
+    renderInfoBox();
+    renderThoughts();
+    renderQuests();
+
+    // Update Doom Counter UI with this chat's state
+    updateDoomCounterUI();
+    // Scene header layouts that render into <body> or #chat directly (not into a specific
+    // message element) can also render immediately — ticker, ticker-bottom, and hud don't
+    // need any .mes elements to exist. This lets the scene tracker appear at the same
+    // time as the portrait bar instead of 200–3000ms later.
+    const immediateLayout = (extensionSettings.sceneTracker || {}).layout || 'grid';
+    const isBodyLayout = immediateLayout === 'ticker' || immediateLayout === 'ticker-bottom' || immediateLayout === 'hud';
+    if (isBodyLayout) {
+        updateChatSceneHeaders();
+    }
+    updatePortraitBar();
+    updateWeatherEffect();
+    // Delay DOM-dependent renders — SillyTavern renders chat messages asynchronously
+    // after CHAT_CHANGED fires, so #chat .mes elements may not exist yet.
+    // For body-level layouts we already rendered above; still poll to catch the case
+    // where chat messages appear later and need thoughts overlays injected.
+    let attempts = 0;
+    const maxAttempts = 15;
+    const myToken = ++renderChatToken;
+    const myChatId = getContext().chatId;
+    const tryRenderChat = () => {
+        // Bail if another chat switch happened since this chain was scheduled —
+        // the render targets read globals that loadChatData has overwritten.
+        if (myToken !== renderChatToken || getContext().chatId !== myChatId) {
+            return;
+        }
+        attempts++;
+        if ($('#chat .mes').length > 0) {
+            // For classic layouts (grid/stacked/compact/banner) that inject after a
+            // specific .mes element, render now that the DOM is ready.
+            if (!isBodyLayout) {
+                updateChatSceneHeaders();
+            }
+            updateChatThoughts();
+        } else if (attempts < maxAttempts) {
+            setTimeout(tryRenderChat, 200);
+        }
+    };
+    setTimeout(tryRenderChat, 200);
+}
+/**
+ * Event handler for when a message is swiped.
+ * Loads the RPG data for the swipe the user navigated to.
+ */
+export function onMessageSwiped(messageIndex) {
+    if (!extensionSettings.enabled) {
+        return;
+    }
+    // Get the message that was swiped
+    const message = chat[messageIndex];
+    if (!message || message.is_user) {
+        return;
+    }
+    const currentSwipeId = message.swipe_id || 0;
+    // Only set flag to true if this swipe will trigger a NEW generation
+    // Check if the swipe already exists (has content in the swipes array)
+    const isExistingSwipe = message.swipes &&
+        message.swipes[currentSwipeId] !== undefined &&
+        message.swipes[currentSwipeId] !== null &&
+        message.swipes[currentSwipeId].length > 0;
+    if (!isExistingSwipe) {
+        // This is a NEW swipe that will trigger generation
+        setLastActionWasSwipe(true);
+        setIsAwaitingNewMessage(true);
+        // The reply being replaced may have changed character stats: start
+        // the new swipe from the values that reply saw.
+        try { revertAIStatsForReplacedMessage(messageIndex); } catch (e) {}
+        try { revertAIMemoriesForReplacedMessage(messageIndex); } catch (e) {}
+        try { revertAIEquipmentForReplacedMessage(messageIndex); } catch (e) {}
+        try { revertAIConditionsForReplacedMessage(messageIndex); } catch (e) {}
+        try { revertAIAbilitiesForReplacedMessage(messageIndex); } catch (e) {}
+        try { revertAIProgressForReplacedMessage(messageIndex); } catch (e) {}
+        try { revertAIMoneyForReplacedMessage(messageIndex); } catch (e) {}
+        try { revertAIAffinityForReplacedMessage(messageIndex); } catch (e) {}
+        try { revertAIChecksForReplacedMessage(messageIndex); } catch (e) {}
+    } else {
+        // This is navigating to an EXISTING swipe - don't change the flag
+    }
+    // IMPORTANT: onMessageSwiped is for DISPLAY only!
+    // lastGeneratedData is for DISPLAY, committedTrackerData is for GENERATION
+    // It's safe to load swipe data into lastGeneratedData - it won't be committed due to !lastActionWasSwipe check
+    if (message.extra && message.extra.dooms_tracker_swipes && message.extra.dooms_tracker_swipes[currentSwipeId]) {
+        const swipeData = message.extra.dooms_tracker_swipes[currentSwipeId];
+        // Load swipe data into lastGeneratedData for display (both modes)
+        lastGeneratedData.quests = swipeData.quests || null;
+        lastGeneratedData.infoBox = swipeData.infoBox || null;
+        // Normalize characterThoughts to string format (for backward compatibility with old object format)
+        if (swipeData.characterThoughts && typeof swipeData.characterThoughts === 'object') {
+            lastGeneratedData.characterThoughts = JSON.stringify(swipeData.characterThoughts, null, 2);
+        } else {
+            lastGeneratedData.characterThoughts = swipeData.characterThoughts || null;
+        }
+        // Canonicalize alias names on restore — swipe data may have been stored
+        // before an alias existed (or before this feature shipped).
+        lastGeneratedData.characterThoughts = applyCharacterAliases(lastGeneratedData.characterThoughts);
+        // DON'T parse user stats when loading swipe data
+        // This would overwrite manually edited fields (like Conditions) with old swipe data
+        // The lastGeneratedData is loaded for display purposes only
+        // parseUserStats() updates extensionSettings.userStats which should only be modified
+        // by new generations or manual edits, not by swipe navigation
+    } else {
+    }
+    // Re-render the panels
+    renderInfoBox();
+    renderThoughts();
+    renderQuests();
+    resetSceneHeaderCache();
+    updateChatSceneHeaders();
+    updatePortraitBar();
+    updateWeatherEffect();
+    // Update chat thought overlays
+    updateChatThoughts();
+}
+/**
+ * Event handler for when a message is deleted.
+ * Rolls the tracker state back to whatever was attached to the new last
+ * assistant message — so the panels (Quests / Info Box / Thoughts /
+ * portrait bar / weather / scene header) match the chat the user is now
+ * looking at, instead of showing data that referenced a turn that no
+ * longer exists. If no assistant messages remain, panels are cleared.
+ *
+ * Resets BOTH lastGeneratedData (display) AND committedTrackerData
+ * (the source for the next generation) — unlike a swipe, a deletion is
+ * permanent, so the next generation should also see the rolled-back
+ * context, not the orphan tracker that was attached to the removed turn.
+ */
+export function onMessageDeleted() {
+    if (!extensionSettings.enabled) return;
+    // Find the new tail assistant message after the deletion.
+    let tail = null;
+    for (let i = chat.length - 1; i >= 0; i--) {
+        const m = chat[i];
+        if (m && !m.is_user && !m.is_system) {
+            tail = m;
+            break;
+        }
+    }
+    // Resolve tracker payload for the tail's current swipe — same fallback
+    // chain the historical-context builder uses (extra → swipe_info).
+    let payload = null;
+    if (tail) {
+        const swipeId = tail.swipe_id || 0;
+        payload = tail.extra?.dooms_tracker_swipes?.[swipeId] || null;
+        if (!payload && tail.swipe_info && tail.swipe_info[swipeId]) {
+            payload = tail.swipe_info[swipeId].extra?.dooms_tracker_swipes?.[swipeId] || null;
+        }
+    }
+    if (payload) {
+        const ct = payload.characterThoughts;
+        const normalizedThoughts = (ct && typeof ct === 'object')
+            ? JSON.stringify(ct, null, 2)
+            : (ct || null);
+        lastGeneratedData.quests = payload.quests || null;
+        lastGeneratedData.infoBox = payload.infoBox || null;
+        lastGeneratedData.characterThoughts = normalizedThoughts;
+        committedTrackerData.quests = lastGeneratedData.quests;
+        committedTrackerData.infoBox = lastGeneratedData.infoBox;
+        committedTrackerData.characterThoughts = lastGeneratedData.characterThoughts;
+    } else {
+        // No tail or tail has no tracker data — clear panels rather than
+        // leaving stale content from the deleted message on screen.
+        lastGeneratedData.quests = null;
+        lastGeneratedData.infoBox = null;
+        lastGeneratedData.characterThoughts = null;
+        committedTrackerData.quests = null;
+        committedTrackerData.infoBox = null;
+        committedTrackerData.characterThoughts = null;
+    }
+    // Re-render every panel that reads from those two stores. Isolated for
+    // the same reason as onMessageReceived: one throwing renderer must not
+    // stop the others (or anything queued after this) from running.
+    safeRender('renderInfoBox', renderInfoBox);
+    safeRender('renderThoughts', renderThoughts);
+    safeRender('renderQuests', renderQuests);
+    resetSceneHeaderCache();
+    safeRender('updateChatSceneHeaders', updateChatSceneHeaders);
+    safeRender('updatePortraitBar', updatePortraitBar);
+    safeRender('updateWeatherEffect', updateWeatherEffect);
+    safeRender('updateChatThoughts', updateChatThoughts);
+}
+/**
+ * Update the persona avatar image when user switches personas
+ */
+export function updatePersonaAvatar() {
+    const portraitImg = document.querySelector('.rpg-user-portrait');
+    if (!portraitImg) {
+        return;
+    }
+    // Get current user_avatar from context instead of using imported value
+    const context = getContext();
+    const currentUserAvatar = context.user_avatar || user_avatar;
+    // Try to get a valid thumbnail URL using our safe helper
+    if (currentUserAvatar) {
+        const thumbnailUrl = getSafeThumbnailUrl('persona', currentUserAvatar);
+        if (thumbnailUrl) {
+            // Only update the src if we got a valid URL
+            portraitImg.src = thumbnailUrl;
+        } else {
+            // Don't update the src if we couldn't get a valid URL
+            // This prevents 400 errors and keeps the existing image
+        }
+    } else {
+    }
+}
+/**
+ * Clears all extension prompts.
+ */
+export function clearExtensionPrompts() {
+    setExtensionPrompt('dooms-tracker-inject', '', extension_prompt_types.IN_CHAT, 0, false);
+    setExtensionPrompt('dooms-tracker-example', '', extension_prompt_types.IN_CHAT, 0, false);
+    setExtensionPrompt('dooms-tracker-html', '', extension_prompt_types.IN_CHAT, 0, false);
+    setExtensionPrompt('dooms-tracker-dialogue-coloring', '', extension_prompt_types.IN_CHAT, 0, false);
+    setExtensionPrompt('dooms-tracker-spotify', '', extension_prompt_types.IN_CHAT, 0, false);
+    setExtensionPrompt('dooms-tracker-context', '', extension_prompt_types.IN_CHAT, 1, false);
+    setExtensionPrompt('dooms-doom-counter-twist', '', extension_prompt_types.IN_PROMPT, 0, false);
+    // Note: dooms-tracker-plot is not cleared here since it's passed via quiet_prompt option
+}
+/**
+ * Event handler for when generation stops or ends
+ */
+export async function onGenerationEnded() {
+    // Note: isGenerating flag is cleared in onMessageReceived after parsing (together mode)
+    // or in apiClient.js after separate generation completes (separate mode)
+}
+/**
+ * Initialize history injection event listeners.
+ * Should be called once during extension initialization.
+ */
+export function initHistoryInjection() {
+    initHistoryInjectionListeners();
+}
+
+/**
+ * Initialize Doom Counter event listener.
+ * Kept as a legacy hook for the DOM event (in case other code dispatches it).
+ */
+export function initDoomCounterListener() {
+    document.addEventListener('doom-counter-trigger', () => {
+        triggerDoomCounter().catch(err => console.error('[Doom Counter] Event trigger failed:', err));
+    });
+}
