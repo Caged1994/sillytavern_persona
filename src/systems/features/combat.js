@@ -42,6 +42,10 @@ import { activeStats, attrLabel } from '../../utils/statsModel.js';
 import { itemKey } from '../../utils/equipmentModel.js';
 import { formatEffects } from '../../utils/effectsModel.js';
 import * as M from '../../utils/combatModel.js';
+import { findSkill, isCombatSkill, profileFromSkill, skillCost, passiveAffinity } from '../../utils/skillModel.js';
+import { getActivePersona, isPersonasEnabled } from './characterPersonas.js';
+import { findInCompendium, getCompendium } from './personaCompendium.js';
+import { normalizeAffinities as normalizePersonaAffinities } from '../../utils/personaModel.js';
 import { buildEncounterSetupPrompt, buildCombatNarrationPrompt } from '../generation/combatPrompts.js';
 
 // ─── Switches ───────────────────────────────────────────────────────────────
@@ -135,6 +139,11 @@ export function setItemGear(name, isUser, itemName, atk, def) {
  */
 export function getActionProfile(name, isUser, kind, entry) {
     const owner = statKey(name, isUser);
+    // A Persona skill from the database: the game decides what it does.
+    if (kind !== 'item') {
+        const rec = findSkill(entry.name);
+        if (rec) return { stored: true, fromSkillData: true, profile: isCombatSkill(rec) ? profileFromSkill(rec) : { type: 'none' } };
+    }
     const stored = getStoredProfile(owner, kind, entry.name);
     const profile = stored || M.guessProfile(kind, entry.name, entry.desc, { cost: entry.cost, effects: entry.effects });
     return { stored: !!stored, profile };
@@ -150,6 +159,10 @@ export function setActionProfile(name, isUser, kind, entryName, profile) {
 /** A short plain description, e.g. "Damage · Medium · Ma · may cause burning". */
 export function describeProfile(p) {
     if (!p) return '';
+    if (p.type === 'skill') {
+        const rec = findSkill(p.skill);
+        return rec && rec.d ? `${p.element ? p.element[0].toUpperCase() + p.element.slice(1) + ' · ' : ''}${rec.d}` : (p.element || 'Skill');
+    }
     const type = { damage: 'Damage', heal: 'Heals', status: 'Status', mana: 'Restores SP', cure: 'Cures', revive: 'Revives', gear: 'Weapon / armour', none: 'Not used in a fight' }[p.type] || p.type;
     const bits = [type];
     if (p.type === 'gear') return `${type} · ⚔${p.atk || 0} 🛡${p.def || 0}`;
@@ -167,8 +180,25 @@ function combatId(prefix, name) {
 }
 
 /** The action a spell or skill gives, with its profile (saved or guessed). */
-function abilityAction(owner, a, tiers) {
+function abilityAction(owner, a, tiers, level = 1) {
     const kind = a.type === 'spell' ? 'spell' : 'ability';
+    // Persona skills: power, element, cost and effect come from the database.
+    const rec = findSkill(a.name);
+    if (rec) {
+        if (!isCombatSkill(rec)) return { skip: true, labelled: true };
+        const profile = profileFromSkill(rec);
+        const cost = skillCost(rec, level);
+        const manaCost = tiers ? cost.sp : 0;
+        return {
+            labelled: true,
+            action: {
+                id: `ab:${a.id}`, label: a.name, icon: a.icon || '✨', kind,
+                profile, manaCost, hpCost: cost.hp,
+                // Without the SP bar, SP skills are paced by a pause instead.
+                cooldown: !tiers && cost.sp ? M.TUNING.cooldown[profile.power] || 0 : 0,
+            },
+        };
+    }
     const stored = getStoredProfile(owner, kind, a.name);
     const profile = stored || M.guessProfile(kind, a.name, a.desc, { cost: a.cost, effects: a.effects });
     if (!profile || profile.type === 'gear' || profile.type === 'none') return { skip: true, labelled: !!stored };
@@ -214,9 +244,16 @@ export function buildPartyMember(name, isUser, id = combatId('p', name)) {
     let atkBonus = 0;
     let armor = 0;
 
+    // Affinities: the equipped Persona's, improved by passive skills (Resist Fire…).
+    const persona = isPersonasEnabled() ? getActivePersona(name, isUser) : null;
+    const affinities = persona ? { ...persona.affinities } : {};
+    const rank = { '': 1, wk: 0, rs: 2, nu: 3, dr: 4, rp: 5 };
+
     if (isAbilitiesEnabled()) {
         for (const a of getAbilities(name, isUser)) {
-            const r = abilityAction(owner, a, hasMana ? tiers : null);
+            const pa = passiveAffinity(findSkill(a.name));
+            if (pa && (rank[pa.val] ?? 0) > (rank[affinities[pa.el] || ''] ?? 1)) affinities[pa.el] = pa.val;
+            const r = abilityAction(owner, a, hasMana ? tiers : null, level);
             if (!r.labelled) unlabelled.push({ owner, name, isUser, kind: a.type === 'spell' ? 'spell' : 'ability', ref: a.name, desc: a.desc, cost: a.cost });
             if (r.action) actions.push(r.action);
         }
@@ -242,7 +279,8 @@ export function buildPartyMember(name, isUser, id = combatId('p', name)) {
         id, side: 'party', name, isUser, level, attrs,
         healthPct: hasHealth ? cur.health : 100,
         mana: hasMana ? cur.mana : null,
-        armor, atkBonus, actions,
+        armor, atkBonus, actions, affinities,
+        persona: persona ? persona.name : undefined,
     });
     return { combatant, unlabelled };
 }
@@ -358,7 +396,10 @@ export function normalizeEnemySpecs(raw) {
             tier: M.TIERS.includes(String(e.tier).toLowerCase()) ? String(e.tier).toLowerCase() : 'normal',
             levelDelta: Number(e.levelDelta) || 0,
             focus: String(e.focus || '').toLowerCase(),
-            attacks: attacks.map(a => ({ name: cleanText(a.name, 40), power: a.power, stat: a.stat, status: a.status, type: a.type, target: a.target })),
+            attacks: attacks.map(a => ({ name: cleanText(a.name, 40), power: a.power, stat: a.stat, status: a.status, type: a.type, target: a.target, element: a.element })),
+            persona: cleanText(e.persona, 40) || undefined,
+            affinities: e.affinities && typeof e.affinities === 'object' ? e.affinities : undefined,
+            skills: (Array.isArray(e.skills) ? e.skills : typeof e.skills === 'string' ? e.skills.split(',') : []).map(x => cleanText(typeof x === 'string' ? x : x?.name, 40)).filter(Boolean).slice(0, 6),
             loot,
         });
     }
@@ -429,6 +470,7 @@ export async function generateEncounterSetup(party, { situation = '', generate =
         present: presentCharacters([getPersonaName(), ...members.map(m => m.combatant.name)].filter(Boolean)),
         currency: currency ? currency.name : '',
         toLabel: toLabel.slice(0, 40),
+        personas: getCompendium().map(p => p.name),
     });
     const reply = await generate({ prompt: messages, quietToLoud: false });
     const parsed = parseEncounterReply(reply);
@@ -436,11 +478,37 @@ export async function generateEncounterSetup(party, { situation = '', generate =
     return { environment: parsed.environment, enemies: parsed.enemies, labelled };
 }
 
+/**
+ * Gives an enemy spec its Persona side: the Compendium entry it names (or
+ * whose name it has) supplies affinities, skills and the shape of its stats;
+ * the AI's own affinities and skills are used otherwise. Skills found in the
+ * skill database become attacks with their real effect.
+ */
+export function enrichEnemySpec(spec) {
+    const out = { ...spec };
+    const def = findInCompendium(spec.persona) || findInCompendium(String(spec.name || '').replace(/\s+\d+$/, ''));
+    const aff = spec.affinities ? normalizePersonaAffinities(spec.affinities) : (def ? def.affinities : null);
+    if (aff) out.affinities = aff;
+    if (def) {
+        out.persona = def.name;
+        out.shape = def.stats;
+    }
+    const names = (spec.skills && spec.skills.length ? spec.skills : (def ? def.skills : [])) || [];
+    const fromDb = [];
+    for (const n of names) {
+        const rec = findSkill(n);
+        if (rec && isCombatSkill(rec) && !['aff'].includes(rec.fx.k)) fromDb.push({ name: n, profile: profileFromSkill(rec), icon: rec.e === 'heal' ? '💚' : undefined });
+        if (fromDb.length >= 4) break;
+    }
+    if (fromDb.length) out.attacks = [...fromDb, ...(spec.attacks || [])].slice(0, 4);
+    return out;
+}
+
 /** Fighters + enemies → a fight ready to start (not started). */
 export function buildEncounter(party, enemySpecs, { environment = '', seed = Date.now(), tag = null } = {}) {
     const members = party.map(p => buildPartyMember(p.name, p.isUser).combatant);
     const partyLevel = members.length ? Math.max(1, Math.round(members.reduce((s, m) => s + m.level, 0) / members.length)) : 1;
-    const enemies = enemySpecs.map((spec, i) => M.buildEnemy(spec, { partyLevel, partySize: members.length, id: `e${i + 1}` }));
+    const enemies = enemySpecs.map((spec, i) => M.buildEnemy(enrichEnemySpec(spec), { partyLevel, partySize: members.length, id: `e${i + 1}` }));
     const state = M.createCombat({ combatants: [...members, ...enemies], seed, environment });
     state.partyLevel = partyLevel;
     // Marks a fight that belongs to something else (a dungeon room), so that one can find its result.

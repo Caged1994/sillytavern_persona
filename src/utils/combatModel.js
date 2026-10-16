@@ -25,7 +25,25 @@
  *               qty (items) }
  *   combatant { id, name, side: 'party'|'enemy', isUser, icon, level, attrs,
  *               maxHp, hp, mana (0–100, null when SP is not tracked),
- *               armor, atkBonus, actions, statuses, cooldowns, guard, down, … }
+ *               armor, atkBonus, actions, statuses, cooldowns, guard, down,
+ *               affinities { element: ''|'wk'|'rs'|'nu'|'dr'|'rp' }, knocked,
+ *               walls/breaks { element: turns }, baton, known { element: true } }
+ *
+ * Persona rules (P3/P4/P5):
+ *   - Every damaging action has an element; the target's affinity to it
+ *     decides the result: Weak ×1.25, Resist ×0.5, Null blocks, Drain heals
+ *     the target, Repel sends the damage back. Almighty ignores affinities.
+ *   - Hitting a weakness, a critical hit (Phys/Gun) or a "technical" (an
+ *     element that exploits an ailment the target has) knocks the target
+ *     down and gives the attacker "1 More": another action at once. A
+ *     knocked-down fighter cannot dodge and gets up at the start of their
+ *     turn. (Enemy criticals hurt but do not knock down.)
+ *   - During a 1 More, a party member can Baton Pass it to an ally who has
+ *     not had it in this chain (+50% damage and healing per pass), or, when
+ *     every enemy is down, launch an All-Out Attack.
+ *   - Skills from the Persona skill database (type 'skill', see
+ *     skillModel.js) carry their own power, hits, accuracy, crit, ailment
+ *     and costs (SP, or HP for Phys skills).
  */
 
 // ─── Tuning ─────────────────────────────────────────────────────────────────
@@ -72,6 +90,13 @@ export const TUNING = {
     hpPerExtraHero: 0.45,
     affinityWin: 3, affinityFlee: -2,
     maxLog: 300,
+    // Persona rules.
+    weakMult: 1.25, resistMult: 0.5,
+    skillPowerRef: 40, skillPowerMin: 0.5, skillPowerMax: 4.5, skillCritCap: 0.6,
+    batonStep: 0.5, batonMax: 3, allOutMult: 1.3, chargeMult: 2.5,
+    ailmentTurns: 3, bossAilmentMult: 0.5, buffTurns: 3,
+    swiftHit: 0.12, dizzyHitMult: 0.5, rageAtkMult: 1.5, rageInMult: 1.3, maybeSkipChance: 0.5,
+    drainPerLevel: 0.1, drainSp: 6,
 };
 
 export const POWERS = ['light', 'medium', 'heavy'];
@@ -80,7 +105,11 @@ export const ATTRIBUTE_IDS = ['st', 'ma', 'en', 'ag', 'lu'];
 // Everything but Magic counts as physical when it comes to armour.
 const PHYSICAL = new Set(['st', 'en', 'ag', 'lu']);
 export const TARGETS = ['enemy', 'enemies', 'ally', 'allies', 'self'];
-export const PROFILE_TYPES = ['damage', 'heal', 'status', 'mana', 'cure', 'revive', 'gear', 'none'];
+export const PROFILE_TYPES = ['damage', 'heal', 'status', 'mana', 'cure', 'revive', 'gear', 'none', 'skill'];
+/** Elements of damage (Persona 5's ten plus Almighty). */
+export const ELEMENTS = ['phys', 'gun', 'fire', 'ice', 'elec', 'wind', 'psy', 'nuke', 'bless', 'curse', 'almighty'];
+const PHYS_ELEMENTS = new Set(['phys', 'gun']);
+export const AFFINITY_VALUES = ['', 'wk', 'rs', 'nu', 'dr', 'rp'];
 
 /** The statuses a fight knows. `bad` ones are harmful and cured by 'cure'. */
 export const STATUSES = {
@@ -93,6 +122,36 @@ export const STATUSES = {
     shield: { icon: '🛡️', name: 'Shielded', bad: false },
     empower: { icon: '⬆️', name: 'Empowered', bad: false },
     regen: { icon: '💚', name: 'Regenerating', bad: false },
+    // Persona ailments.
+    freeze: { icon: '🧊', name: 'Frozen', bad: true, skip: true, ailment: true },
+    shock: { icon: '⚡', name: 'Shocked', bad: true, skip: true, ailment: true },
+    sleep: { icon: '💤', name: 'Asleep', bad: true, skip: true, ailment: true },
+    dizzy: { icon: '😵', name: 'Dizzy', bad: true, ailment: true },
+    confuse: { icon: '❓', name: 'Confused', bad: true, maybeSkip: true, ailment: true, mental: true },
+    fear: { icon: '😱', name: 'Afraid', bad: true, maybeSkip: true, ailment: true, mental: true },
+    forget: { icon: '🫥', name: 'Forgetful', bad: true, sealed: true, ailment: true, mental: true },
+    rage: { icon: '💢', name: 'Enraged', bad: true, sealed: true, ailment: true, mental: true },
+    despair: { icon: '😞', name: 'Despairing', bad: true, skip: true, ailment: true, mental: true },
+    brainwash: { icon: '🌀', name: 'Brainwashed', bad: true, maybeSkip: true, ailment: true, mental: true },
+    // -kaja / -kunda and the like.
+    swift: { icon: '💨', name: 'Swift', bad: false },
+    sluggish: { icon: '🐌', name: 'Sluggish', bad: true },
+    charged: { icon: '💪', name: 'Charged', bad: false },
+    focused: { icon: '🔮', name: 'Concentrating', bad: false },
+    tetrakarn: { icon: '🔷', name: 'Physical mirror', bad: false },
+    makarakarn: { icon: '🔶', name: 'Magic mirror', bad: false },
+};
+/** The game's ailment names → statuses here. */
+export const AILMENT_STATUS = {
+    burn: 'burn', freeze: 'freeze', shock: 'shock', dizzy: 'dizzy', sleep: 'sleep', confuse: 'confuse',
+    fear: 'fear', forget: 'forget', rage: 'rage', despair: 'despair', brainwash: 'brainwash', hunger: 'weaken',
+    poison: 'poison', charm: 'brainwash', distress: 'vulnerable', panic: 'confuse', silence: 'forget', mute: 'forget',
+    exhaustion: 'weaken', enervation: 'weaken',
+};
+/** Ailment → elements that turn a hit on it into a "technical" (crit-like, knocks down). */
+export const TECHNICAL = {
+    burn: ['wind', 'nuke'], freeze: ['phys', 'gun', 'nuke'], shock: ['phys', 'gun', 'nuke'], sleep: ['phys', 'gun'],
+    confuse: ['psy'], fear: ['psy'], forget: ['psy'], rage: ['psy'], despair: ['psy'], brainwash: ['psy'],
 };
 export const STATUS_IDS = Object.keys(STATUSES);
 
@@ -158,8 +217,14 @@ export function normalizeProfile(raw, attributeIds = ATTRIBUTE_IDS) {
     let target = String(raw.target ?? '').toLowerCase().trim();
     if (!TARGETS.includes(target)) target = t === 'damage' || (t === 'status' && STATUSES[raw.status]?.bad) ? 'enemy' : (t === 'heal' || t === 'mana' || t === 'cure' || t === 'revive' ? 'ally' : 'self');
     const status = STATUS_IDS.includes(String(raw.status ?? '').toLowerCase()) ? String(raw.status).toLowerCase() : undefined;
+    if (t === 'skill') {
+        // Built by skillModel.profileFromSkill: kept as it is.
+        return raw.fx && typeof raw.fx === 'object' ? { ...raw } : null;
+    }
     const out = { type: t, power, stat, target };
     if (status) out.status = status;
+    const el = String(raw.element ?? '').toLowerCase().trim();
+    if (ELEMENTS.includes(el) && t === 'damage') out.element = el;
     if (t === 'status' && !status) return null;
     if (t === 'gear') {
         out.atk = clamp(Math.round(Number(raw.atk) || 0), 0, 15);
@@ -178,7 +243,13 @@ const KEYWORDS = [
     { re: /\b(stun|paralyz|freeze|sleep|stordi|paralizz|congela|addorment)/i, p: { type: 'status', status: 'stun', stat: 'none', target: 'enemy' } },
     { re: /\b(weaken|curse|hex|debilit|maledi)/i, p: { type: 'status', status: 'weaken', stat: 'none', target: 'enemy' } },
     { re: /\b(poison|venom|veleno|velen)/i, p: { type: 'damage', status: 'poison', stat: 'ag', target: 'enemy' } },
-    { re: /\b(fire|flame|burn|inferno|blaze|explosion|fuoco|fiamma|brucia|esplosion)/i, p: { type: 'damage', status: 'burn', stat: 'ma', target: 'enemy' } },
+    { re: /\b(fire|flame|burn|inferno|blaze|explosion|fuoco|fiamma|brucia|esplosion)/i, p: { type: 'damage', status: 'burn', stat: 'ma', target: 'enemy', element: 'fire' } },
+    { re: /\b(ice|frost|freez|blizzard|ghiaccio|gelo)/i, p: { type: 'damage', stat: 'ma', target: 'enemy', element: 'ice' } },
+    { re: /\b(lightning|thunder|bolt|shock|fulmine|tuono|scossa)/i, p: { type: 'damage', stat: 'ma', target: 'enemy', element: 'elec' } },
+    { re: /\b(wind|gale|tornado|gust|vento|raffica)/i, p: { type: 'damage', stat: 'ma', target: 'enemy', element: 'wind' } },
+    { re: /\b(holy|light|bless|divine|sacr|luce|santo)/i, p: { type: 'damage', stat: 'ma', target: 'enemy', element: 'bless' } },
+    { re: /\b(dark|curse|shadow|hex|oscur|maledi|ombra)/i, p: { type: 'damage', stat: 'ma', target: 'enemy', element: 'curse' } },
+    { re: /\b(gun|pistol|rifle|shot|bullet|pistola|fucile|sparo|proiettil)/i, p: { type: 'damage', stat: 'st', target: 'enemy', element: 'gun' } },
     { re: /\b(bleed|slash|rend|sanguin|taglio|squarcia)/i, p: { type: 'damage', status: 'bleed', stat: 'st', target: 'enemy' } },
     { re: /\b(lightning|thunder|bolt|ice|frost|storm|magic|arcane|spell|fulmine|tuono|ghiaccio|tempesta|magia|arcano|incantesimo)/i, p: { type: 'damage', stat: 'ma', target: 'enemy' } },
     { re: /\b(bomb|grenade|dynamite|molotov|bomba|granata|dinamite)/i, p: { type: 'damage', stat: 'none', target: 'enemy' } },
@@ -224,7 +295,21 @@ export function isUsableItemProfile(p) {
 /** The attack everybody has. */
 export function basicAttack(c) {
     const stat = attrValue(c, 'ag') > attrValue(c, 'st') ? 'ag' : 'st';
-    return { id: 'basic', label: 'Attack', icon: '⚔️', kind: 'basic', profile: { type: 'damage', power: 'light', stat, target: 'enemy' }, manaCost: 0, cooldown: 0 };
+    return { id: 'basic', label: 'Attack', icon: '⚔️', kind: 'basic', profile: { type: 'damage', power: 'light', stat, target: 'enemy', element: 'phys' }, manaCost: 0, cooldown: 0 };
+}
+
+/** A full affinity map (every element) from anything. */
+export function normalizeAffinityMap(raw) {
+    const out = {};
+    for (const el of ELEMENTS) out[el] = '';
+    if (raw && typeof raw === 'object') {
+        for (const [k, v] of Object.entries(raw)) {
+            const el = String(k).toLowerCase();
+            const val = String(v ?? '').toLowerCase();
+            if (ELEMENTS.includes(el) && el !== 'almighty' && AFFINITY_VALUES.includes(val)) out[el] = val;
+        }
+    }
+    return out;
 }
 
 /**
@@ -255,7 +340,14 @@ export function makeCombatant(spec) {
         guard: false,
         down: hp <= 0,
         stunImmune: 0,
+        affinities: normalizeAffinityMap(spec.affinities),
+        knocked: false,
+        walls: {},
+        breaks: {},
+        baton: 0,
+        known: {},
     };
+    if (spec.persona) c.persona = String(spec.persona);
     if (spec.tier) c.tier = spec.tier;
     if (spec.description) c.description = String(spec.description);
     if (spec.loot) c.loot = spec.loot;
@@ -280,17 +372,30 @@ export function buildEnemy(spec, { partyLevel = 1, partySize = 1, id }) {
     const attrs = {};
     for (const a of ATTRIBUTE_IDS) attrs[a] = Math.round(base);
     const focus = ATTRIBUTE_IDS.includes(String(spec.focus).toLowerCase()) ? String(spec.focus).toLowerCase() : null;
-    if (focus) attrs[focus] = Math.round(base * 1.25);
+    if (spec.shape && typeof spec.shape === 'object') {
+        // A Persona's stat shape (e.g. from the Compendium): same total, its proportions.
+        const sum = ATTRIBUTE_IDS.reduce((t, a) => t + (isNum(spec.shape[a]) ? spec.shape[a] : 0), 0);
+        if (sum > 0) for (const a of ATTRIBUTE_IDS) attrs[a] = Math.max(1, Math.round(base * 5 * (spec.shape[a] || 0) / sum));
+    } else if (focus) attrs[focus] = Math.round(base * 1.25);
     const maxHp = Math.max(8, Math.round(maxHpFor(attrs.en, level) * tier.hp * (1 + TUNING.hpPerExtraHero * Math.max(0, partySize - 1))));
     const primary = focus || 'st';
     const actions = [];
-    (Array.isArray(spec.attacks) ? spec.attacks : []).slice(0, 3).forEach((a, i) => {
+    (Array.isArray(spec.attacks) ? spec.attacks : []).slice(0, 4).forEach((a, i) => {
+        // A skill from the database comes with its profile already made.
+        if (a && a.profile && a.profile.type === 'skill') {
+            actions.push({
+                id: `atk${i}`, label: String(a.name || a.profile.skill || `Skill ${i + 1}`).slice(0, 40), icon: a.icon || '💥', kind: 'ability',
+                profile: a.profile, manaCost: 0, hpCost: 0, cooldown: TUNING.cooldown[a.profile.power] || 0,
+            });
+            return;
+        }
         const prof = normalizeProfile({
             type: a.type || 'damage',
             power: a.power || 'medium',
             stat: a.stat || primary,
             target: a.target,
             status: a.status,
+            element: a.element,
         });
         if (!prof || prof.type === 'gear' || prof.type === 'none') return;
         actions.push({
@@ -301,6 +406,7 @@ export function buildEnemy(spec, { partyLevel = 1, partySize = 1, id }) {
     const c = makeCombatant({
         id, side: 'enemy', name: spec.name, icon: spec.icon || '👹', level, attrs, maxHp,
         tier: tierId, description: spec.description, loot: spec.loot, actions,
+        affinities: spec.affinities, persona: spec.persona,
     });
     return c;
 }
@@ -333,7 +439,13 @@ const opposite = (side) => (side === 'party' ? 'enemy' : 'party');
 
 export function currentActor(state) {
     if (state.phase !== 'active') return null;
+    if (state.extra && state.extra.actor) return getCombatant(state, state.extra.actor);
     return getCombatant(state, state.order[state.turn]);
+}
+
+/** Whether the current actor is in a 1 More (an extra action). */
+export function inOneMore(state) {
+    return !!(state.phase === 'active' && state.extra && state.extra.actor);
 }
 
 function push(state, events, ev) {
@@ -365,7 +477,7 @@ export function startCombat(state) {
 function applyStatus(state, events, source, target, id, turns = TUNING.statusTurns) {
     const def = STATUSES[id];
     if (!def || target.down) return false;
-    if (id === 'stun') {
+    if (id === 'stun' || id === 'freeze' || id === 'shock') {
         if (target.stunImmune > 0 || (target.tier === 'boss' && nextRandom(state) < 0.5)) {
             push(state, events, { type: 'resist', actor: source?.id, target: target.id, text: `${target.name} resists being stunned.` });
             return false;
@@ -383,6 +495,8 @@ function atkMult(c) {
     let m = 1;
     if (hasStatus(c, 'weaken')) m *= TUNING.weakenMult;
     if (hasStatus(c, 'empower')) m *= TUNING.empowerMult;
+    if (hasStatus(c, 'rage')) m *= TUNING.rageAtkMult;
+    if (c.baton) m *= 1 + TUNING.batonStep * c.baton;
     return m;
 }
 
@@ -391,16 +505,38 @@ function inMult(c) {
     if (c.guard) m *= TUNING.guardMult;
     if (hasStatus(c, 'shield')) m *= TUNING.shieldMult;
     if (hasStatus(c, 'vulnerable')) m *= TUNING.vulnerableMult;
+    if (hasStatus(c, 'rage')) m *= TUNING.rageInMult;
     return m;
 }
+
+/** The element an action deals damage with. */
+export function elementOf(profile) {
+    if (!profile) return 'phys';
+    if (ELEMENTS.includes(profile.element)) return profile.element;
+    if (profile.stat === 'ma' || profile.stat === 'none') return 'almighty';
+    return 'phys';
+}
+
+/** The target's affinity to an element right now (walls and breaks included). */
+export function affinityOf(target, el) {
+    if (!target || el === 'almighty' || !ELEMENTS.includes(el)) return '';
+    let a = target.affinities?.[el] || '';
+    if ((target.breaks?.[el] || 0) > 0 && ['rs', 'nu', 'dr', 'rp'].includes(a)) a = '';
+    if ((target.walls?.[el] || 0) > 0 && (a === '' || a === 'wk')) a = 'rs';
+    return a;
+}
+
+const AFF_WORD = { wk: 'WEAK', rs: 'Resist', nu: 'Block', dr: 'Drain', rp: 'Repel' };
 
 function takeDamage(state, events, c, amount, text, extra = {}) {
     c.hp = Math.max(0, c.hp - amount);
     push(state, events, { type: 'damage', target: c.id, amount, text, ...extra });
+    if (!extra.dot && hasStatus(c, 'sleep')) c.statuses = c.statuses.filter(s => s.id !== 'sleep');
     if (c.hp <= 0 && !c.down) {
         c.down = true;
         c.statuses = [];
         c.guard = false;
+        c.knocked = false;
         push(state, events, { type: 'down', target: c.id, text: c.side === 'enemy' ? `${c.name} is defeated! 💀` : `${c.name} falls! 💀` });
     }
 }
@@ -427,7 +563,20 @@ export function critChance(attacker, defender) {
 export function hitChance(attacker, defender, profile = null) {
     let p = TUNING.hitBase + ratioDiff(attrValue(attacker, 'ag'), attrValue(defender, 'ag')) * TUNING.hitSpread;
     if (profile && profile.stat && !PHYSICAL.has(profile.stat) && profile.stat !== 'none') p += TUNING.spellAccuracy;
+    if (profile && isNum(profile.acc)) p *= profile.acc / 95;
+    if (hasStatus(attacker, 'swift')) p += TUNING.swiftHit;
+    if (hasStatus(attacker, 'sluggish')) p -= TUNING.swiftHit;
+    if (hasStatus(attacker, 'dizzy')) p *= TUNING.dizzyHitMult;
+    if (hasStatus(defender, 'swift')) p -= TUNING.swiftHit;
+    if (hasStatus(defender, 'sluggish')) p += TUNING.swiftHit;
+    // A fighter who is down, asleep or frozen cannot dodge.
+    if (defender && (defender.knocked || hasStatus(defender, 'sleep') || hasStatus(defender, 'freeze') || hasStatus(defender, 'shock'))) return TUNING.hitMax;
     return clamp(p, TUNING.hitMin, TUNING.hitMax);
+}
+
+/** How strong a skill of power `pw` is compared with a plain attack (√ of the power, as in the games). */
+export function skillPowerMult(pw) {
+    return clamp(Math.sqrt(Math.max(1, pw) / TUNING.skillPowerRef), TUNING.skillPowerMin, TUNING.skillPowerMax);
 }
 
 /** Damage before the defender's armour; `roll` is the variation factor. */
@@ -440,7 +589,7 @@ function rawDamage(attacker, action, roll, aoe) {
     } else {
         base = TUNING.dmgBase + attrValue(attacker, p.stat) * TUNING.dmgPerAttr + (attacker.level || 1) * TUNING.dmgPerLevel;
         if (PHYSICAL.has(p.stat)) base += gearValue(attacker, attacker.atkBonus);
-        base *= TUNING.powerMult[power];
+        base *= isNum(p.pw) ? skillPowerMult(p.pw) : TUNING.powerMult[power];
     }
     base *= atkMult(attacker) * roll;
     if (aoe) base *= TUNING.aoeMult;
@@ -465,8 +614,8 @@ export function damageReduction(defender) {
     return { physical: f(null), magic: f({ stat: 'ma' }) };
 }
 
-export function damageAgainst(attacker, action, defender, { roll = 1, crit = false, aoe = false } = {}) {
-    let d = rawDamage(attacker, action, roll, aoe) * (crit ? TUNING.critMult : 1);
+export function damageAgainst(attacker, action, defender, { roll = 1, crit = false, aoe = false, mult = 1 } = {}) {
+    let d = rawDamage(attacker, action, roll, aoe) * (crit ? TUNING.critMult : 1) * mult;
     const def = defenceOf(defender, action.profile);
     d = d * (1 - def / (def + pierceOf(attacker, action.profile))) * inMult(defender);
     return Math.max(1, Math.round(d));
@@ -475,6 +624,13 @@ export function damageAgainst(attacker, action, defender, { roll = 1, crit = fal
 export function healAmount(actor, action, target) {
     const p = action.profile;
     const power = powerOf(p);
+    const baton = actor.baton ? 1 + TUNING.batonStep * actor.baton : 1;
+    if (p.type === 'skill') {
+        const fx = p.fx?.k === 'combo' ? (p.fx.of.find(x => x.k === 'heal') || {}) : (p.fx || {});
+        if (isNum(fx.pct)) return Math.max(1, Math.round(target.maxHp * fx.pct / 100));
+        const pw = isNum(fx.pw) ? fx.pw : 50;
+        return Math.max(1, Math.round((TUNING.healBase + attrValue(actor, 'ma') * TUNING.healPerAttr + (actor.level || 1) * TUNING.healPerLevel) * (pw / 50) * TUNING.healMult * baton));
+    }
     if (action.kind === 'item' || p.stat === 'none') return Math.max(1, Math.round(target.maxHp * TUNING.itemHealPct[power]));
     return Math.max(1, Math.round((TUNING.healBase + attrValue(actor, p.stat) * TUNING.healPerAttr + (actor.level || 1) * TUNING.healPerLevel) * TUNING.powerMult[power] * TUNING.healMult));
 }
@@ -483,15 +639,20 @@ export function healAmount(actor, action, target) {
 export function estimateAction(actor, action, target = null) {
     const p = action.profile;
     if (!p) return null;
-    if (p.type === 'damage' && target) {
+    if ((p.type === 'damage' || (p.type === 'skill' && p.fx?.k === 'dmg')) && target) {
         const aoe = p.target === 'enemies';
+        const aff = affinityOf(target, elementOf(p));
+        const known = target.side !== 'enemy' || target.known?.[elementOf(p)];
+        const m = !known ? 1 : aff === 'wk' ? TUNING.weakMult : aff === 'rs' ? TUNING.resistMult : (aff === 'nu' || aff === 'rp' || aff === 'dr') ? 0 : 1;
+        const hits = Array.isArray(p.hits) ? p.hits : [1, 1];
         return {
-            min: damageAgainst(actor, action, target, { roll: TUNING.varMin, aoe }),
-            max: damageAgainst(actor, action, target, { roll: TUNING.varMax, aoe }),
+            affinity: known ? aff : '?',
+            min: Math.round(damageAgainst(actor, action, target, { roll: TUNING.varMin, aoe }) * m) * hits[0],
+            max: Math.round(damageAgainst(actor, action, target, { roll: TUNING.varMax, aoe }) * m) * hits[1],
             hit: Math.round(hitChance(actor, target, p) * 100),
         };
     }
-    if (p.type === 'heal' && target) return { amount: healAmount(actor, action, target) };
+    if ((p.type === 'heal' || (p.type === 'skill' && (p.fx?.k === 'heal' || p.fx?.k === 'combo'))) && target) return { amount: healAmount(actor, action, target) };
     return null;
 }
 
@@ -503,6 +664,11 @@ export function canUse(actor, action) {
     if (actor.down) return { ok: false, reason: 'Down' };
     if (action.kind === 'item' && !(action.qty > 0)) return { ok: false, reason: 'None left' };
     if (action.manaCost > 0 && actor.mana !== null && actor.mana < action.manaCost) return { ok: false, reason: 'Not enough SP' };
+    if (action.hpCost > 0 && actor.hp <= Math.ceil(actor.maxHp * action.hpCost / 100)) return { ok: false, reason: 'Not enough HP' };
+    if (action.id !== 'basic' && action.kind !== 'item') {
+        const sealed = (actor.statuses || []).find(s => STATUSES[s.id]?.sealed);
+        if (sealed) return { ok: false, reason: `${STATUSES[sealed.id].name}: only a plain attack` };
+    }
     const cd = actor.cooldowns[action.id] || 0;
     if (cd > 0) return { ok: false, reason: `Ready in ${cd} turn${cd === 1 ? '' : 's'}` };
     return { ok: true, reason: '' };
@@ -514,7 +680,7 @@ export function validTargets(state, actor, action) {
     const own = actor.side;
     if (t === 'enemy') return state.combatants.filter(c => c.side === opposite(own) && !c.down).map(c => c.id);
     if (t === 'ally') {
-        const revive = action.profile.type === 'revive';
+        const revive = action.profile.type === 'revive' || !!action.profile.revive;
         return state.combatants.filter(c => c.side === own && (revive ? c.down : !c.down)).map(c => c.id);
     }
     return [];
@@ -533,15 +699,250 @@ function resolveTargets(state, actor, action, chosen) {
 
 function spend(actor, action) {
     if (action.manaCost > 0 && actor.mana !== null) actor.mana = Math.max(0, actor.mana - action.manaCost);
+    if (action.hpCost > 0) actor.hp = Math.max(1, actor.hp - Math.ceil(actor.maxHp * action.hpCost / 100));
     if (action.cooldown > 0) actor.cooldowns[action.id] = action.cooldown;
     if (action.kind === 'item') action.qty = Math.max(0, (action.qty || 0) - 1);
     actor.guard = false;
 }
 
+// ─── Hitting: affinities, knock-downs, ailments ─────────────────────────────
+
+function luckFactor(actor, target) {
+    return clamp(1 + ratioDiff(attrValue(actor, 'lu'), attrValue(target, 'lu')), 0.5, 1.5);
+}
+
+/** Tries an ailment (the game's name or a status id) on a target. */
+function tryAilment(state, events, actor, target, name, pct) {
+    const id = AILMENT_STATUS[String(name).toLowerCase()] || (STATUS_IDS.includes(name) ? name : null);
+    if (!id || target.down) return false;
+    let chance = (pct / 100) * luckFactor(actor, target);
+    if (target.tier === 'boss') chance *= TUNING.bossAilmentMult;
+    if (nextRandom(state) >= chance) return false;
+    return applyStatus(state, events, actor, target, id, STATUSES[id]?.skip && id !== 'sleep' ? 1 : TUNING.ailmentTurns);
+}
+
+/** A technical: the element exploits an ailment the target has. */
+function isTechnical(target, el) {
+    return (target.statuses || []).some(s => (TECHNICAL[s.id] || []).includes(el));
+}
+
+/** Damage that comes back to the attacker (Repel, a mirror). */
+function reflect(state, events, actor, amount, why) {
+    const el = 'almighty';
+    if (actor.down) return;
+    push(state, events, { type: 'reflect', actor: actor.id, text: why });
+    takeDamage(state, events, actor, amount, `${actor.name} takes ${amount} damage.`, { el });
+}
+
+/**
+ * One hit of a damaging action on one target. Handles mirrors, hit chance,
+ * affinities, crits, technicals, knock-downs and the action's ailment.
+ * ctx collects what happened: { more, chargeUsed, focusUsed }.
+ */
+function strike(state, events, actor, target, action, ctx, { aoe = false, ailment = null } = {}) {
+    const p = action.profile;
+    const el = elementOf(p);
+    const physical = PHYS_ELEMENTS.has(el);
+    // Tetrakarn / Makarakarn send the first matching attack back.
+    const mirror = physical ? 'tetrakarn' : (el !== 'almighty' ? 'makarakarn' : null);
+    if (mirror && hasStatus(target, mirror)) {
+        target.statuses = target.statuses.filter(s => s.id !== mirror);
+        const back = damageAgainst(actor, action, actor, { aoe });
+        reflect(state, events, actor, back, `${target.name}'s ${STATUSES[mirror].name.toLowerCase()} repels ${action.label}! ${STATUSES[mirror].icon}`);
+        return;
+    }
+    if (nextRandom(state) >= hitChance(actor, target, p)) {
+        push(state, events, { type: 'miss', actor: actor.id, target: target.id, text: `${target.name} avoids it.` });
+        return;
+    }
+    const aff = affinityOf(target, el);
+    if (target.side === 'enemy' && el !== 'almighty') target.known[el] = true;
+    if (aff === 'nu') {
+        push(state, events, { type: 'block', actor: actor.id, target: target.id, el, text: `${target.name} blocks it — Null! 🚫` });
+        return;
+    }
+    const technical = isTechnical(target, el);
+    let crit = false;
+    if (physical && (aff === '' || aff === 'wk')) {
+        const bonus = isNum(p.crit) ? p.crit / 100 : 0;
+        crit = technical || hasStatus(target, 'sleep') || nextRandom(state) < Math.min(TUNING.skillCritCap, critChance(actor, target) + bonus);
+    }
+    let mult = 1;
+    if (aff === 'wk' && !target.guard) mult *= TUNING.weakMult;
+    if (aff === 'rs') mult *= TUNING.resistMult;
+    if (physical && hasStatus(actor, 'charged')) { mult *= TUNING.chargeMult; ctx.chargeUsed = true; }
+    if (!physical && hasStatus(actor, 'focused')) { mult *= TUNING.chargeMult; ctx.focusUsed = true; }
+    const roll = TUNING.varMin + nextRandom(state) * (TUNING.varMax - TUNING.varMin);
+    const dmg = damageAgainst(actor, action, target, { roll, crit, aoe, mult });
+    if (aff === 'rp') {
+        reflect(state, events, actor, dmg, `${target.name} repels ${action.label}! ↩️`);
+        return;
+    }
+    if (aff === 'dr') {
+        const heal = Math.min(dmg, target.maxHp - target.hp);
+        target.hp += heal;
+        push(state, events, { type: 'heal', actor: actor.id, target: target.id, amount: heal, el, text: `${target.name} absorbs it — Drain! (+${heal} HP)` });
+        return;
+    }
+    const tag = aff === 'wk' && !target.guard ? ' — WEAK!' : aff === 'rs' ? ' — resisted' : technical ? ' — TECHNICAL!' : crit ? ' (critical!)' : '';
+    takeDamage(state, events, target, dmg, `${target.name} takes ${dmg} ${el === 'almighty' || el === 'phys' ? '' : el + ' '}damage${tag}`, { actor: actor.id, crit, el, weak: aff === 'wk' });
+    if (target.down) return;
+    // Weaknesses and technicals knock anyone down; a critical only does when the
+    // party lands it (enemy crits just hurt — otherwise plain fights swing too hard).
+    const knocks = !target.guard && (aff === 'wk' || technical || (crit && actor.side === 'party'));
+    if (knocks && !target.knocked) {
+        target.knocked = true;
+        ctx.more = true;
+        push(state, events, { type: 'knock', actor: actor.id, target: target.id, text: `${target.name} is knocked down! ⬇️` });
+    }
+    if (ailment) tryAilment(state, events, actor, target, ailment.name, ailment.pct);
+}
+
+function revive(state, events, actor, t, pct) {
+    if (!t.down) { push(state, events, { type: 'info', text: `${t.name} is already up.` }); return; }
+    t.down = false;
+    t.knocked = false;
+    t.hp = Math.max(1, Math.round(t.maxHp * pct / 100));
+    if (!state.order.includes(t.id)) state.order.push(t.id);
+    push(state, events, { type: 'heal', actor: actor.id, target: t.id, amount: t.hp, text: `${t.name} is back on their feet! ✨` });
+}
+
+const KAJA = { atk: 'empower', def: 'shield', agi: 'swift' };
+const KUNDA = { atk: 'weaken', def: 'vulnerable', agi: 'sluggish' };
+
+/** One effect of a database skill on its targets. */
+function applySkillFx(state, events, actor, action, fx, targets, ctx) {
+    const p = action.profile;
+    const aoe = p.target === 'enemies';
+    switch (fx.k) {
+    case 'dmg': {
+        const [lo, hi] = Array.isArray(fx.hits) ? fx.hits : [1, 1];
+        for (const t of targets) {
+            const hits = lo + Math.floor(nextRandom(state) * (hi - lo + 1));
+            for (let i = 0; i < hits && !t.down && !actor.down; i++) {
+                strike(state, events, actor, t, action, ctx, { aoe, ailment: i === 0 && p.ail ? p.ail : null });
+            }
+        }
+        break;
+    }
+    case 'kill': {
+        for (const t of targets) {
+            const aff = affinityOf(t, fx.el);
+            if (t.side === 'enemy') t.known[fx.el] = true;
+            if (t.tier === 'boss' || ['rs', 'nu', 'dr', 'rp'].includes(aff)) {
+                push(state, events, { type: 'block', actor: actor.id, target: t.id, text: `${t.name} is unaffected.` });
+                continue;
+            }
+            const chance = (fx.pct / 100) * (aff === 'wk' ? 1.5 : 1) * luckFactor(actor, t);
+            if (nextRandom(state) < chance) takeDamage(state, events, t, t.hp, `${t.name} is wiped out! ☠️`, { actor: actor.id });
+            else push(state, events, { type: 'miss', actor: actor.id, target: t.id, text: `${t.name} withstands it.` });
+        }
+        break;
+    }
+    case 'halve': {
+        for (const t of targets) {
+            const aff = affinityOf(t, fx.el || 'almighty');
+            if (t.tier === 'boss' || aff === 'nu' || aff === 'rp' || aff === 'dr' || nextRandom(state) >= (fx.pct || 100) / 100) {
+                push(state, events, { type: 'miss', actor: actor.id, target: t.id, text: `${t.name} is unaffected.` });
+                continue;
+            }
+            const cut = Math.floor(t.hp / 2);
+            if (cut > 0) takeDamage(state, events, t, cut, `${t.name} loses half their HP (${cut}).`, { actor: actor.id });
+        }
+        break;
+    }
+    case 'drain': {
+        const t = targets[0];
+        if (!t) break;
+        const amount = Math.max(1, Math.round(fx.pw * (1 + (actor.level || 1) * TUNING.drainPerLevel)));
+        takeDamage(state, events, t, amount, `${t.name} is drained of ${amount} HP.`, { actor: actor.id });
+        if (fx.what === 'sp' && actor.mana !== null) {
+            actor.mana = Math.min(100, actor.mana + TUNING.drainSp);
+            push(state, events, { type: 'mana', actor: actor.id, target: actor.id, amount: TUNING.drainSp, text: `${actor.name} regains ${TUNING.drainSp} SP 💧` });
+        } else if (fx.what !== 'sp') {
+            const heal = Math.min(amount, actor.maxHp - actor.hp);
+            actor.hp += heal;
+            if (heal) push(state, events, { type: 'heal', actor: actor.id, target: actor.id, amount: heal, text: `${actor.name} recovers ${heal} HP 💚` });
+        }
+        break;
+    }
+    case 'heal': {
+        for (const t of targets) {
+            if (fx.revive) { revive(state, events, actor, t, fx.revive); continue; }
+            if (t.down) continue;
+            if (fx.cure) {
+                const before = t.statuses.length;
+                const ids = fx.cure.includes('all') ? null : new Set(fx.cure.map(n => AILMENT_STATUS[String(n).toLowerCase()]).filter(Boolean));
+                t.statuses = t.statuses.filter(s => !(STATUSES[s.id]?.bad && (!ids || ids.has(s.id))));
+                push(state, events, { type: 'cure', actor: actor.id, target: t.id, text: before !== t.statuses.length ? `${t.name} is cured ✨` : `${t.name} had nothing to cure.` });
+                continue;
+            }
+            if (fx.sp) {
+                if (t.mana === null) continue;
+                const amount = Math.min(fx.sp, 100 - t.mana);
+                t.mana += amount;
+                push(state, events, { type: 'mana', actor: actor.id, target: t.id, amount, text: `${t.name} regains ${amount} SP 💧` });
+                continue;
+            }
+            const amount = Math.min(healAmount(actor, { ...action, profile: { ...p, fx } }, t), t.maxHp - t.hp);
+            t.hp += amount;
+            push(state, events, { type: 'heal', actor: actor.id, target: t.id, amount, text: `${t.name} recovers ${amount} HP 💚` });
+        }
+        break;
+    }
+    case 'kaja':
+        for (const t of targets) for (const st of fx.stats || []) if (KAJA[st]) applyStatus(state, events, actor, t, KAJA[st], TUNING.buffTurns);
+        break;
+    case 'kunda':
+        for (const t of targets) for (const st of fx.stats || []) if (KUNDA[st]) applyStatus(state, events, actor, t, KUNDA[st], TUNING.buffTurns);
+        break;
+    case 'dekaja':
+        for (const t of targets) {
+            t.statuses = t.statuses.filter(s => !['empower', 'shield', 'swift', 'charged', 'focused'].includes(s.id));
+            push(state, events, { type: 'cure', actor: actor.id, target: t.id, text: `${t.name}'s boosts are wiped away.` });
+        }
+        break;
+    case 'dekunda':
+        for (const t of targets) {
+            t.statuses = t.statuses.filter(s => !['weaken', 'vulnerable', 'sluggish'].includes(s.id));
+            push(state, events, { type: 'cure', actor: actor.id, target: t.id, text: `${t.name}'s penalties are lifted.` });
+        }
+        break;
+    case 'charge':
+        applyStatus(state, events, actor, actor, fx.what === 'phys' ? 'charged' : 'focused', 99);
+        break;
+    case 'karn':
+        for (const t of targets) applyStatus(state, events, actor, t, fx.what === 'phys' ? 'tetrakarn' : 'makarakarn', TUNING.buffTurns);
+        break;
+    case 'wall':
+        for (const t of targets) {
+            t.walls[fx.el] = TUNING.buffTurns;
+            push(state, events, { type: 'status', actor: actor.id, target: t.id, text: `${t.name} is shielded from ${fx.el} 🧱` });
+        }
+        break;
+    case 'break':
+        for (const t of targets) {
+            t.breaks[fx.el] = TUNING.buffTurns;
+            push(state, events, { type: 'status', actor: actor.id, target: t.id, text: `${t.name}'s ${fx.el} resistance is broken 💔` });
+        }
+        break;
+    case 'ail':
+        for (const t of targets) {
+            if (!tryAilment(state, events, actor, t, fx.ail, fx.pct)) push(state, events, { type: 'miss', actor: actor.id, target: t.id, text: `${t.name} resists.` });
+        }
+        break;
+    case 'combo':
+        for (const part of fx.of || []) applySkillFx(state, events, actor, action, part, targets, ctx);
+        break;
+    default:
+        push(state, events, { type: 'info', text: 'Nothing happens.' });
+    }
+}
+
 /**
  * Uses an action. Returns the events (and moves nothing along: call
- * advance() afterwards to end the turn). `targetId` is the chosen target for
- * single-target actions.
+ * advance() afterwards to end the turn — or, after a knock-down, to open the
+ * 1 More). `targetId` is the chosen target for single-target actions.
  */
 export function performAction(state, actorId, actionId, targetId = null) {
     const events = [];
@@ -562,19 +963,16 @@ export function performAction(state, actorId, actionId, targetId = null) {
     const p = action.profile;
     const verb = `${actor.name} uses ${action.label}`;
     const aoe = p.target === 'enemies';
+    const single = p.target === 'enemy' || p.target === 'ally';
+    const ctx = { more: false };
 
-    if (p.type === 'damage') {
-        push(state, events, { type: 'use', actor: actor.id, text: `${verb}${aoe ? '' : ` on ${targets[0].name}`}.` });
+    if (p.type === 'skill') {
+        push(state, events, { type: 'use', actor: actor.id, el: p.element, text: `${verb}${single ? ` on ${targets[0].name}` : ''}.` });
+        applySkillFx(state, events, actor, action, p.fx, targets, ctx);
+    } else if (p.type === 'damage') {
+        push(state, events, { type: 'use', actor: actor.id, el: elementOf(p), text: `${verb}${aoe ? '' : ` on ${targets[0].name}`}.` });
         for (const t of targets) {
-            if (nextRandom(state) >= hitChance(actor, t, p)) {
-                push(state, events, { type: 'miss', actor: actor.id, target: t.id, text: `${t.name} avoids it.` });
-                continue;
-            }
-            const crit = nextRandom(state) < critChance(actor, t);
-            const roll = TUNING.varMin + nextRandom(state) * (TUNING.varMax - TUNING.varMin);
-            const dmg = damageAgainst(actor, action, t, { roll, crit, aoe });
-            takeDamage(state, events, t, dmg, `${t.name} takes ${dmg} damage${crit ? ' (critical!)' : ''}.`, { actor: actor.id, crit });
-            if (p.status && !t.down && nextRandom(state) < TUNING.statusChance) applyStatus(state, events, actor, t, p.status);
+            strike(state, events, actor, t, action, ctx, { aoe, ailment: p.status ? { name: p.status, pct: TUNING.statusChance * 100 } : null });
         }
     } else if (p.type === 'heal') {
         push(state, events, { type: 'use', actor: actor.id, text: `${verb}${p.target === 'allies' ? '' : ` on ${targets[0].name}`}.` });
@@ -610,14 +1008,66 @@ export function performAction(state, actorId, actionId, targetId = null) {
         }
     } else if (p.type === 'revive') {
         push(state, events, { type: 'use', actor: actor.id, text: `${verb} on ${targets[0].name}.` });
-        for (const t of targets) {
-            if (!t.down) { push(state, events, { type: 'info', text: `${t.name} is already up.` }); continue; }
-            t.down = false;
-            t.hp = Math.max(1, Math.round(t.maxHp * TUNING.revivePct[powerOf(p)]));
-            if (!state.order.includes(t.id)) state.order.push(t.id);
-            push(state, events, { type: 'heal', actor: actor.id, target: t.id, amount: t.hp, text: `${t.name} is back on their feet! ✨` });
-        }
+        for (const t of targets) revive(state, events, actor, t, TUNING.revivePct[powerOf(p)] * 100);
     }
+    // A Charge / Concentrate is spent by the attack that used it.
+    if (ctx.chargeUsed) actor.statuses = actor.statuses.filter(s => s.id !== 'charged');
+    if (ctx.focusUsed) actor.statuses = actor.statuses.filter(s => s.id !== 'focused');
+    if (!checkEnd(state, events) && ctx.more && !actor.down) state.pendingMore = actor.id;
+    return events;
+}
+
+// ─── 1 More: Baton Pass and All-Out Attack ──────────────────────────────────
+
+/** Allies the current 1 More can be passed to. */
+export function batonTargets(state) {
+    if (!inOneMore(state)) return [];
+    const actor = currentActor(state);
+    if (!actor || actor.side !== 'party') return [];
+    const passed = state.extra.passed || [];
+    return alive(state, 'party').filter(c => c.id !== actor.id && !c.knocked && !passed.includes(c.id)).map(c => c.id);
+}
+
+/** Hands the 1 More to an ally: they act now, stronger (+50% per pass). */
+export function batonPass(state, toId) {
+    const events = [];
+    if (!batonTargets(state).includes(toId)) return events;
+    const from = currentActor(state);
+    const to = getCombatant(state, toId);
+    state.extra.passed = [...(state.extra.passed || []), from.id];
+    to.baton = Math.min(TUNING.batonMax, (from.baton || 0) + 1);
+    from.baton = 0;
+    state.extra.actor = to.id;
+    push(state, events, { type: 'baton', actor: from.id, target: to.id, text: `Baton Pass! ${from.name} → ${to.name} (+${Math.round(TUNING.batonStep * to.baton * 100)}%) 🤝` });
+    return events;
+}
+
+/** Whether the current actor can launch an All-Out Attack (a party 1 More, every enemy down). */
+export function canAllOut(state) {
+    if (!inOneMore(state)) return false;
+    const actor = currentActor(state);
+    const foes = alive(state, 'enemy');
+    return !!actor && actor.side === 'party' && foes.length > 0 && foes.every(e => e.knocked);
+}
+
+/** Everyone standing piles on every enemy that is down. Ends the 1 More. */
+export function allOutAttack(state) {
+    const events = [];
+    if (!canAllOut(state)) return events;
+    const party = alive(state, 'party');
+    push(state, events, { type: 'allout', text: `ALL-OUT ATTACK! ${party.map(c => c.name).join(', ')} rush in! 💥` });
+    for (const e of alive(state, 'enemy')) {
+        let total = 0;
+        for (const c of party) {
+            const roll = TUNING.varMin + nextRandom(state) * (TUNING.varMax - TUNING.varMin);
+            total += damageAgainst(c, basicAttack(c), e, { roll, mult: TUNING.allOutMult });
+        }
+        takeDamage(state, events, e, total, `${e.name} takes ${total} damage.`, { allOut: true });
+        e.knocked = false;
+    }
+    state.pendingMore = null;
+    for (const c of state.combatants) c.baton = 0;
+    state.extra = { ...state.extra, done: true };
     checkEnd(state, events);
     return events;
 }
@@ -693,10 +1143,22 @@ function beginTurn(state, events) {
         }
         if (checkEnd(state, events)) return;
         if (actor.down) { stepIndex(state, events); continue; }
-        if (hasStatus(actor, 'stun')) {
-            push(state, events, { type: 'skip', actor: actor.id, text: `${actor.name} is stunned and loses the turn 💫` });
-            actor.statuses = actor.statuses.filter(s => s.id !== 'stun');
-            actor.stunImmune = 2;
+        // Knocked down: they get back up at the start of their turn (as in P4/P5).
+        if (actor.knocked) {
+            actor.knocked = false;
+            push(state, events, { type: 'info', actor: actor.id, text: `${actor.name} gets back up.` });
+        }
+        const skip = actor.statuses.find(s => STATUSES[s.id]?.skip || s.id === 'stun');
+        const maybe = !skip && actor.statuses.find(s => STATUSES[s.id]?.maybeSkip);
+        if (skip || (maybe && nextRandom(state) < TUNING.maybeSkipChance)) {
+            const st = skip || maybe;
+            const def = STATUSES[st.id];
+            push(state, events, { type: 'skip', actor: actor.id, text: `${actor.name} is ${def.name.toLowerCase()} and loses the turn ${def.icon}` });
+            // One-turn locks wear off at once and protect for a while.
+            if (st.id === 'stun' || st.id === 'freeze' || st.id === 'shock') {
+                actor.statuses = actor.statuses.filter(s => s.id !== st.id);
+                actor.stunImmune = 2;
+            }
             tickStatuses(actor);
             stepIndex(state, events);
             continue;
@@ -708,6 +1170,10 @@ function beginTurn(state, events) {
 function tickStatuses(actor) {
     for (const s of actor.statuses) s.turns--;
     actor.statuses = actor.statuses.filter(s => s.turns > 0);
+    for (const bag of [actor.walls, actor.breaks]) {
+        if (!bag) continue;
+        for (const el of Object.keys(bag)) if (--bag[el] <= 0) delete bag[el];
+    }
 }
 
 function stepIndex(state, events) {
@@ -723,7 +1189,25 @@ function stepIndex(state, events) {
 /** Ends the current turn and opens the next one. Returns the events. */
 export function advance(state) {
     const events = [];
-    if (state.phase !== 'active') return events;
+    if (state.phase !== 'active') { state.extra = null; state.pendingMore = null; return events; }
+    if (checkEnd(state, events)) return events;
+    // A knock-down earned an extra action: the same fighter goes again.
+    if (state.pendingMore) {
+        const c = getCombatant(state, state.pendingMore);
+        state.pendingMore = null;
+        if (c && !c.down) {
+            const base = state.extra && !state.extra.done ? state.extra.base : state.order[state.turn];
+            const passed = state.extra && !state.extra.done ? state.extra.passed || [] : [];
+            state.extra = { actor: c.id, base, passed };
+            push(state, events, { type: 'onemore', actor: c.id, text: `1 MORE! ${c.name} acts again ⭐` });
+            return events;
+        }
+    }
+    // End of the turn (and of any 1 More chain in it).
+    if (state.extra) {
+        for (const c of state.combatants) c.baton = 0;
+        state.extra = null;
+    }
     const actor = currentActor(state);
     if (actor && !actor.down) tickStatuses(actor);
     if (checkEnd(state, events)) return events;
@@ -743,6 +1227,20 @@ export function chooseEnemyAction(state, enemy) {
     for (const a of usable) {
         const p = a.profile;
         let w = a.id === 'basic' ? 1 : 2;
+        if (p.type === 'skill') {
+            const k = p.fx?.k;
+            const hurt = allies.some(c => c.hp / c.maxHp < 0.4);
+            if (['dmg', 'kill', 'halve', 'drain'].includes(k)) {
+                // Prefer an element someone on the other side is weak to.
+                const el = elementOf(p);
+                w = foes.some(c => affinityOf(c, el) === 'wk') ? 5 : foes.every(c => ['nu', 'rp', 'dr'].includes(affinityOf(c, el))) ? 0 : 2;
+            } else if (k === 'heal' || (k === 'combo' && p.fx.of?.some(x => x.k === 'heal'))) w = hurt ? 4 : 0;
+            else if (k === 'kaja' || k === 'charge' || k === 'karn' || k === 'wall') w = 1;
+            else if (k === 'kunda' || k === 'break' || k === 'ail') w = 1.5;
+            else w = 0.5;
+            if (w > 0) weights.push({ a, w });
+            continue;
+        }
         if (p.type === 'heal') {
             const hurt = allies.some(c => c.hp / c.maxHp < 0.4);
             w = hurt ? 4 : 0;
@@ -763,8 +1261,13 @@ export function chooseEnemyAction(state, enemy) {
     let targetId = null;
     const p = chosen.profile;
     if (p.target === 'enemy') {
-        // Hurt targets attract attacks; the rest are picked at random.
-        const pool = foes.map(c => ({ c, w: 1 + (c.hp / c.maxHp < 0.35 ? 1.5 : 0) }));
+        // Weak and hurt targets attract attacks; those who block it are avoided.
+        const el = p.type === 'damage' || p.type === 'skill' ? elementOf(p) : null;
+        const pool = foes.map(c => {
+            const aff = el ? affinityOf(c, el) : '';
+            const w = aff === 'wk' ? 4 : ['nu', 'rp', 'dr'].includes(aff) ? 0.05 : aff === 'rs' ? 0.5 : 1;
+            return { c, w: w + (c.hp / c.maxHp < 0.35 ? 1.5 : 0) };
+        });
         total = pool.reduce((s, x) => s + x.w, 0);
         r = nextRandom(state) * total;
         targetId = pool[0]?.c.id ?? null;
@@ -836,7 +1339,7 @@ export function computeRewards(state, { tierXp = { small: 10, medium: 25, large:
 export function summarizeForNarration(state, rewards = null) {
     const party = state.combatants.filter(c => c.side === 'party');
     const enemies = state.combatants.filter(c => c.side === 'enemy');
-    const notable = state.log.filter(e => e.crit || e.type === 'down' || e.type === 'flee' || e.type === 'status' || e.type === 'heal').slice(-14).map(e => e.text);
+    const notable = state.log.filter(e => e.crit || e.weak || ['down', 'flee', 'status', 'heal', 'knock', 'onemore', 'baton', 'allout', 'reflect', 'block'].includes(e.type)).slice(-16).map(e => e.text);
     return {
         result: state.result,
         rounds: state.round,

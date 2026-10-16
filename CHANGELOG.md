@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Persona skill database (P5R + P3R + P4G, 1199 skills) used by fights.
+- Persona combat: elements and affinities, knock-downs, 1 More, Baton Pass, All-Out Attack, HP/SP costs, ailments and technicals, buffs, walls, mirrors; Shadows from the Compendium; fixed the inspect panel's attribute labels.
 - Compendium entries say how each Persona is obtained: special fusion ingredients, requirements and unlock conditions.
 - Persona Compendium lorebook: P5R (242) plus the P3 Reload / Aigis / FES and P4 Golden Personas P5R lacks (86), 328 in all, and the script that builds it.
 - Personas: St/Ma/En/Ag/Lu from the equipped Persona, affinities (with Gun) and skills, Wild Card, level-ups, Compendium read from lorebook entries, AI awakening with program-set numbers, Persona tab in the Stats panel.

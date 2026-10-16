@@ -13,7 +13,7 @@
  * Pure text building: no SillyTavern imports, so it can be tested outside
  * the browser. The caller passes in the context it gathered.
  */
-import { TIERS, STATUS_IDS, POWERS } from '../../utils/combatModel.js';
+import { TIERS, STATUS_IDS, POWERS, ELEMENTS } from '../../utils/combatModel.js';
 
 export const clip = (text, max) => {
     const t = String(text ?? '').replace(/\s+/g, ' ').trim();
@@ -34,7 +34,7 @@ export function chatBlock(messages, perMessage = 700, lastMessage = 2200) {
  */
 export function labelRequestText(toLabel = []) {
     if (!toLabel.length) return '';
-    let user = `\nLabel these actions in "profiles", using the key given. For each: "type" is damage, heal, status (grants or inflicts a status), mana (restores SP), cure (removes bad statuses), revive (raises a fallen ally), gear (a weapon or armour; give "atk" and "def" from 0 to 12) or none (passive, a key, food, anything useless in a fight). "power" is ${POWERS.join(', ')}. "stat" is the attribute it scales with (str, dex, con, int, wis, cha) or "none" for fixed effects like potions. "target" is enemy, enemies, ally, allies or self. "status" is ${STATUS_IDS.join(', ')} when it inflicts or grants one.\n`;
+    let user = `\nLabel these actions in "profiles", using the key given. For each: "type" is damage, heal, status (grants or inflicts a status), mana (restores SP), cure (removes bad statuses), revive (raises a fallen ally), gear (a weapon or armour; give "atk" and "def" from 0 to 12) or none (passive, a key, food, anything useless in a fight). "power" is ${POWERS.join(', ')}. "stat" is the attribute it scales with (st, ma, en, ag, lu) or "none" for fixed effects like potions. "element" (for damage) is ${ELEMENTS.join(', ')}. "target" is enemy, enemies, ally, allies or self. "status" is ${STATUS_IDS.join(', ')} when it inflicts or grants one.\n`;
     user += toLabel.map(a => `- ${a.key}: ${a.kind} "${a.name}"${a.desc ? ` — ${clip(a.desc, 100)}` : ''}${a.cost ? ` (cost: ${a.cost})` : ''}${a.effects ? ` [bonus ${a.effects}]` : ''}`).join('\n') + '\n';
     return user;
 }
@@ -54,7 +54,7 @@ export function labelRequestText(toLabel = []) {
  * @param {Array<{key, owner, kind, name, desc, effects, cost}>} [o.toLabel] - actions without a profile
  * @returns {Array<{role, content}>}
  */
-export function buildEncounterSetupPrompt({ player, party = [], situation = '', scene = '', cardName = '', cardDescription = '', messages = [], present = [], currency = '', toLabel = [] } = {}) {
+export function buildEncounterSetupPrompt({ player, party = [], situation = '', scene = '', cardName = '', cardDescription = '', messages = [], present = [], currency = '', toLabel = [], personas = [], skillsKnown = true } = {}) {
     const partyLevel = party.length ? Math.round(party.reduce((s, p) => s + (p.level || 1), 0) / party.length) : 1;
     let sys = `You are the game master preparing a turn-based fight for a roleplay. A separate rules engine will work out all numbers, so you only describe who the enemies are and what they can do. Reply with ONE JSON object and nothing else.\n\n`;
     if (cardName || cardDescription) sys += `<setting>\n${cardName ? `Card: ${cardName}\n` : ''}${clip(cardDescription, 900)}\n</setting>\n\n`;
@@ -67,9 +67,10 @@ export function buildEncounterSetupPrompt({ player, party = [], situation = '', 
     user += situation.trim()
         ? `The player says the enemies are: ${clip(situation, 400)}\n`
         : `Work out from the recent chat who the party is fighting.\n`;
-    user += `\nReturn:\n{\n  "environment": "one short sentence about the place",\n  "enemies": [\n    {"name": "…", "icon": "one emoji", "description": "one short line that keeps what the story says about them", "tier": "${TIERS.join('|')}", "levelDelta": 0, "focus": "str|dex|con|int|wis|cha", "attacks": [{"name": "…", "power": "${POWERS.join('|')}", "stat": "str|dex|int|wis|cha", "status": "optional: ${STATUS_IDS.join('|')}"}], "loot": {"money": 0, "items": ["optional short names"]}}\n  ]${toLabel.length ? ',\n  "profiles": { "<key>": {"type": "…", "power": "…", "stat": "…", "target": "…", "status": "…"} }' : ''}\n}\n`;
+    user += `\nReturn:\n{\n  "environment": "one short sentence about the place",\n  "enemies": [\n    {"name": "…", "icon": "one emoji", "description": "one short line that keeps what the story says about them", "tier": "${TIERS.join('|')}", "levelDelta": 0, "persona": "optional: the Persona/Shadow it is, from the list below", "affinities": {"Fire": "wk", "Ice": "rs"}, "skills": ["Agi", "Cleave"], "focus": "st|ma|en|ag|lu", "attacks": [{"name": "…", "power": "${POWERS.join('|')}", "stat": "st|ma", "element": "phys|gun|fire|ice|elec|wind|psy|nuke|bless|curse|almighty", "status": "optional: ${STATUS_IDS.join('|')}"}], "loot": {"money": 0, "items": ["optional short names"]}}\n  ]${toLabel.length ? ',\n  "profiles": { "<key>": {"type": "…", "power": "…", "stat": "…", "target": "…", "status": "…"} }' : ''}\n}\n`;
     user += `\nRules for the enemies:\n- 1 to 6 enemies that fit the scene. If the player's words, the latest message or the scene list already say who the enemies are, use exactly those: the same number, the same names, the same sex, age and look. Never rename them, add or drop any, or change what they are. Only invent what is not said.
-- An enemy that has no name in the story gets a plain label ("Bandit 1", "Bandit 2"…) in the language of the chat, not an invented name. Enemies you add yourself may have a name that fits.\n- tier says how dangerous each is: minion (weak, one of a crowd), normal, elite (clearly stronger), boss (rare, a real threat). Most fights are minions and normals. levelDelta is −2…+3 against the party.\n- 1 to 3 attacks each, with a name that suits the enemy. Do not write any hit points, damage or other numbers.\n- loot is optional and small: money in ${currency || 'the story\'s currency'} (a plausible pocketful, not a fortune) and at most one or two ordinary items.\n`;
+- An enemy that has no name in the story gets a plain label ("Bandit 1", "Bandit 2"…) in the language of the chat, not an invented name. Enemies you add yourself may have a name that fits.\n- tier says how dangerous each is: minion (weak, one of a crowd), normal, elite (clearly stronger), boss (rare, a real threat). Most fights are minions and normals. levelDelta is −2…+3 against the party.\n- This is a Persona-style fight: every enemy has affinities (wk weak, rs resist, nu null, dr drain, rp repel) over Phys, Gun, Fire, Ice, Elec, Wind, Psy, Nuke, Bless and Curse — give one or two weaknesses and a resistance or two that fit it; leave out the rest.\n- "skills": 1 to 4 real Persona skill names (Agi, Bufu, Zio, Garu, Psi, Frei, Kouha, Eiha, Cleave, Lunge, Snap, Dia, Tarukaja, Dormina…, or their stronger forms) that fit the enemy; the engine knows what each does. Use "attacks" only for a move no Persona skill fits.\n- If an enemy is a Shadow of a known Persona (a Pixie, a Jack Frost…), put its name in "persona": its affinities and skills then come from the Compendium.\n- Do not write any hit points, damage or other numbers.\n- loot is optional and small: money in ${currency || 'the story\'s currency'} (a plausible pocketful, not a fortune) and at most one or two ordinary items.\n`;
+    if (personas.length) user += `\nKnown Personas / Shadows: ${personas.slice(0, 120).join(', ')}.\n`;
     user += labelRequestText(toLabel);
     return [{ role: 'system', content: sys.trim() }, { role: 'user', content: user.trim() }];
 }

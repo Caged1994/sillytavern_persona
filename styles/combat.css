@@ -365,3 +365,39 @@
 .dcb-ins-name { font-weight: 600; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .dcb-ins-actions small { color: var(--dcb-muted); font-size: 11px; }
 @media (max-width: 600px) { .dcb-ins-attrs { grid-template-columns: repeat(3, 1fr); } }
+
+/* ── Persona rules: affinities, DOWN, 1 MORE, Baton Pass, All-Out ── */
+.dcb-affs, .dcb-ins-affs { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+.dcb-ins-affs { margin: 8px 0; }
+.dcb-aff {
+    display: inline-flex; align-items: center; gap: 2px;
+    padding: 1px 5px; font-size: 10px; line-height: 1.4;
+    border-radius: 5px; border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(255, 255, 255, 0.05);
+}
+.dcb-aff b { font-style: italic; font-weight: 900; }
+.dcb-aff.is-wk { border-color: #e5484d; background: rgba(229, 72, 77, 0.18); color: #ff9a9c; }
+.dcb-aff.is-rs { border-color: #4c8dff; background: rgba(76, 141, 255, 0.18); color: #9dbfff; }
+.dcb-aff.is-nu { border-color: #a8a8b3; background: rgba(168, 168, 179, 0.18); color: #e6e6ee; }
+.dcb-aff.is-dr { border-color: #2fbf71; background: rgba(47, 191, 113, 0.18); color: #7ee2a8; }
+.dcb-aff.is-rp { border-color: #f5b301; background: rgba(245, 179, 1, 0.18); color: #ffd45c; }
+.dcb-aff.is-unknown { color: rgba(255, 255, 255, 0.5); border-style: dashed; }
+.dcb-persona { font-size: 10px; font-style: italic; font-weight: 700; color: #fff; background: #05060c; padding: 0 6px; border-radius: 3px; }
+.dcb-knocked {
+    font-size: 10px; font-weight: 900; font-style: italic; letter-spacing: 0.06em;
+    color: #fff; background: #d7192e; padding: 0 6px; border-radius: 3px;
+}
+.dcb-baton { font-size: 10px; font-weight: 800; color: #ffd166; }
+.dcb-card.is-knocked { transform: rotate(-2deg); box-shadow: inset 0 0 0 2px rgba(215, 25, 46, 0.6); }
+.dcb-chip.is-hpcost { background: rgba(229, 72, 77, 0.22); color: #ff9a9c; }
+.dcb-onemore { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.dcb-onemore-tag {
+    font-family: "Arial Black", "Arial Bold", Impact, sans-serif; font-style: italic;
+    color: #fff23a; letter-spacing: -0.02em;
+    paint-order: stroke fill; -webkit-text-stroke: 3px #05060c; font-size: 18px;
+}
+.dcb-turn .dcb-onemore-tag { font-size: inherit; -webkit-text-stroke: 2px #05060c; }
+.dcb-btn.is-allout { background: #d7192e; border-color: #d7192e; color: #fff; font-weight: 800; }
+.dcb-btn.is-baton { background: #ffd166; border-color: #ffd166; color: #1a1406; font-weight: 800; }
+.dcb-log li.is-knock, .dcb-log li.is-onemore, .dcb-log li.is-allout, .dcb-log li.is-baton { color: #ffd166; font-weight: 700; }
+.dcb-log li.is-block, .dcb-log li.is-reflect { color: #9dbfff; }

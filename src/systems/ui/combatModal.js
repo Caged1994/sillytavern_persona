@@ -20,6 +20,10 @@ import {
 } from '../features/combat.js';
 import { getCurrency } from '../features/characterMoney.js';
 import { attrLabel } from '../../utils/statsModel.js';
+import { findSkill, ELEMENT_ICONS, ELEMENT_NAMES } from '../../utils/skillModel.js';
+
+const AFF_LABEL = { '': '—', wk: 'Wk', rs: 'Rs', nu: 'Nu', dr: 'Dr', rp: 'Rp' };
+const AFF_ELEMENTS = M.ELEMENTS.filter(e => e !== 'almighty');
 
 const ROOT_ID = 'dooms-combat';
 const ENEMY_DELAY = 650;
@@ -250,6 +254,7 @@ function cardHtml(c, actor) {
     const targetable = ui.pending && ui.pending.targets.includes(c.id);
     const cls = ['dcb-card', c.side === 'enemy' ? 'is-enemy' : 'is-party'];
     if (c.down) cls.push('is-down');
+    if (c.knocked && !c.down) cls.push('is-knocked');
     if (actor && actor.id === c.id) cls.push('is-active');
     if (targetable) cls.push('is-targetable');
     if (ui.inspect === c.id) cls.push('is-inspected');
@@ -258,31 +263,62 @@ function cardHtml(c, actor) {
         ${avatarHtml(c)}
         <div class="dcb-card-main">
             <div class="dcb-card-name"><span>${escapeHtml(c.name)}</span><button type="button" class="dcb-info" data-action="inspect" data-id="${escapeHtml(c.id)}" title="Stats and abilities" aria-label="Inspect ${escapeHtml(c.name)}"><i class="fa-solid fa-circle-info"></i></button></div>
-            <div class="dcb-card-meta">${tier}<span class="dcb-lv">Lv ${c.level}</span></div>
+            <div class="dcb-card-meta">${tier}<span class="dcb-lv">Lv ${c.level}</span>${c.persona && c.side === 'party' ? `<span class="dcb-persona" title="Equipped Persona">${escapeHtml(c.persona)}</span>` : ''}${c.knocked && !c.down ? '<span class="dcb-knocked">DOWN</span>' : ''}${c.baton ? `<span class="dcb-baton">🤝+${c.baton * 50}%</span>` : ''}</div>
             ${barHtml('is-hp', c.hp, c.maxHp, c.down ? 'Down' : `${c.hp} / ${c.maxHp}`)}
             ${c.mana !== null && c.side === 'party' ? barHtml('is-mana', c.mana, 100, `SP ${c.mana}`) : ''}
             ${statusesHtml(c)}
+            ${affinityStripHtml(c)}
         </div>
     </div>`;
+}
+
+/**
+ * The fighter's affinities as small chips: weaknesses and resistances of the
+ * party; for enemies only what has been found out by hitting them ("?" until then).
+ */
+function affinityStripHtml(c) {
+    const chips = [];
+    for (const el of AFF_ELEMENTS) {
+        const a = M.affinityOf(c, el);
+        if (c.side === 'enemy') {
+            if (!c.known?.[el]) continue;
+        } else if (!a) continue;
+        chips.push(`<span class="dcb-aff is-${a || 'none'}" title="${ELEMENT_NAMES[el]}: ${a ? { wk: 'weak', rs: 'resists', nu: 'nullifies', dr: 'drains', rp: 'repels' }[a] : 'normal'}">${ELEMENT_ICONS[el]}<b>${AFF_LABEL[a]}</b></span>`);
+    }
+    if (c.side === 'enemy') {
+        const unknown = AFF_ELEMENTS.filter(el => !c.known?.[el]).length;
+        if (unknown) chips.push(`<span class="dcb-aff is-unknown" title="${unknown} affinit${unknown === 1 ? 'y' : 'ies'} still unknown — hit it with an element to find out">?×${unknown}</span>`);
+    }
+    return chips.length ? `<div class="dcb-affs">${chips.join('')}</div>` : '';
 }
 
 function actionButton(actor, a) {
     const check = M.canUse(actor, a);
     const bits = [];
     if (a.manaCost > 0 && actor.mana !== null) bits.push(`<span class="dcb-chip is-mana">💧${a.manaCost}</span>`);
+    if (a.hpCost > 0) bits.push(`<span class="dcb-chip is-hpcost">❤️${a.hpCost}%</span>`);
     if (a.kind === 'item') bits.push(`<span class="dcb-chip">×${a.qty}</span>`);
     const cd = actor.cooldowns[a.id] || 0;
     if (cd > 0) bits.push(`<span class="dcb-chip is-wait">⏳${cd}</span>`);
     const tip = describeAction(actor, a, check);
     return `<button type="button" class="dcb-act" data-action="act" data-id="${escapeHtml(a.id)}" ${check.ok ? '' : 'disabled'} title="${escapeHtml(tip)}">
-        <span class="dcb-act-icon">${escapeHtml(a.icon || '✨')}</span><span class="dcb-act-name">${escapeHtml(a.label)}</span>${bits.join('')}</button>`;
+        <span class="dcb-act-icon">${escapeHtml(a.profile?.element && a.profile.type === 'skill' ? ELEMENT_ICONS[a.profile.element] : (a.icon || '✨'))}</span><span class="dcb-act-name">${escapeHtml(a.label)}</span>${bits.join('')}</button>`;
 }
 
 function describeAction(actor, a, check) {
     const p = a.profile;
     const parts = [];
     const foe = M.alive(fight, actor.side === 'party' ? 'enemy' : 'party')[0];
-    if (p.type === 'damage') {
+    if (p.type === 'skill') {
+        const rec = findSkill(p.skill || a.label);
+        if (rec?.d) parts.push(`${ELEMENT_NAMES[rec.e] || ''}: ${rec.d}`);
+        if (p.fx?.k === 'dmg' && foe) {
+            const est = M.estimateAction(actor, a, foe);
+            if (est) parts.push(`about ${est.min}–${est.max} to ${foe.name}${est.affinity && est.affinity !== '?' && est.affinity ? ` (${AFF_LABEL[est.affinity]})` : ''}, ${est.hit}% to hit`);
+        }
+        if (p.target === 'enemies') parts.push('hits every enemy');
+        if (p.target === 'allies') parts.push('every ally');
+    } else if (p.type === 'damage') {
         const est = foe ? M.estimateAction(actor, a, foe) : null;
         parts.push(est ? `Damage about ${est.min}–${est.max}, ${est.hit}% to hit` : 'Damage');
         if (p.target === 'enemies') parts.push('hits every enemy');
@@ -300,6 +336,11 @@ function describeAction(actor, a, check) {
 }
 
 function actionsHtml(actor) {
+    if (ui.pending && ui.pending.actionId === '__baton') {
+        return `<div class="dcb-actions">
+            <p class="dcb-hint"><i class="fa-solid fa-handshake"></i> Baton Pass — choose who takes the 1 More</p>
+            <button type="button" class="dcb-btn" data-action="cancel-target">Back</button></div>`;
+    }
     if (ui.pending) {
         const a = actor.actions.find(x => x.id === ui.pending.actionId);
         return `<div class="dcb-actions">
@@ -316,7 +357,16 @@ function actionsHtml(actor) {
     }
     const flee = Math.round(M.fleeChance(fight) * 100);
     const basic = actor.actions.find(a => a.id === 'basic');
+    const more = M.inOneMore(fight);
+    const batons = more ? M.batonTargets(fight) : [];
+    const allOut = more && M.canAllOut(fight);
+    const extra = more ? `<div class="dcb-onemore">
+            <span class="dcb-onemore-tag">1 MORE!</span>
+            ${allOut ? '<button type="button" class="dcb-btn is-allout" data-action="allout" title="Every enemy is down: the whole party piles on"><i class="fa-solid fa-burst"></i> All-Out Attack</button>' : ''}
+            ${batons.length ? '<button type="button" class="dcb-btn is-baton" data-action="baton" title="Pass the extra action to an ally: they act now with +50% damage and healing"><i class="fa-solid fa-handshake"></i> Baton Pass</button>' : ''}
+        </div>` : '';
     return `<div class="dcb-actions">
+        ${extra}
         <div class="dcb-act-main">
             ${basic ? actionButton(actor, basic) : ''}
             <button type="button" class="dcb-act" data-action="menu" data-menu="abilities" ${abilities.length ? '' : 'disabled'}><span class="dcb-act-icon">🔮</span><span class="dcb-act-name">Spells &amp; skills</span><span class="dcb-chip">${abilities.length}</span></button>
@@ -340,7 +390,12 @@ function actionDetail(c, a, foe) {
     bits.push(`<span class="dcb-chip">${escapeHtml(POWER_LABELS[p.power] || 'Medium')}</span>`);
     if (p.stat && p.stat !== 'none') bits.push(`<span class="dcb-chip">${attrLabel(p.stat)}</span>`);
     let what = '';
-    if (p.type === 'damage') {
+    if (p.type === 'skill') {
+        const rec = findSkill(p.skill || a.label);
+        what = `${p.element ? (ELEMENT_ICONS[p.element] || '') + ' ' : ''}${escapeHtml(rec?.d || 'Skill')}`;
+        bits.length = 0;
+        if (rec) bits.push(`<span class="dcb-chip">${escapeHtml(ELEMENT_NAMES[rec.e] || rec.e)}</span>`);
+    } else if (p.type === 'damage') {
         const est = foe ? M.estimateAction(c, a, foe) : null;
         what = est ? `Damage ${est.min}–${est.max} to ${escapeHtml(foe.name)}, ${est.hit}% to hit` : 'Damage';
     } else if (p.type === 'heal') what = 'Heals';
@@ -352,6 +407,7 @@ function actionDetail(c, a, foe) {
     const extra = [];
     if (TARGET_LABELS[p.target]) extra.push(`targets ${TARGET_LABELS[p.target]}`);
     if (a.manaCost > 0 && c.mana !== null) extra.push(`💧${a.manaCost} SP`);
+    if (a.hpCost > 0) extra.push(`❤️ ${a.hpCost}% HP`);
     if (a.cooldown > 0 && !(a.manaCost > 0 && c.mana !== null)) extra.push(`cooldown ${a.cooldown} turn${a.cooldown === 1 ? '' : 's'}`);
     if (a.kind === 'item') extra.push(`×${a.qty}`);
     return `<li><span class="dcb-act-icon">${escapeHtml(a.icon || '✨')}</span>
@@ -366,7 +422,7 @@ function inspectHtml() {
     const foeSide = c.side === 'enemy' ? 'party' : 'enemy';
     const foe = (actor && actor.side === foeSide && !actor.down ? actor : null) || M.alive(fight, foeSide)[0] || null;
     const red = M.damageReduction(c);
-    const attrs = M.ATTRIBUTE_IDS.map(id => `<div class="dcb-ins-attr"><b>${ATTR_LABELS[id]}</b><span>${M.attrValue(c, id)}</span></div>`).join('');
+    const attrs = M.ATTRIBUTE_IDS.map(id => `<div class="dcb-ins-attr"><b>${attrLabel(id)}</b><span>${M.attrValue(c, id)}</span></div>`).join('');
     const tier = c.tier ? `<span class="dcb-tier is-${c.tier}">${M.TUNING.tiers[c.tier]?.label || c.tier}</span>` : '';
     const stats = [
         `❤️ ${c.hp} / ${c.maxHp}`,
@@ -381,6 +437,11 @@ function inspectHtml() {
             <button type="button" class="dcb-icon-btn" data-action="inspect-close" title="Close" aria-label="Close"><i class="fa-solid fa-xmark"></i></button></header>
         ${c.description ? `<p class="dcb-ins-desc">${escapeHtml(c.description)}</p>` : ''}
         <div class="dcb-ins-attrs">${attrs}</div>
+        <div class="dcb-ins-affs">${AFF_ELEMENTS.map(el => {
+            const hidden = c.side === 'enemy' && !c.known?.[el];
+            const a = hidden ? '?' : M.affinityOf(c, el);
+            return `<span class="dcb-aff is-${hidden ? 'unknown' : (a || 'none')}" title="${ELEMENT_NAMES[el]}">${ELEMENT_ICONS[el]}<b>${hidden ? '?' : AFF_LABEL[a]}</b></span>`;
+        }).join('')}</div>
         <ul class="dcb-ins-stats">${stats}</ul>
         ${sts ? `<div class="dcb-statuses">${sts}</div>` : ''}
         <h4>Attacks &amp; abilities</h4>
@@ -394,7 +455,7 @@ function fightHtml() {
     const party = fight.combatants.filter(c => c.side === 'party');
     let turn;
     if (fight.phase !== 'active') turn = 'The fight is over';
-    else if (actor?.side === 'party') turn = `${escapeHtml(actor.name)}'s turn`;
+    else if (actor?.side === 'party') turn = `${escapeHtml(actor.name)}'s turn${M.inOneMore(fight) ? ' — <b class="dcb-onemore-tag">1 MORE!</b>' : ''}`;
     else turn = `${escapeHtml(actor?.name || '…')} is acting…`;
     const mine = fight.phase === 'active' && actor?.side === 'party' && !ui.busy;
     return `<div class="dcb-body dcb-fight">
@@ -529,7 +590,23 @@ async function fightAction(action, el) {
     if (action === 'menu') { ui.menu = el.dataset.menu; render(); return; }
     if (action === 'cancel-target') { ui.pending = null; render(); return; }
     if (action === 'defend') { M.defend(fight, actor.id); return endTurn(); }
+    if (action === 'allout') { M.allOutAttack(fight); return endTurn(); }
+    if (action === 'baton') {
+        const targets = M.batonTargets(fight);
+        if (!targets.length) return;
+        ui.pending = { actionId: '__baton', targets };
+        render();
+        return;
+    }
     if (action === 'flee') { M.attemptFlee(fight, actor.id); return endTurn(); }
+    if (action === 'target' && ui.pending && ui.pending.actionId === '__baton') {
+        ui.pending = null;
+        ui.menu = 'main';
+        M.batonPass(fight, el.dataset.id);
+        saveLiveEncounter(fight);
+        render();
+        return;
+    }
     if (action === 'target' && ui.pending) {
         const { actionId } = ui.pending;
         ui.pending = null;

@@ -379,6 +379,7 @@ function play(s) {
     for (let guard = 0; s.phase === 'active' && guard < 400; guard++) {
         const a = C.currentActor(s);
         if (a.side === 'enemy') C.runEnemyTurn(s);
+        else if (C.canAllOut(s)) C.allOutAttack(s);
         else {
             const foes = C.alive(s, 'enemy').sort((x, y) => x.hp - y.hp);
             const low = C.alive(s, 'party').sort((x, y) => x.hp / x.maxHp - y.hp / y.maxHp)[0];
@@ -407,7 +408,7 @@ function winRate(heroes, enemies, n = 200) {
     return w / n;
 }
 {
-    const band = (label, v, lo, hi) => ok(v >= lo && v <= hi, `${label}: ${(v * 100).toFixed(0)}% not in ${lo * 100}–${hi * 100}%`);
+    const band = (label, v, lo, hi) => { if (process.env.SHOW_BALANCE) console.log(`  ${label}: ${(v * 100).toFixed(1)}%`); ok(v >= lo && v <= hi, `${label}: ${(v * 100).toFixed(0)}% not in ${lo * 100}–${hi * 100}%`); };
     band('solo vs minion', winRate(['A'], [['e', 'minion']]), 0.95, 1);
     band('solo vs normal', winRate(['A'], [['e', 'normal']]), 0.85, 1);
     band('solo vs 2 normal', winRate(['A'], [['e', 'normal'], ['f', 'normal']]), 0.2, 0.65);

@@ -180,6 +180,26 @@ check('swipe puts everything back', Pe.revertAIPersonasForReplacedMessage(last()
 check('parser extracts personas', (() => { const x = parseResponse('{"personas":{"Bram":{"equip":"X"}}}'); return !!x.personas && !x.parsingFailed; })());
 check('separate-mode context', pb.generateContextualSummary().includes('Personas: Mastera — Arsène'));
 
+// ── 4b. In a fight ──
+const Cb = await import(`${DES}/src/systems/features/combat.js`);
+const fighter = Cb.buildPartyMember('Mastera', true).combatant;
+check('a fighter takes the equipped Persona\'s affinities', fighter.affinities.ice === 'wk' && fighter.affinities.bless === 'wk' && fighter.affinities.curse === 'rs' && fighter.persona === 'Arsène');
+const eiha = fighter.actions.find(x => x.label === 'Eiha');
+check('...and its skills, with the real effect and cost', eiha && eiha.profile.type === 'skill' && eiha.profile.element === 'curse' && eiha.manaCost > 0);
+const cleave = fighter.actions.find(x => x.label === 'Cleave');
+check('Phys skills cost HP', cleave && cleave.hpCost === 6 && !cleave.manaCost);
+const Ab2 = await import(`${DES}/src/systems/features/characterAbilities.js`);
+Ab2.addAbility('Mastera', true, { name: 'Null Ice', type: 'ability' });
+check('a passive like Null Ice covers the weakness', Cb.buildPartyMember('Mastera', true).combatant.affinities.ice === 'nu');
+Comp.setCompendiumForTests([ars, PM.parseCompendiumEntry({ comment: 'Persona: Pixie', content: 'Arcana: Lovers\nLevel: 2\nSt 1 · Ma 3 · En 1 · Ag 3 · Lu 2\nPhys - · Gun Wk · Fire - · Ice - · Elec Rs · Wind - · Psy - · Nuke - · Bless - · Curse Wk\nSkills: Zio, Dia' })]);
+const pix = Cb.enrichEnemySpec({ name: 'Pixie 2', tier: 'minion' });
+check('a Shadow named after a Compendium Persona takes its affinities and skills', pix.persona === 'Pixie' && pix.affinities.gun === 'wk' && pix.attacks.some(x => x.name === 'Zio' && x.profile.element === 'elec'));
+const made = Cb.enrichEnemySpec({ name: 'Bandit', affinities: { Fire: 'weak', Phys: 'resist' }, skills: ['Lunge', 'Nonsense'] });
+check('otherwise the AI\'s affinities and real skill names are used', made.affinities.fire === 'wk' && made.affinities.phys === 'rs' && made.attacks.length === 1);
+const st = Cb.buildEncounter([{ name: 'Mastera', isUser: true }], [{ name: 'Pixie', tier: 'normal' }], { seed: 1 });
+const e1 = st.combatants.find(c => c.side === 'enemy');
+check('the encounter builds it with the Pixie shape (Ma above St)', e1.affinities.curse === 'wk' && e1.attrs.ma > e1.attrs.st);
+
 // ── 5. Switch off ──
 Pe.setPersonasEnabled(false);
 check('switched off: attributes are the character\'s own again', S.getCurrentStatValues('Mastera', true).st === 10 && !pb.generateTrackerInstructions(false, false).includes('PERSONAS'));
