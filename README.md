@@ -33,7 +33,7 @@ Learns: Lv2 Rakukaja, Lv4 Sukunda
 Description: The gentleman thief of the Fool Arcana.
 ```
 
-A ready-made Compendium with the 242 Personas of Persona 5 Royal (fusable Personas and the Phantom Thieves' ones) is in `compendium/P5R-Persona-Compendium.json`: import it in SillyTavern's World Info / Lore Library and pick it in Settings. It is built by `tools/build-p5r-compendium.py` from the data of [megaten-fusion-tool](https://github.com/aqiu384/megaten-fusion-tool) by aqiu384 (public domain). Skills unlocked by awakening or Confidants are listed in each entry's description.
+A ready-made Compendium is in `compendium/Persona-Compendium.json`: the 242 Personas of Persona 5 Royal (fusable ones and the Phantom Thieves'), plus the 86 from Persona 3 (Reload, Episode Aigis, FES) and Persona 4 Golden that P5R does not have — 328 in all, no repeats. Import it in SillyTavern's World Info / Lore Library and pick it in Settings. For P3/P4 Personas, Slash/Strike/Pierce become Phys (the exact three are in the description when they differ), Light → Bless, Dark → Curse; Gun, Psy and Nuke stay normal since those games lack them. Skills unlocked by awakening or social links are listed in each entry's description. It is built by `tools/build-compendium.py` from the data of [megaten-fusion-tool](https://github.com/aqiu384/megaten-fusion-tool) by aqiu384 (public domain).
 
 Affinities accept `Wk`/`Weak`, `Rs`/`Resist`, `Nu`/`Null`, `Dr`/`Drain`, `Rp`/`Repel` and `-` for normal. An entry without a stats line gets an even spread for its level. When a character obtains a Persona whose name is in the Compendium, a copy is made for that chat; levelling it up never changes the lorebook.
 
@@ -47,4 +47,4 @@ In SillyTavern: Extensions → Install Extension → paste `https://github.com/C
 
 ## Credits
 
-DangerDaza (Doom's Enhancement Suite), marinara_spaghetti (RPG Companion), Caged1994 (Better Stats). Persona 5 Royal data: aqiu384's megaten-fusion-tool (public domain).
+DangerDaza (Doom's Enhancement Suite), marinara_spaghetti (RPG Companion), Caged1994 (Better Stats). Persona 3/4/5 data: aqiu384's megaten-fusion-tool (public domain).
