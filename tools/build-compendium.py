@@ -24,16 +24,27 @@ import json, os, re, sys, unicodedata
 APP = sys.argv[1] if len(sys.argv) > 1 else 'src/app'
 OUT = os.path.join(os.path.dirname(__file__), '..', 'compendium', 'Persona-Compendium.json')
 
-SOURCES = [  # (game folder, files, label)
-    ('p5', ['roy-demon-data', 'roy-party-data'], 'Persona 5 Royal'),
-    ('p3r', ['demon-data', 'party-data'], 'Persona 3 Reload'),
-    ('p3r', ['aeg-demon-data', 'aeg-party-data'], 'Persona 3 Reload: Episode Aigis'),
-    ('p4', ['golden-demon-data', 'golden-party-data'], 'Persona 4 Golden'),
-    ('p4', ['demon-data', 'party-data'], 'Persona 4'),
-    ('p3', ['fes-demon-data', 'fes-party-data'], 'Persona 3 FES'),
-    ('p3', ['van-demon-data', 'van-party-data'], 'Persona 3'),
-    ('p3', ['p3p-demon-data', 'p3p-party-data'], 'Persona 3 Portable'),
-    ('p3', ['ans-demon-data', 'ans-party-data'], 'Persona 3 FES: The Answer'),
+# (game folder, Persona files, label, special-fusion files, unlock files, prerequisite files)
+# Fusion files are tried in order; the first that knows a Persona wins.
+SOURCES = [
+    ('p5', ['roy-demon-data', 'roy-party-data'], 'Persona 5 Royal',
+     ['roy-special-recipes'], ['roy-demon-unlocks'], ['roy-fusion-prereqs']),
+    ('p3r', ['demon-data', 'party-data'], 'Persona 3 Reload',
+     ['special-recipes'], ['demon-unlocks'], []),
+    ('p3r', ['aeg-demon-data', 'aeg-party-data'], 'Persona 3 Reload: Episode Aigis',
+     ['special-recipes'], ['aeg-demon-unlocks', 'demon-unlocks'], []),
+    ('p4', ['golden-demon-data', 'golden-party-data'], 'Persona 4 Golden',
+     ['special-recipes'], ['golden-demon-unlocks'], []),
+    ('p4', ['demon-data', 'party-data'], 'Persona 4',
+     ['special-recipes'], ['demon-unlocks'], []),
+    ('p3', ['fes-demon-data', 'fes-party-data'], 'Persona 3 FES',
+     ['fes-special-recipes', 'van-special-recipes', 'pair-special-recipes'], ['fes-demon-unlocks'], []),
+    ('p3', ['van-demon-data', 'van-party-data'], 'Persona 3',
+     ['van-special-recipes', 'pair-special-recipes'], ['van-demon-unlocks'], []),
+    ('p3', ['p3p-demon-data', 'p3p-party-data'], 'Persona 3 Portable',
+     ['fes-special-recipes', 'van-special-recipes', 'pair-special-recipes'], ['fes-demon-unlocks'], []),
+    ('p3', ['ans-demon-data', 'ans-party-data'], 'Persona 3 FES: The Answer',
+     ['fes-special-recipes', 'van-special-recipes'], ['fes-demon-unlocks'], []),
 ]
 
 ELEMS = ['Phys', 'Gun', 'Fire', 'Ice', 'Elec', 'Wind', 'Psy', 'Nuke', 'Bless', 'Curse']
@@ -92,7 +103,49 @@ def affinities(d, config):
     return out, note
 
 
-def entry_text(name, d, config, game, is_party):
+def load(game_dir, f):
+    path = os.path.join(APP, game_dir, 'data', f + '.json')
+    return json.load(open(path, encoding='utf-8')) if os.path.exists(path) else None
+
+
+def fusion_info(game_dir, recipe_files, unlock_files, prereq_files):
+    """{ key(name): { 'special': [names], 'prereq': str, 'unlock': str } } for one game."""
+    info = {}
+    def at(name):
+        return info.setdefault(key(name), {})
+    for f in reversed(recipe_files):  # the first file listed wins
+        for name, parts in (load(game_dir, f) or {}).items():
+            at(name)['special'] = [clean_name(p) for p in parts]
+    for f in prereq_files:
+        for name, text in (load(game_dir, f) or {}).items():
+            at(name)['prereq'] = text
+    for f in reversed(unlock_files):
+        for group in load(game_dir, f) or []:
+            for names, text in group.get('conditions', {}).items():
+                for name in names.split(','):
+                    at(name.strip())['unlock'] = f'{group.get("category", "Unlock")}: {text}'
+    return info
+
+
+def fusion_lines(fi, is_party=False):
+    """The fixed facts about getting a Persona: how it is fused, prerequisite, unlock."""
+    lines = []
+    if is_party:
+        lines.append('Fusion: cannot be fused (a party member\'s own Persona)')
+    elif fi.get('special'):
+        lines.append('Fusion: special fusion of ' + ' + '.join(fi['special']))
+    elif 'special' in fi:
+        lines.append('Fusion: cannot be fused' + (f' — {fi["prereq"]}' if fi.get('prereq') else ''))
+    else:
+        lines.append('Fusion: normal fusion of two Personas (Arcana chart)')
+    if fi.get('prereq') and 'special' not in fi:
+        lines.append(f'Requirement: {fi["prereq"]}')
+    if fi.get('unlock'):
+        lines.append(f'Unlocked by: {fi["unlock"]}')
+    return lines
+
+
+def entry_text(name, d, config, game, is_party, fi=None):
     skills = sorted(d.get('skills', {}).items(), key=lambda x: x[1])
     start = [s for s, l in skills if l < 1]
     learns = [(l, s) for s, l in skills if 1 <= l <= 99]
@@ -113,6 +166,7 @@ def entry_text(name, d, config, game, is_party):
     if later:
         desc.append(f'unlocked later (awakening / social link): {", ".join(later)}')
     lines.append('Description: ' + '; '.join(desc) + '.')
+    lines.extend(fusion_lines(fi or {}, is_party))
     return '\n'.join(lines)
 
 
@@ -120,8 +174,9 @@ def main():
     seen = set()
     items = []
     counts = []
-    for game_dir, files, label in SOURCES:
+    for game_dir, files, label, recipe_files, unlock_files, prereq_files in SOURCES:
         config = json.load(open(os.path.join(APP, game_dir, 'data', 'comp-config.json'), encoding='utf-8'))
+        fusion = fusion_info(game_dir, recipe_files, unlock_files, prereq_files)
         added = 0
         for f in files:
             path = os.path.join(APP, game_dir, 'data', f + '.json')
@@ -132,7 +187,8 @@ def main():
                     continue
                 seen.add(key(name))
                 name = clean_name(name)
-                items.append((d['lvl'], label, name, entry_text(name, d, config, label, f.endswith('party-data'))))
+                fi = fusion.get(key(name), {}) if not f.endswith('party-data') else {}
+                items.append((d['lvl'], label, name, entry_text(name, d, config, label, f.endswith('party-data'), fi)))
                 added += 1
         counts.append(f'{label}: {added}')
     items.sort(key=lambda x: (x[0], x[2]))
