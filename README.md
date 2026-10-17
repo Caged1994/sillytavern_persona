@@ -64,6 +64,8 @@ July 13 evening — Fireworks festival
 
 A date without a year repeats every year. A swipe undoes what the replaced reply changed.
 
+**Without the Info Box.** The Info Box is optional. Turn it off, or just its date widget, and the calendar carries the whole scene by itself. The AI sends `"calendar": {"date", "slot", "weather", "location"}` when one of them changes. The context line tells it where and when the scene is. The weather effects and the chat scene header read the calendar instead. You can also type the place in the Calendar tab. The only feature still tied to the Info Box is the Doom Counter (tension), which Persona Stats inherited from Better Stats.
+
 ## Confidant abilities (teammates)
 
 A Confidant who fights with you (a party member) unlocks abilities in battle as the bond grows, as P5's teammates do:

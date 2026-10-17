@@ -40,6 +40,7 @@ import { applyAISocial } from '../features/characterSocial.js';
 import { applyAIPersonas } from '../features/characterPersonas.js';
 import { applyAIConfidants } from '../features/characterConfidants.js';
 import { applyAICalendar } from '../features/calendar.js';
+import { isRpgModeActive } from '../features/rpgMode.js';
 import { settleChecks } from '../features/characterChecks.js';
 import { renderThoughts, updateChatThoughts } from '../rendering/thoughts.js';
 import { renderQuests } from '../rendering/quests.js';
@@ -276,7 +277,8 @@ export async function updateRPGData(renderInfoBox, renderThoughts) {
     // ask the model for nothing. Skipping also stops the external-API error
     // box ("configure Base URL / API Key") from popping after every message
     // when the trackers are toggled off but external mode isn't configured.
-    if (!extensionSettings.showInfoBox && !extensionSettings.showCharacterThoughts && !extensionSettings.showQuests) {
+    // With RPG mode on, the stats, Personas, calendar… still need the call.
+    if (!extensionSettings.showInfoBox && !extensionSettings.showCharacterThoughts && !extensionSettings.showQuests && !isRpgModeActive()) {
         return;
     }
     const isExternalMode = extensionSettings.generationMode === 'external';

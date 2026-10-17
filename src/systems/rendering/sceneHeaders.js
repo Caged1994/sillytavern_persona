@@ -17,6 +17,7 @@ import { getCustomSceneFields } from '../generation/jsonPromptHelpers.js';
 import { escapeHtml } from '../../utils/html.js';
 import { parseTrackerJson } from '../../utils/trackerParse.js';
 import { chat } from '../../../../../../../script.js';
+import { sceneAsInfoBox } from '../features/calendar.js';
 
 /** Cache of last rendered scene data JSON to skip redundant DOM rebuilds */
 let _lastSceneDataJSON = null;
@@ -567,7 +568,9 @@ export function updateChatSceneHeaders() {
         return;
     }
     // Extract scene data from current state, respecting display toggle settings
-    const infoBoxData = extensionSettings.showInfoBox ? (lastGeneratedData.infoBox || committedTrackerData.infoBox) : null;
+    // Without the Info Box, the calendar gives the date, time of day, weather and place.
+    let infoBoxData = extensionSettings.showInfoBox ? (lastGeneratedData.infoBox || committedTrackerData.infoBox) : null;
+    if (!infoBoxData) { try { infoBoxData = sceneAsInfoBox(); } catch (e) { infoBoxData = null; } }
     const sceneData = extractSceneData(
         infoBoxData,
         extensionSettings.showCharacterThoughts ? (lastGeneratedData.characterThoughts || committedTrackerData.characterThoughts) : null,

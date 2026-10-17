@@ -43,13 +43,14 @@ function store(create = false) {
         if (!Array.isArray(s.events)) s.events = [];
         if (!s.days || typeof s.days !== 'object') s.days = {};
         if (s.now && !K.normalizeMoment(s.now)) s.now = null;
+        if (typeof s.place !== 'string') s.place = '';
     }
     return s;
 }
 
 const snapshot = () => {
     const s = store();
-    return s ? JSON.parse(JSON.stringify({ now: s.now || null, events: s.events, days: s.days })) : { now: null, events: [], days: {} };
+    return s ? JSON.parse(JSON.stringify({ now: s.now || null, events: s.events, days: s.days, place: s.place || '' })) : { now: null, events: [], days: {}, place: '' };
 };
 
 function restore(snap) {
@@ -58,6 +59,7 @@ function restore(snap) {
     s.now = snap.now ? { ...snap.now } : null;
     s.events = JSON.parse(JSON.stringify(snap.events || []));
     s.days = JSON.parse(JSON.stringify(snap.days || {}));
+    s.place = snap.place || '';
 }
 
 function trimDays(s) {
@@ -70,6 +72,7 @@ function trimDays(s) {
 
 function changed({ sync = true } = {}) {
     if (sync) syncInfoBox();
+    refreshScene();
     saveChatScope();
     notifyStatsChanged({ source: 'calendar' });
     try { window.dispatchEvent(new CustomEvent(CALENDAR_CHANGED_EVENT)); } catch (e) { /* no window */ }
@@ -127,6 +130,49 @@ export function getEvents() {
     const doneBook = new Set(own.filter(e => e.bookRef && e.done).map(e => e.bookRef));
     const fromBook = bookEvents().map(e => ({ ...e, id: `lb:${e.date}:${e.title}`, done: doneBook.has(`${e.date}:${e.title}`) }));
     return [...own.filter(e => !e.bookRef), ...fromBook];
+}
+
+/** Where the scene is (kept by the calendar; from the Info Box when it has one). */
+export function getPlace() {
+    return store()?.place || '';
+}
+
+export function setPlace(place) {
+    const s = store(true);
+    if (!s) return false;
+    s.place = String(place || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    changed({ sync: false });
+    return true;
+}
+
+/** Whether the Info Box carries the date (and the scene): otherwise the calendar does. */
+export function infoBoxCarriesScene() {
+    const w = extensionSettings.trackerConfig?.infoBox?.widgets;
+    return !!(extensionSettings.showInfoBox !== false && w?.date?.enabled);
+}
+
+/**
+ * The scene as Info Box JSON, built from the calendar (date, a time in the
+ * slot, the day's weather, the place) — for the weather effects and the chat
+ * scene header when there is no Info Box. null without a date.
+ */
+export function sceneAsInfoBox() {
+    if (!isCalendarEnabled()) return null;
+    const now = getNow();
+    if (!now) return null;
+    const w = getDay(now.date)?.weather || '';
+    const emoji = (w.match(/^\p{Extended_Pictographic}\uFE0F?/u) || [''])[0];
+    const out = { date: { value: K.formatLong(now.date) }, time: { start: K.SLOTS.find(s => s.id === now.slot).clock, end: '' } };
+    if (w) out.weather = { emoji, forecast: w.slice(emoji.length).trim() || w };
+    const place = getPlace();
+    if (place) out.location = { value: place };
+    return JSON.stringify(out);
+}
+
+/** Repaints what shows the scene (weather effects, the chat scene header). */
+function refreshScene() {
+    import('../ui/weatherEffects.js').then(m => m.updateWeatherEffect?.()).catch(() => {});
+    import('../rendering/sceneHeaders.js').then(m => m.updateChatSceneHeaders?.()).catch(() => {});
 }
 
 export function getDay(date) {
@@ -247,13 +293,14 @@ export function readInfoBox(raw, { year = null } = {}) {
         const text = String(raw || '');
         const dl = text.match(/(?:Date:|🗓️:)\s*(.+)/);
         const tl = text.match(/(?:Time:|🕒:)\s*(.+)/);
-        return { date: dl ? K.parseDate(dl[1], { year }) : null, slot: tl ? K.normalizeSlot(tl[1].split('→')[0]) : null, weather: null };
+        return { date: dl ? K.parseDate(dl[1], { year }) : null, slot: tl ? K.normalizeSlot(tl[1].split('→')[0]) : null, weather: null, location: null };
     }
     const dateText = typeof j.date === 'string' ? j.date : j.date?.value;
     const timeText = typeof j.time === 'string' ? j.time.split('→')[0] : j.time?.start;
     const w = j.weather;
-    const weather = w ? [w.emoji, w.forecast].filter(Boolean).join(' ').trim() || null : null;
-    return { date: dateText ? K.parseDate(dateText, { year }) : null, slot: timeText ? K.normalizeSlot(timeText) : null, weather };
+    const weather = w ? (typeof w === 'string' ? w : [w.emoji, w.forecast].filter(Boolean).join(' ')).trim() || null : null;
+    const loc = typeof j.location === 'string' ? j.location : j.location?.value;
+    return { date: dateText ? K.parseDate(dateText, { year }) : null, slot: timeText ? K.normalizeSlot(timeText) : null, weather, location: loc ? String(loc).trim() || null : null };
 }
 
 /** The Info Box JSON with the calendar's date and a time in its slot, or null when unchanged. */
@@ -305,10 +352,6 @@ export function followInfoBoxEdit(raw) {
 
 // ─── The AI ─────────────────────────────────────────────────────────────────
 
-function infoBoxHasDate() {
-    const w = extensionSettings.trackerConfig?.infoBox?.widgets;
-    return !!(extensionSettings.showInfoBox !== false && w?.date?.enabled);
-}
 
 function needForecast() {
     const now = getNow();
@@ -326,7 +369,9 @@ export function buildCalendarPromptForGeneration({ compact = true, standalone = 
         soon: now ? K.upcoming(events, now.date, 14) : [],
         late: now ? K.overdue(events, now.date) : [],
         needForecast: needForecast(),
-        infoBoxDate: infoBoxHasDate(),
+        infoBoxDate: infoBoxCarriesScene(),
+        weather: now ? getDay(now.date)?.weather || '' : '',
+        location: getPlace(),
         compact, standalone,
     });
 }
@@ -336,7 +381,9 @@ export function buildCalendarContextSummary() {
     const now = getNow();
     if (!now) return '';
     const soon = K.upcoming(getEvents(), now.date, 7);
-    return `Date: ${K.formatLong(now.date)}, ${K.slotName(now.slot).toLowerCase()}${soon.length ? `; coming up: ${soon.map(e => `${e.title} ${K.countdown(e.days)}`).join(', ')}` : ''}`;
+    // Without an Info Box in the context, the scene comes from here.
+    const scene = infoBoxCarriesScene() ? '' : [getPlace() && `at ${getPlace()}`, getDay(now.date)?.weather && `weather ${getDay(now.date).weather}`].filter(Boolean).join(', ');
+    return `Date: ${K.formatLong(now.date)}, ${K.slotName(now.slot).toLowerCase()}${scene ? `; ${scene}` : ''}${soon.length ? `; coming up: ${soon.map(e => `${e.title} ${K.countdown(e.days)}`).join(', ')}` : ''}`;
 }
 
 function toast(kind, text, title = 'Calendar') {
@@ -354,7 +401,7 @@ export function applyAICalendar(rawKey, rawInfoBox, messageIndex) {
     if (!s) return false;
     const year = s.now ? K.splitYmd(s.now.date).y : null;
     const key = rawKey ? K.normalizeAICalendar(rawKey, { year }) : null;
-    const box = rawInfoBox ? readInfoBox(rawInfoBox, { year }) : { date: null, slot: null, weather: null };
+    const box = rawInfoBox && infoBoxCarriesScene() ? readInfoBox(rawInfoBox, { year }) : { date: null, slot: null, weather: null, location: null };
 
     // The moment: the key first, then the Info Box.
     const date = key?.date || box.date || null;
@@ -370,8 +417,11 @@ export function applyAICalendar(rawKey, rawInfoBox, messageIndex) {
             console.log(`[Dooms Tracker] Calendar: the reply went back to ${target.date} ${target.slot}; kept ${s.now.date} ${s.now.slot}`);
         }
     }
-    // Weather of today, the forecast, events.
-    if (s.now && box.weather) s.days[s.now.date] = { weather: box.weather.slice(0, 40) };
+    // Weather of today, the place, the forecast, events.
+    const weatherNow = key?.weather || box.weather;
+    if (s.now && weatherNow) s.days[s.now.date] = { weather: weatherNow.slice(0, 40) };
+    const placeNow = key?.location || box.location;
+    if (placeNow) s.place = placeNow.slice(0, 80);
     for (const f of key?.forecast || []) {
         if (s.now && K.dayDiff(s.now.date, f.date) > 0 && !(s.days[f.date] && !s.days[f.date].forecast)) s.days[f.date] = { weather: f.weather, forecast: true };
     }

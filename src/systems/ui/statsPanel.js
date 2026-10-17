@@ -66,7 +66,7 @@ import { getBondAbilities, awakeningInfo, awakenPersona } from '../features/conf
 import {
     isCalendarEnabled, getNow as getCalNow, getEvents as getCalEvents, getDay as getCalDay, getMonthView, getUpcoming,
     setNow as setCalNow, advance as calAdvance, addEvent as calAddEvent, removeEvent as calRemoveEvent, setEventDone as calSetDone,
-    setWeather as calSetWeather, CALENDAR_CHANGED_EVENT,
+    setWeather as calSetWeather, CALENDAR_CHANGED_EVENT, getPlace as getCalPlace, setPlace as setCalPlace,
 } from '../features/calendar.js';
 import * as CK from '../../utils/calendarModel.js';
 import { canFuse, previewFusion, listFusions, fuse, isVelvetEnabled } from '../features/velvetRoom.js';
@@ -379,7 +379,7 @@ function personaHtml() {
 // ─── Calendar ───────────────────────────────────────────────────────────────
 
 const calView = { y: null, m: null, sel: null, last: null };
-const CAL_FORM = { title: '', kind: 'event', slot: '', setDate: '', setSlot: 'morning', weather: '', error: '' };
+const CAL_FORM = { title: '', kind: 'event', slot: '', setDate: '', setSlot: 'morning', weather: '', place: null, error: '' };
 const calForm = { ...CAL_FORM };
 const firstEmoji = (s) => (String(s || '').match(/\p{Extended_Pictographic}️?/u) || [''])[0];
 
@@ -412,6 +412,7 @@ function calendarHtml() {
             <div class="dsp-cal-date"><span class="dsp-cal-md">${escapeHtml(CK.formatShort(now.date).split(' ')[0])}</span><span class="dsp-cal-wd">${escapeHtml(CK.WEEKDAY_SHORT[CK.weekday(now.date)])}</span></div>
             <div class="dsp-cal-slot"><span class="dsp-cal-slot-name">${CK.SLOTS.find(s => s.id === now.slot).icon} ${escapeHtml(CK.slotName(now.slot))}</span>
                 <span class="dsp-cal-long">${escapeHtml(CK.formatLong(now.date))}${todayW ? ` · ${escapeHtml(todayW)}` : ''}</span>
+                ${getCalPlace() ? `<span class="dsp-cal-long">📍 ${escapeHtml(getCalPlace())}</span>` : ''}
                 <span class="dsp-cal-pips">${CK.SLOTS.map(s => `<i class="${CK.slotIndex(s.id) <= CK.slotIndex(now.slot) ? 'is-on' : ''}" title="${s.name}"></i>`).join('')}</span></div>
             <div class="dsp-cal-adv">
                 <button type="button" class="dsp-text-btn" data-action="cal-next" title="Next time of day"><i class="fa-solid fa-forward-step"></i> ${escapeHtml(CK.slotName(CK.nextSlot(now).slot))}</button>
@@ -452,11 +453,15 @@ function calendarHtml() {
             <span class="dsp-item-error" role="alert">${escapeHtml(calForm.error)}</span>
         </div>` : ''}
         ${soon.length ? `<div class="dsp-subhead"><i class="fa-solid fa-hourglass-half"></i> Coming up</div><ul class="dsp-cal-list">${soon.map(e => evRow(e, { left: e.days })).join('')}</ul>` : ''}
-        <details class="dsp-cal-set"${now ? '' : ' open'}><summary>Set the date by hand</summary>
+        <details class="dsp-cal-set"${now ? '' : ' open'}><summary>Set the date or place by hand</summary>
             <div class="dsp-item-form-row">
                 <input type="date" data-cal-field="setDate" value="${escapeHtml(calForm.setDate || now?.date || '')}" aria-label="Date">
                 <select data-cal-field="setSlot" aria-label="Time of day">${CK.SLOTS.map(s => `<option value="${s.id}"${(calForm.setSlot || now?.slot) === s.id ? ' selected' : ''}>${s.name}</option>`).join('')}</select>
                 <button type="button" class="dsp-text-btn is-primary" data-action="cal-set">Set</button>
+            </div>
+            <div class="dsp-item-form-row">
+                <input type="text" data-cal-field="place" value="${escapeHtml(calForm.place ?? getCalPlace())}" placeholder="Where (e.g. Shibuya station)" maxlength="80" aria-label="Location">
+                <button type="button" class="dsp-text-btn" data-action="cal-place">Save place</button>
             </div>
         </details>
     </section>`;
@@ -1833,6 +1838,7 @@ function bindRootListeners(root) {
             renderAll();
             return;
         }
+        if (action === 'cal-place') { setCalPlace(calForm.place ?? getCalPlace()); calForm.place = null; renderAll(); return; }
         if (action === 'cal-weather' && calView.sel) { calSetWeather(calView.sel, calForm.weather || ''); calForm.weather = ''; renderAll(); return; }
         if (action === 'cal-done' || action === 'cal-del') {
             const id = e.target.closest('[data-ev]')?.getAttribute('data-ev');

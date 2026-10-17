@@ -187,6 +187,27 @@ chat.push({ is_user: true, mes: 'x' }, { is_user: false, mes: 'reply' });
 Cal.applyAICalendar(JSON.stringify({ date: 'May 8, 2016', slot: 'evening' }), null, chat.length - 1);
 check('...and it moves time', JSON.stringify(Cal.getNow()) === '{"date":"2016-05-08","slot":"evening"}');
 check('the summary line', /^Date: Sunday, May 8, 2016, evening/.test(Cal.buildCalendarContextSummary()));
+
+// ── 4. Without the Info Box the calendar carries the scene ──
+extensionSettings.showInfoBox = false;
+extensionSettings.trackerConfig.infoBox.widgets.date.enabled = true;
+check('Info Box off: the calendar asks for weather and place too', /"weather": "🌧️ Rain", "location": "Place"/.test(Cal.buildCalendarPromptForGeneration()));
+chat.push({ is_user: true, mes: 'x' }, { is_user: false, mes: 'reply' });
+Cal.applyAICalendar(JSON.stringify({ slot: 'night', weather: '🌧️ Heavy rain', location: 'Leblanc attic' }), box('Monday, January 1, 2018', '9:00 AM', '☀️ Sunny'), chat.length - 1);
+check('...takes them from the key and ignores a stale Info Box', JSON.stringify(Cal.getNow()) === '{"date":"2016-05-08","slot":"night"}' && Cal.getDay('2016-05-08').weather === '🌧️ Heavy rain' && Cal.getPlace() === 'Leblanc attic');
+const scene = JSON.parse(Cal.sceneAsInfoBox());
+check('...and gives the scene as Info Box data (for weather effects and scene headers)', scene.date.value === 'Sunday, May 8, 2016' && K.slotFromClock(scene.time.start) === 'night' && scene.weather.emoji === '🌧️' && scene.weather.forecast === 'Heavy rain' && scene.location.value === 'Leblanc attic');
+check('...and the context line has them', /at Leblanc attic, weather 🌧️ Heavy rain/.test(Cal.buildCalendarContextSummary()));
+check('...and the prompt says where and how it is now', /Now: at Leblanc attic, weather 🌧️ Heavy rain/.test(Cal.buildCalendarPromptForGeneration()));
+Cal.revertAICalendarForReplacedMessage(chat.length - 1);
+check('a swipe undoes weather and place too', Cal.getPlace() !== 'Leblanc attic' && Cal.getNow().slot === 'evening');
+Cal.setPlace('Shibuya');
+check('the place by hand', Cal.getPlace() === 'Shibuya');
+extensionSettings.showInfoBox = true;
+lastGeneratedData.infoBox = box('Sunday, May 8, 2016', '7:30 PM', '☁️ Cloudy');
+chat.push({ is_user: true, mes: 'x' }, { is_user: false, mes: 'reply' });
+Cal.applyAICalendar(null, lastGeneratedData.infoBox, chat.length - 1);
+check('with the Info Box on, the place comes from it', Cal.getPlace() === 'Shibuya' && Cal.getDay('2016-05-08').weather === '☁️ Cloudy');
 extensionSettings.calendarEnabled = false;
 check('switched off: nothing', Cal.buildCalendarPromptForGeneration() === '' && Cal.applyAICalendar('{"date":"May 9, 2016"}', null, 99) === false);
 

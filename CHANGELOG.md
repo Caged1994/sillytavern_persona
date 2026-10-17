@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- The Info Box is optional: without it the calendar carries date, time of day, weather and place (AI key, prompt, context, weather effects, scene header, editable place). The separate tracker call no longer skips when the Info Box, thoughts and quests are all off but RPG mode is on.
 - Calendar: real dates with four times of day, in charge of the Info Box date and time (forward only from the AI, any way by hand), weather by day with a forecast, events and deadlines with countdowns (story, by hand, `Calendar:` lorebook entries), P5-style tab in the Stats panel and a date chip; swipe undo.
 - Confidant abilities for teammates: Baton Pass (now needs the bond when Confidants are on), Follow Up, Endure, Harisen Recovery, Protect and the Persona Awakening at rank 10; ranks can be set by lorebook unlock lines; shown in the Confidants tab and told to the AI.
 - Velvet Room: fuse a Wild Card's Personas — P5R Arcana chart (P4G / P3R for Aeon and Jester), same-Arcana, special (2–6 Personas) and treasure fusions, level limit, maxed-Confidant unlocks, Confidant bonus levels, skill inheritance by type with your own pick; list of every fusion the stock can make. Compendium entries now carry `Inherits:`.

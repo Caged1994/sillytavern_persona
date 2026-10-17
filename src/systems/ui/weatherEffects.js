@@ -7,6 +7,14 @@ import { extensionSettings, lastGeneratedData, committedTrackerData } from '../.
 import { repairJSON } from '../../utils/jsonRepair.js';
 import { getParticleEngine } from './particleCanvas.js';
 import { ensureCss } from '../../core/cssLoader.js';
+import { sceneAsInfoBox } from '../features/calendar.js';
+
+/** The Info Box, or the calendar's scene when there is no Info Box. */
+function sceneData() {
+    const box = extensionSettings.showInfoBox !== false ? (lastGeneratedData.infoBox || committedTrackerData.infoBox) : null;
+    if (box) return box;
+    try { return sceneAsInfoBox() || ''; } catch (e) { return ''; }
+}
 
 let weatherContainer = null;
 let currentWeatherType = null;
@@ -79,7 +87,7 @@ function getTimeOfDay(hour) {
  * Extract time from Info Box data
  */
 function getCurrentTime() {
-    const infoBoxData = lastGeneratedData.infoBox || committedTrackerData.infoBox || '';
+    const infoBoxData = sceneData();
 
     // Try to parse as JSON first (new format)
     try {
@@ -223,7 +231,7 @@ function parseWeatherType(weatherText) {
  * Extract weather from Info Box data
  */
 function getCurrentWeather() {
-    const infoBoxData = lastGeneratedData.infoBox || committedTrackerData.infoBox || '';
+    const infoBoxData = sceneData();
 
     // Try to parse as JSON first (new format)
     try {

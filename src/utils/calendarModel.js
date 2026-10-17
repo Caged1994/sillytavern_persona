@@ -309,6 +309,10 @@ export function normalizeAICalendar(raw, { year = null } = {}) {
     const out = { events: [], forecast: [], done: [] };
     if (v.date) out.date = parseDate(v.date, { year });
     if (v.slot || v.time) out.slot = normalizeSlot(v.slot || v.time);
+    const w = typeof v.weather === 'object' && v.weather ? [v.weather.emoji, v.weather.forecast ?? v.weather.text].filter(Boolean).join(' ') : v.weather;
+    if (clip(w, 40)) out.weather = clip(w, 40);
+    const place = typeof v.location === 'object' && v.location ? v.location.value : v.location;
+    if (clip(place, 80)) out.location = clip(place, 80);
     for (const e of Array.isArray(v.events) ? v.events.slice(0, 10) : []) {
         const hasYear = /\b\d{4}\b/.test(String(e?.date || ''));
         const ev = normalizeEvent({ ...e, date: hasYear || !year ? e?.date : parseDate(e?.date, { year }) || e?.date, source: 'ai' });
@@ -332,7 +336,7 @@ export function normalizeAICalendar(raw, { year = null } = {}) {
  * @param {boolean} o.needForecast - ask for the next days' weather
  * @param {boolean} o.infoBoxDate - the Info Box carries the date and time
  */
-export function buildCalendarPrompt({ now = null, soon = [], late = [], needForecast = false, infoBoxDate = true, compact = true, standalone = false } = {}) {
+export function buildCalendarPrompt({ now = null, soon = [], late = [], needForecast = false, infoBoxDate = true, weather = '', location = '', compact = true, standalone = false } = {}) {
     const where = standalone ? 'start your reply with ONE JSON code block with' : 'add to the same tracker JSON object';
     const slots = SLOTS.map(s => `${s.name.toLowerCase()} (from ${s.from}:00)`).join(', ');
     let out;
@@ -341,9 +345,13 @@ export function buildCalendarPrompt({ now = null, soon = [], late = [], needFore
     } else {
         out = 'CALENDAR: no date yet — set one that fits the story (a real calendar date).';
     }
-    out += infoBoxDate
-        ? ' Write the Info Box date as "Weekday, Month Day, Year" and its time as a clock time in that slot.'
-        : ` ${where} "calendar": {"date": "Month Day, Year", "slot": "morning|afternoon|evening|night"} whenever it changes.`;
+    if (infoBoxDate) {
+        out += ' Write the Info Box date as "Weekday, Month Day, Year" and its time as a clock time in that slot.';
+    } else {
+        // No Info Box: the calendar carries the scene too.
+        if (weather || location) out += ` Now: ${[location && `at ${location}`, weather && `weather ${weather}`].filter(Boolean).join(', ')}.`;
+        out += ` Whenever any of them changes, ${where} "calendar": {"date": "Month Day, Year", "slot": "morning|afternoon|evening|night", "weather": "🌧️ Rain", "location": "Place"} (only the parts that changed${now ? '' : '; now all of them'}).`;
+    }
     if (soon.length) out += ` Coming up: ${soon.slice(0, 6).map(e => `${KINDS[e.kind].name.toLowerCase()} "${e.title}" ${countdown(e.days)}${e.days > 1 ? ` (${formatShort(e.on)})` : ''}`).join('; ')}.`;
     if (late.length) out += ` Missed deadline${late.length === 1 ? '' : 's'}: ${late.map(e => `"${e.title}"`).join(', ')} — the story should feel it.`;
     const ex = '"calendar": {"events": [{"date": "Month Day, Year", "title": "…", "kind": "event|deadline|exam|holiday"}]}';
