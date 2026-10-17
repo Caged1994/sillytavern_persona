@@ -99,6 +99,7 @@ export function buildCombatNarrationPrompt({ summary, player, messages = [], car
     if (s.rewards && (s.rewards.xp || s.rewards.money || s.rewards.items?.length)) {
         user += `Spoils: ${[s.rewards.items?.length ? s.rewards.items.join(', ') : '', s.rewards.money ? `${s.rewards.money} money` : ''].filter(Boolean).join(' and ') || 'nothing of note'}.\n`;
     }
+    if (s.shuffle) user += `After the fight (Shuffle Time — cards that appear from the defeated Shadows): ${clip(s.shuffle, 160)}.\n`;
     user += `\nWrite 1 to 3 short paragraphs describing how the fight played out and how it ended, following the record. Do not decide what ${player} thinks, says or does next, and do not repeat the record as a list or add statistics. End where the story can pick up.`;
     return [{ role: 'system', content: sys.trim() }, { role: 'user', content: user.trim() }];
 }

@@ -10,6 +10,8 @@
  * src/systems/features/combat.js. The fight is saved in the chat after every
  * turn, so closing the window or reloading the page does not lose it.
  */
+import { rollShuffle, shuffleCards, takeCard, skipShuffle, cardLabel } from '../features/shuffleTime.js';
+import * as SH from '../../utils/shuffleModel.js';
 import { ensureCss } from '../../core/cssLoader.js';
 import { escapeHtml } from '../../utils/html.js';
 import { resolvePortrait } from './portraitBar.js';
@@ -470,6 +472,45 @@ function fightHtml() {
 
 // ── End ──
 
+function shuffleHtml() {
+    const sh = fight?.shuffle;
+    if (!sh) return '';
+    const face = (card, { picked = false, dim = false } = {}) => {
+        const d = cardLabel(fight, card);
+        const icon = card.kind === 'persona' ? '🎭' : SH.SUITS[card.suit].icon;
+        const cls = card.kind === 'persona' ? 'is-persona' : `is-${card.suit}`;
+        return `<div class="dcb-card is-up ${cls}${picked ? ' is-picked' : ''}${dim ? ' is-dim' : ''}">
+            <span class="dcb-card-icon">${icon}</span>
+            <span class="dcb-card-title">${escapeHtml(d.title)}</span>
+            <span class="dcb-card-line">${escapeHtml(d.line)}</span>
+            ${card.fromFight ? '<span class="dcb-card-tag">from the fight</span>' : ''}
+        </div>`;
+    };
+    if (sh.phase === 'show') {
+        return `<section class="dcb-shuffle">
+            <h3 class="dcb-shuffle-title">SHUFFLE TIME!</h3>
+            <p class="dcb-muted">${escapeHtml(sh.reasons.length ? `${Math.round(sh.chance * 100)}% — ${sh.reasons.join(', ')}` : `${Math.round(sh.chance * 100)}% chance`)}. Remember the cards: they will be turned and shuffled.</p>
+            <div class="dcb-cards">${sh.cards.map(c => face(c)).join('')}</div>
+            <div class="dcb-shuffle-actions"><button type="button" class="dcb-btn is-primary" data-action="shuffle-go">Shuffle</button>
+            <button type="button" class="dcb-btn" data-action="shuffle-skip">Pass</button></div>
+        </section>`;
+    }
+    if (sh.phase === 'pick') {
+        return `<section class="dcb-shuffle">
+            <h3 class="dcb-shuffle-title">SHUFFLE TIME!</h3>
+            <p class="dcb-muted">Pick a card.</p>
+            <div class="dcb-cards is-shuffling">${sh.order.map((_, i) => `<button type="button" class="dcb-card is-down" data-action="shuffle-pick" data-pos="${i}" style="--i:${i}" aria-label="Card ${i + 1}"><span class="dcb-card-back">✦</span></button>`).join('')}</div>
+            <div class="dcb-shuffle-actions"><button type="button" class="dcb-btn" data-action="shuffle-skip">Pass</button></div>
+        </section>`;
+    }
+    const pickedPos = sh.order.findIndex(i => sh.cards[i].id === sh.picked);
+    return `<section class="dcb-shuffle is-done">
+        <h3 class="dcb-shuffle-title">SHUFFLE TIME</h3>
+        <div class="dcb-cards">${sh.order.map((ci, pos) => face(sh.cards[ci], { picked: pos === pickedPos, dim: pos !== pickedPos })).join('')}</div>
+        <p class="dcb-shuffle-result">${sh.text ? escapeHtml(sh.text) : 'You passed on the cards.'}</p>
+    </section>`;
+}
+
 function endHtml() {
     const r = ui.report || {};
     const result = fight.result;
@@ -488,6 +529,7 @@ function endHtml() {
     return `<div class="dcb-body dcb-end">
         <h2>${title}</h2>
         <p class="dcb-muted">${fight.round} round${fight.round === 1 ? '' : 's'}</p>
+        ${shuffleHtml()}
         ${rewards.length ? `<ul class="dcb-rewards">${rewards.join('')}</ul>` : '<p class="dcb-muted">Nothing was won.</p>'}
         <h3>How everyone ended</h3>
         <ul class="dcb-outcome">${party}</ul>
@@ -524,8 +566,21 @@ function onClick(ev) {
     if (!el || !root.contains(el)) return;
     const action = el.dataset.action;
     if (action === 'close') { closeAndReport(); return; }
+    if (view === 'end' && action.startsWith('shuffle-')) return shuffleAction(action, el);
     if (view === 'setup') return setupAction(action, el);
     if (view === 'fight') return fightAction(action, el);
+}
+
+function shuffleAction(action, el) {
+    if (!fight?.shuffle) return;
+    if (action === 'shuffle-go') { shuffleCards(fight); render(); return; }
+    if (action === 'shuffle-pick') {
+        const res = takeCard(fight, Number(el.dataset.pos), ui.report);
+        if (res.error) return;
+        narrateEnd();
+        return;
+    }
+    if (action === 'shuffle-skip') { skipShuffle(fight); narrateEnd(); }
 }
 
 function selectedParty() {
@@ -679,6 +734,16 @@ async function finish() {
     view = 'end';
     ui.report = applyOutcome(fight);
     clearLiveEncounter();
+    // Shuffle Time: the story waits until a card is taken (or passed on).
+    if (!ui.report.already && rollShuffle(fight, { report: ui.report })) {
+        ui.narrationState = 'idle';
+        render();
+        return;
+    }
+    await narrateEnd();
+}
+
+async function narrateEnd() {
     const narrate = hooks && hooks.narrate !== undefined ? !!hooks.narrate : isCombatNarrationOn();
     ui.narrationState = narrate ? 'working' : 'idle';
     render();

@@ -661,6 +661,7 @@ function sanitizeForSlash(text) {
 export async function narrateOutcome(state, report, { generate = safeGenerateRaw, post = true, depth = 8 } = {}) {
     const card = cardInfo();
     const summary = M.summarizeForNarration(state, report?.rewards);
+    if (state.shuffle?.text) summary.shuffle = state.shuffle.text;
     const messages = buildCombatNarrationPrompt({
         summary, player: getPersonaName() || 'the player', messages: recentMessages(depth),
         cardName: card.name, cardDescription: card.description,

@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Shuffle Time (P3/P4) after won fights: chance with bonuses, four cards shown then shuffled face down, Persona cards (from the fight or near your level, base level, never above yours) and the Minor Arcana (Cups heal, Coins money, Wands XP, Swords a weapon); the fight's story mentions the card.
 - Awakenings: a Persona the AI awakens can be any Persona (any Arcana, any game, or an original one) and starts at exactly its user's level, up or down; the prompt no longer lists the 60 weakest Compendium names (only a small homebrew Compendium is listed).
 - Calendar: "Read the date from the chat" for chats already going (last Info Box date or story date header); the empty-state text says where the date comes from.
 - Calendar: a date without a year but with a weekday ("APRIL 1 — TUESDAY") lands on the nearest year where that weekday is right, instead of none; with no Info Box date, a date header the story writes itself (month, day and weekday together, plus a lone time-of-day line) starts or moves the calendar.

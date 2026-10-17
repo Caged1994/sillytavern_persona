@@ -82,6 +82,21 @@ A Confidant who fights with you (a party member) unlocks abilities in battle as 
 
 A lorebook Confidant can move any of them with its unlock lines: `Rank 3 unlocks: Follow Up` sets Follow Up to rank 3. `Rank 10 unlocks: Captain Kidd evolves into Seiten Taisei` makes the Awakening turn the Persona into Seiten Taisei (taken from the Compendium, keeping the old skills where they fit, never above the teammate's level). Without a named evolution, the Persona loses its weaknesses and gains +2 to every stat. Confidants who are not party members get no battle abilities; their unlock texts stay story notes. The AI is told which abilities each teammate has. With Confidants off, nobody has them and Baton Pass is free, as before.
 
+## Shuffle Time
+
+As in Persona 3 and 4, a won fight can end with a card draw (Settings → Combat → Shuffle Time).
+
+- **Chance:** 30% base. +30% when an All-Out Attack finished the fight, +20% when nobody in the party was hurt, +10% for a win within two rounds. At most 90%.
+- **The draw:** four cards are dealt face up. Press Shuffle and they turn and mix (as in Persona 4); then take one, or pass. Closing the window without picking loses the draw.
+- **Persona cards:** a defeated Shadow's Persona first, otherwise a normal-fusion Persona from the Compendium within 10 levels below yours. Always at its base level, never above yours, never one you own or a party member's. They are dealt only to a Wild Card with room in the stock.
+- **Minor Arcana (Persona 3):** rank I–III sets the amount.
+  - **Cups** restore 25 / 50 / 100% HP and SP to the party.
+  - **Coins** give 1 / 2 / 3 × the fight's money (at least 20 × your level).
+  - **Wands** add 0.5 / 1 / 2 × the fight's XP.
+  - **Swords** give a weapon fit for your level (attack 3 / 5 / 7).
+  - Coins, Wands and Swords are dealt only when Money, Experience and Equipment are on.
+- **Story:** the story of the fight waits for the draw and mentions the card taken.
+
 ## Velvet Room (fusion)
 
 A Wild Card with at least two Personas can fuse them from the Persona tab (Settings → Velvet Room switches it off). The rules are Persona 5 Royal's:

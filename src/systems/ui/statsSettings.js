@@ -80,6 +80,7 @@ function renderCompendiumSetting() {
     }
 }
 import { setCombatEnabled, setCombatNarration } from '../features/combat.js';
+import { setShuffleEnabled } from '../features/shuffleTime.js';
 import { setDungeonEnabled, setDungeonNarration } from '../features/dungeon.js';
 import { setChecksEnabled } from '../features/characterChecks.js';
 
@@ -172,6 +173,7 @@ export function initStatsSettings() {
     refreshCompendium().catch(() => {});
     flag('rpg-checks-enabled', 'checksEnabled');
     flag('rpg-combat-enabled', 'combatEnabled');
+    flag('rpg-shuffle-enabled', 'shuffleTimeEnabled');
     flag('rpg-combat-narration', 'combatNarration');
     flag('rpg-dungeon-enabled', 'dungeonEnabled');
     flag('rpg-dungeon-narration', 'dungeonNarration');
@@ -215,6 +217,7 @@ export function initStatsSettings() {
         }
         else if (el.id === 'rpg-checks-enabled') setChecksEnabled(el.checked);
         else if (el.id === 'rpg-combat-enabled') setCombatEnabled(el.checked);
+        else if (el.id === 'rpg-shuffle-enabled') setShuffleEnabled(el.checked);
         else if (el.id === 'rpg-combat-narration') setCombatNarration(el.checked);
         else if (el.id === 'rpg-dungeon-enabled') setDungeonEnabled(el.checked);
         else if (el.id === 'rpg-dungeon-narration') setDungeonNarration(el.checked);
