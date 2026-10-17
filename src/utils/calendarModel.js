@@ -78,31 +78,92 @@ export function weekday(s) {
     return Number.isFinite(t) ? new Date(t).getUTCDay() : null;
 }
 
+const WEEKDAY_WORDS = {
+    sunday: 0, sun: 0, domenica: 0, monday: 1, mon: 1, lunedi: 1, lunedì: 1, tuesday: 2, tue: 2, tues: 2, martedi: 2, martedì: 2,
+    wednesday: 3, wed: 3, mercoledi: 3, mercoledì: 3, thursday: 4, thu: 4, thurs: 4, giovedi: 4, giovedì: 4,
+    friday: 5, fri: 5, venerdi: 5, venerdì: 5, saturday: 6, sat: 6, sabato: 6,
+};
+
+/** The weekday a text names (0 = Sunday), or null. */
+export function weekdayIn(text) {
+    for (const w of String(text ?? '').toLowerCase().match(/[a-zà-ù]+/g) || []) if (WEEKDAY_WORDS[w] !== undefined) return WEEKDAY_WORDS[w];
+    return null;
+}
+
+/**
+ * The year nearest to `around` in which month/day falls on `wd` — so
+ * "Tuesday, April 1" without a year lands on a year where April 1 really is
+ * a Tuesday (2025 seen from 2026), not on a calendar that disagrees with the story.
+ */
+export function inferYear(month, day, wd, around = new Date().getFullYear()) {
+    for (let k = 0; k <= 30; k++) {
+        for (const y of k ? [around - k, around + k] : [around]) {
+            const d = ymd(y, month, day);
+            if (d && weekday(d) === wd) return y;
+        }
+    }
+    return around;
+}
+
 /**
  * A date out of free text: "Tuesday, April 12, 2016", "April 12th 2016",
  * "12 aprile 2016", "2016-04-12", "4/12/2016", "April 12" (year from `year`).
+ * Without any year, a weekday picks the nearest year it fits ("APRIL 1 —
+ * TUESDAY" → 2025, seen from 2026); with neither, there is no date.
  * @returns {string|null} 'YYYY-MM-DD'
  */
-export function parseDate(text, { year = null } = {}) {
+export function parseDate(text, { year = null, around = null } = {}) {
     const s = String(text ?? '').toLowerCase().replace(/(\d)(st|nd|rd|th)\b/g, '$1');
     let m = s.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
     if (m) return ymd(+m[1], +m[2], +m[3]);
+    const wd = weekdayIn(s);
+    const guess = (mo, d) => (year ?? (wd !== null ? inferYear(mo, d, wd, around ?? new Date().getFullYear()) : null));
     m = s.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
     if (m) {
-        const y = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : year;
+        const y = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : guess(+m[1], +m[2]);
         return y ? ymd(y, +m[1], +m[2]) : null;
     }
     const yearM = s.match(/\b(\d{4})\b/);
-    const y = yearM ? +yearM[1] : year;
     // "April 12" or "12 April"
-    const words = [...s.matchAll(/[a-z]+/g)].map(w => w[0]);
+    const words = [...s.matchAll(/[a-zà-ù]+/g)].map(w => w[0]);
     const monthWord = words.find(w => MONTH_WORDS[w]);
-    if (!monthWord || !y) return null;
+    if (!monthWord) return null;
     const mo = MONTH_WORDS[monthWord];
     const after = s.match(new RegExp(`${monthWord}\\.?\\s+(\\d{1,2})\\b(?!\\d)`));
     const before = s.match(new RegExp(`\\b(\\d{1,2})\\s+(?:of\\s+)?${monthWord}`));
     const day = after ? +after[1] : before ? +before[1] : null;
-    return day ? ymd(y, mo, day) : null;
+    if (!day) return null;
+    const y = yearM ? +yearM[1] : guess(mo, day);
+    return y ? ymd(y, mo, day) : null;
+}
+
+/**
+ * A date written in a story's prose — a header like "APRIL 1 — TUESDAY" or
+ * "Tuesday, April 1st" — only when month, day and weekday sit together (so a
+ * passing "in May" never counts). Used to start a calendar that has no date.
+ */
+export function findDateInText(text, { around = null } = {}) {
+    const s = String(text ?? '');
+    const wd = '(?:mon|tue|tues|wed|thu|thurs|fri|sat|sun)[a-z]*|(?:luned|marted|mercoled|gioved|venerd)[iì]|sabato|domenica';
+    const mon = Object.keys(MONTH_WORDS).join('|');
+    const day = '\\d{1,2}(?:st|nd|rd|th)?';
+    const yr = '(?:,?\\s*\\d{4})?';
+    const sep = '[\\s,.\\-–—|:/]{1,6}';
+    const pats = [
+        `\\b(?:${wd})${sep}(?:(?:${mon})\\.?\\s+${day}|${day}\\s+(?:${mon}))${yr}\\b`,
+        `\\b(?:(?:${mon})\\.?\\s+${day}|${day}\\s+(?:${mon}))${yr}${sep}(?:${wd})\\b`,
+    ];
+    for (const p of pats) {
+        const m = s.match(new RegExp(p, 'i'));
+        if (m) { const d = parseDate(m[0], { around }); if (d) return d; }
+    }
+    return null;
+}
+
+/** A time of day written alone on a line ("MORNING", "After School"), or null. */
+export function findSlotInText(text) {
+    const m = String(text ?? '').match(/^[\s*_#>\[]*(early morning|morning|lunchtime|lunch|afternoon|after school|evening|late night|night|dark hour|mattina|pomeriggio|sera|notte)[\s*_\]]*$/im);
+    return m ? normalizeSlot(m[1]) : null;
 }
 
 /** 'MM-DD' of a yearly date ("April 29", "4/29", "04-29"), or null. */
@@ -343,7 +404,7 @@ export function buildCalendarPrompt({ now = null, soon = [], late = [], needFore
     if (now) {
         out = `CALENDAR: today is ${formatLong(now.date)}, ${slotName(now.slot).toLowerCase()}. Time moves only forward, through ${slots}; move it when the story does (a scene ending, sleep, "the next day").`;
     } else {
-        out = 'CALENDAR: no date yet — set one that fits the story (a real calendar date).';
+        out = 'CALENDAR: no date yet — set one that fits the story: a real calendar date with its year, whose weekday matches (if the story already named "Tuesday, April 1", use a year where April 1 is a Tuesday).';
     }
     if (infoBoxDate) {
         out += ' Write the Info Box date as "Weekday, Month Day, Year" and its time as a clock time in that slot.';

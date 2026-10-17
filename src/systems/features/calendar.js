@@ -403,9 +403,28 @@ export function applyAICalendar(rawKey, rawInfoBox, messageIndex) {
     const key = rawKey ? K.normalizeAICalendar(rawKey, { year }) : null;
     const box = rawInfoBox && infoBoxCarriesScene() ? readInfoBox(rawInfoBox, { year }) : { date: null, slot: null, weather: null, location: null };
 
-    // The moment: the key first, then the Info Box.
-    const date = key?.date || box.date || null;
-    const slot = key?.slot || box.slot || null;
+    // The moment: the key first, then the Info Box, then a date header the
+    // story itself writes ("APRIL 1 — TUESDAY" / "MORNING") — that one only
+    // with month, day and weekday together, and close to today.
+    let date = key?.date || box.date || null;
+    let slot = key?.slot || box.slot || null;
+    if (!date) {
+        const prose = typeof messageIndex === 'number' ? chat?.[messageIndex]?.mes : null;
+        const found = prose ? K.findDateInText(prose, { around: year ?? new Date().getFullYear() }) : null;
+        let d = found;
+        // Seen from a calendar that has a date, the same day of this year (or the next).
+        if (d && s.now) {
+            const p = K.splitYmd(d);
+            const yr = K.splitYmd(s.now.date).y;
+            d = K.ymd(yr, p.m, p.d);
+            if (d && K.dayDiff(s.now.date, d) < -180) d = K.ymd(yr + 1, p.m, p.d);
+            if (d && (K.dayDiff(s.now.date, d) < -7 || K.dayDiff(s.now.date, d) > 60)) d = null;
+        }
+        if (d) {
+            date = d;
+            slot = slot || K.findSlotInText(prose);
+        }
+    }
     let moved = null;
     if (date || slot) {
         const target = K.normalizeMoment({ date: date || s.now?.date, slot: slot || (date && s.now && date !== s.now.date ? 'morning' : s.now?.slot) || 'morning' });

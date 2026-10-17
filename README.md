@@ -51,6 +51,7 @@ Affinities accept `Wk`/`Weak`, `Rs`/`Resist`, `Nu`/`Null`, `Dr`/`Drain`, `Rp`/`R
 A real calendar with four times of day: **morning** (from 5:00), **afternoon** (12:00), **evening** (18:00) and **night** (22:00). It is in charge of the Info Box date and time:
 
 - The AI keeps writing the Info Box date ("Weekday, Month Day, Year") and time as before. The calendar reads them and moves forward. If a reply goes back in time, the calendar keeps its moment and writes its own date, and a time in its slot, back into the Info Box. Without the Info Box date widget, the AI uses the `"calendar": {"date", "slot"}` key instead.
+- If the reply has no Info Box date, a date header the story writes itself is used, but only when month, day and weekday appear together ("APRIL 1 — TUESDAY", with a line "MORNING"). A date without a year takes the nearest year where its weekday is right.
 - By hand (Stats panel → Calendar, your character): next time of day, next day, any date (also backwards), or by typing in the Info Box.
 - Weather by day: today's comes from the Info Box. The AI is asked for a 3-day forecast when one is missing; you can also type it on any day.
 - Events: event, deadline, exam or holiday, with a countdown in the panel and in the prompt. Missed deadlines are told to the AI. They come from the story (`"calendar": {"events": [...], "done": [...]}`), by hand, or from lorebook entries titled `Calendar:`, one per line:
