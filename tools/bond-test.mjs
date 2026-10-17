@@ -207,7 +207,7 @@ const pix = PM.parseCompendiumEntry({ comment: 'Persona: Pixie', content: 'Arcan
 const queen = PM.parseCompendiumEntry({ comment: 'Persona: Titania', content: 'Arcana: Lovers\nLevel: 48\nSt 30 · Ma 40 · En 30 · Ag 35 · Lu 30\nSkills: Mediarama, Ziodyne' });
 Comp.setCompendiumForTests([pix, queen]);
 P.setLevel('Elena', false, 50); P.setLevel('Bram', false, 50);
-check('Elena has a Persona', !!Pe.addPersona('Elena', false, 'Pixie').persona);
+check('Elena has a Persona', !!Pe.addPersona('Elena', false, { name: 'Pixie', level: 2 }).persona);
 check('the Awakening waits for its rank', !CA.awakeningInfo('Elena').can && /rank 10/.test(CA.awakeningInfo('Elena').reason));
 Cf.setConfidantRank('Elena', 10);
 let r = CA.awakenPersona('Elena');
@@ -216,7 +216,7 @@ check('...once', !CA.awakeningInfo('Elena').can && CA.awakeningInfo('Elena').don
 check('the awakened Persona is the equipped one', Pe.getActivePersona('Elena', false)?.awakened === true);
 Cf.setDefinitionsForTests([CM.parseConfidantEntry({ comment: 'Confidant: Bram', content: 'Arcana: Hermit\nRank 9 unlocks: Pixie evolves into Titania' })]);
 P.setPartyMember('Bram', true);
-Pe.addPersona('Bram', false, 'Pixie');
+Pe.addPersona('Bram', false, { name: 'Pixie', level: 2 });
 const info = CA.awakeningInfo('Bram');
 check('a lorebook evolution names the new Persona', info.can && info.into === 'Titania' && info.known);
 r = CA.awakenPersona('Bram');
