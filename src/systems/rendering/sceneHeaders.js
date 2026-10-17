@@ -12,7 +12,7 @@
  *   - "ticker"   — collapsible bar pinned to top of chat
  */
 import { extensionSettings, lastGeneratedData, committedTrackerData } from '../../core/state.js';
-import { getDoomCounterState, getActiveCharacterColors, saveSettings } from '../../core/persistence.js';
+import { getActiveCharacterColors, saveSettings } from '../../core/persistence.js';
 import { getCustomSceneFields } from '../generation/jsonPromptHelpers.js';
 import { escapeHtml } from '../../utils/html.js';
 import { parseTrackerJson } from '../../utils/trackerParse.js';
@@ -591,9 +591,7 @@ export function updateChatSceneHeaders() {
         return;
     }
     // Skip rebuild if data + settings are identical to last render
-    // Include doom counter state in cache key so badge updates when streak/countdown changes
-    const dcState = (extensionSettings.doomCounter?.enabled && extensionSettings.doomCounter?.debugDisplay && !extensionSettings.doomCounter?.trapMode) ? getDoomCounterState() : null;
-    const cacheKey = JSON.stringify({ sceneData, st, dcState });
+    const cacheKey = JSON.stringify({ sceneData, st });
     // Skip the rebuild only when the data is unchanged AND the existing header
     // is still anchored where this render would put it. Checking mere
     // existence stranded the header on the previous message whenever two
@@ -699,7 +697,6 @@ export function extractSceneData(infoBoxData, characterThoughtsData, questsData)
         conditions: '',
         terrain: '',
         weather: '',
-        doomTension: null,
         customFields: [],
         presentCharacters: [],
         activeQuest: '',
@@ -764,14 +761,7 @@ export function extractSceneData(infoBoxData, characterThoughtsData, questsData)
                     result.weather = parts.join(' ') || info.weather.value || '';
                 }
             }
-            // Doom Tension (numeric 1-10)
-            if (info.doomTension !== undefined && info.doomTension !== null) {
-                const raw = typeof info.doomTension === 'object' ? info.doomTension.value : info.doomTension;
-                const num = Number(raw);
-                if (!isNaN(num) && num >= 1 && num <= 10) {
-                    result.doomTension = Math.round(num);
-                }
-            }
+
             // Recent Events (limit to 2 major events for the scene header)
             if (info.recentEvents) {
                 if (Array.isArray(info.recentEvents)) {
@@ -1017,9 +1007,8 @@ function createSceneHeaderHTML(data) {
     const layout = st.layout || 'grid';
     const styleVars = buildStyleVars();
 
-    const doomBadge = buildDoomCounterBadge(data.doomTension);
 
-    return `<div class="dooms-scene-header dooms-scene-layout-${escapeHtml(layout)}" style="${styleVars}">${doomBadge}${rows.join('')}</div>`;
+    return `<div class="dooms-scene-header dooms-scene-layout-${escapeHtml(layout)}" style="${styleVars}">${rows.join('')}</div>`;
 }
 
 // ─────────────────────────────────────────────
@@ -1143,10 +1132,8 @@ function createBannerHTML(data) {
 
     if (!itemsWithDividers && !charsHtml && !questHtml && !eventsHtml) return '';
 
-    const doomBadge = buildDoomCounterBadge(data.doomTension);
 
     return `<div class="dooms-info-banner" style="${styleVars}">
-        ${doomBadge}
         ${itemsWithDividers}
         ${charsHtml ? (items.length ? '<div class="dooms-ip-divider"></div>' : '') + charsHtml : ''}
         ${questHtml}
@@ -1277,13 +1264,11 @@ function createHudHTML(data) {
 
     if (!rows.length) return '';
 
-    const doomBadge = buildDoomCounterBadge(data.doomTension);
 
     return `<div class="dooms-info-hud" style="${styleVars}">
         <div class="dooms-ip-hud-title">
             <i class="fa-solid fa-compass"></i>
             Scene Info
-            ${doomBadge}
         </div>
         ${rows.join('')}
     </div>`;
@@ -1551,12 +1536,10 @@ function createTickerHTML(data) {
         }).join('');
     }
 
-    const doomBadge = buildDoomCounterBadge(data.doomTension);
 
     return `${tickerStyleBlock}<div class="dooms-info-ticker-wrapper" style="${styleVars}">
         <div class="dooms-info-ticker">
             <span class="dooms-ip-ticker-icon"><i class="fa-solid fa-compass"></i></span>
-            ${doomBadge}
             <div class="dooms-ip-ticker-items">
                 ${rotatingItems}
             </div>
@@ -1568,55 +1551,6 @@ function createTickerHTML(data) {
                 ${panelRows.join('')}
             </div>
         </div>
-    </div>`;
-}
-
-// ─────────────────────────────────────────────
-//  Doom Counter Debug Badge
-// ─────────────────────────────────────────────
-
-/**
- * Builds a compact Doom Counter debug badge for the scene header.
- * Shows: skull icon, tension value, streak, countdown (when active).
- * Only renders when doomCounter.enabled AND doomCounter.debugDisplay are true.
- *
- * @param {number|null} doomTension - The current doomTension value from sceneData
- * @returns {string} HTML string (empty if debug display is off)
- */
-function buildDoomCounterBadge(doomTension) {
-    const dc = extensionSettings.doomCounter;
-    if (!dc?.enabled || !dc?.debugDisplay || dc?.trapMode) return '';
-
-    const state = getDoomCounterState();
-    const ceiling = dc.lowTensionCeiling || 4;
-    const threshold = dc.lowTensionThreshold || 5;
-    const tensionStr = doomTension !== null ? `${doomTension}` : '?';
-    const isLow = doomTension !== null && doomTension <= ceiling;
-
-    // Color the tension number: red if low, green if high
-    const tensionColor = doomTension === null ? '#888' : (isLow ? '#e94560' : '#4ade80');
-
-    let badgeContent = '';
-
-    // Tension value
-    badgeContent += `<span class="dooms-dc-debug-tension" style="color:${tensionColor}">${tensionStr}</span>`;
-
-    // Streak counter (show as fraction: 3/5)
-    badgeContent += `<span class="dooms-dc-debug-streak">${state.lowStreakCount}/${threshold}</span>`;
-
-    // Countdown (only if active)
-    if (state.countdownActive) {
-        badgeContent += `<span class="dooms-dc-debug-countdown">${state.countdownCount}</span>`;
-    }
-
-    // Pending twist indicator
-    if (state.pendingTwist) {
-        badgeContent += `<span class="dooms-dc-debug-pending" title="Twist pending injection">⚡</span>`;
-    }
-
-    return `<div class="dooms-dc-debug-badge" title="Doom Counter: Tension ${tensionStr}/10 | Streak ${state.lowStreakCount}/${threshold}${state.countdownActive ? ' | Countdown ' + state.countdownCount : ''}">
-        <i class="fa-solid fa-skull"></i>
-        ${badgeContent}
     </div>`;
 }
 

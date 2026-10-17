@@ -5,7 +5,7 @@
  * When the AI's tracker output names a character by an alias — e.g. the card
  * is "Sarah" and the AI starts saying "Sarah Greenfield" after a name reveal —
  * the parsed character data is silently normalized to the canonical card name
- * before anything downstream (portrait bar, colors, sheets, knives, card
+ * before anything downstream (portrait bar, colors, sheets, card
  * creation) sees it. This stops DES from spawning a duplicate character card.
  *
  * Unlike the old Name Ban mappings, aliases are passive: the message prose is
@@ -422,7 +422,7 @@ export async function adoptVariantAsAlias(canonical, variant) {
     try { mergeAffinity(canonical, variant); } catch (e) {}
     try { mergeAbilities(canonical, variant); } catch (e) {}
     for (const store of ['characterColors', 'npcAvatars', 'npcAvatarsFullRes', 'npcAvatarHistory',
-        'characterInjection', 'characterRelationships', 'characterKnives', 'heroPositions', 'characterAppearance',
+        'characterInjection', 'characterRelationships', 'heroPositions', 'characterAppearance',
         'generatedPortraits']) {
         transferIfMissing(extensionSettings[store]);
     }
@@ -450,7 +450,7 @@ export async function adoptVariantAsAlias(canonical, variant) {
         }
     }
     for (const store of ['knownCharacters', 'characterColors', 'npcAvatars', 'npcAvatarsFullRes', 'npcAvatarHistory',
-        'characterInjection', 'characterRelationships', 'characterKnives', 'heroPositions', 'characterAppearance',
+        'characterInjection', 'characterRelationships', 'heroPositions', 'characterAppearance',
         'generatedPortraits']) {
         scrub(extensionSettings[store]);
     }

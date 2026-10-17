@@ -247,24 +247,8 @@ export function loadSettings() {
                 settingsChanged = true;
             }
 
-            // Migration to version 10: Add Doom Counter defaults
+            // Migration to version 10 used to add the Doom Counter (removed).
             if (currentVersion < 10) {
-                if (!extensionSettings.doomCounter) {
-                    extensionSettings.doomCounter = {
-                        enabled: false,
-                        lowTensionThreshold: 5,
-                        countdownLength: 3,
-                        twistChoiceCount: 3,
-                        lowTensionCeiling: 4,
-                    };
-                }
-                // Clean up old lowTensionValues if it exists (was string-based, now numeric)
-                if (extensionSettings.doomCounter.lowTensionValues) {
-                    delete extensionSettings.doomCounter.lowTensionValues;
-                    if (extensionSettings.doomCounter.lowTensionCeiling === undefined) {
-                        extensionSettings.doomCounter.lowTensionCeiling = 4;
-                    }
-                }
                 extensionSettings.settingsVersion = 10;
                 settingsChanged = true;
             }
@@ -467,6 +451,10 @@ export function loadSettings() {
             if (ensureCampaignSettings()) {
                 settingsChanged = true;
             }
+            // The Doom Counter (plot twists) and its Knives were removed: drop their settings.
+            for (const k of ['doomCounter', 'customPlotTwistTemplatePrompt', 'customKnifeTemplatePrompt', 'customKnifeGeneratorRulesPrompt', 'customTwistGeneratorRulesPrompt', 'characterKnives']) {
+                if (k in extensionSettings) { delete extensionSettings[k]; settingsChanged = true; }
+            }
 
             // ── Rebuild guards: keys whose DEFAULT changed (or is new) on the
             // Rebuild branch. CRITICAL: these must test savedSettings — the
@@ -574,11 +562,6 @@ export function saveChatData({ immediate = false } = {}) {
         committedTrackerData: committedTrackerData,
         syncedExpressionPortraits: syncedExpressionPortraits,
         syncedExpressionLabels: syncedExpressionLabels,
-        doomCounterState: chat_metadata.dooms_tracker?.doomCounterState || null,
-        // Preserve the per-chat Knives toggle — this rebuild replaces the whole
-        // dooms_tracker object, so any field not copied here is dropped (and,
-        // with immediate saves, wiped from disk on the next generation).
-        knivesEnabled: chat_metadata.dooms_tracker?.knivesEnabled === true,
         // Undo for the last AI stat update (characterStats.js) — consumed
         // when that reply is swiped or regenerated.
         statsUndo: chat_metadata.dooms_tracker?.statsUndo || null,
@@ -756,15 +739,6 @@ export function loadChatData() {
         setSyncedExpressionLabels(savedData.syncedExpressionLabels);
     } else {
         clearSyncedExpressionLabels();
-    }
-    // Restore Doom Counter state (per-chat counter data)
-    // This is exported so doomCounter.js can access it on chat load
-    if (savedData.doomCounterState) {
-        chat_metadata.dooms_tracker.doomCounterState = savedData.doomCounterState;
-    }
-    // Restore the per-chat Knives toggle (persisted in the tracker blob).
-    if (savedData.knivesEnabled !== undefined) {
-        chat_metadata.dooms_tracker.knivesEnabled = savedData.knivesEnabled === true;
     }
     // Sync with the most recent assistant message's per-message swipe data.
     // This is the most reliable source since it's saved as part of the chat messages
@@ -959,70 +933,6 @@ export function saveCharacterRosterChange() {
             .then((m) => m.syncAutoLinkedLorebooks())
             .catch((e) => console.warn('[DES AutoLink] unavailable', e));
     }
-}
-
-/**
- * Gets the current Doom Counter state from chat metadata.
- * @returns {Object} The doom counter state, or defaults if not present
- */
-export function getDoomCounterState() {
-    const defaults = {
-        lowStreakCount: 0,
-        countdownActive: false,
-        countdownCount: extensionSettings.doomCounter?.countdownLength || 3,
-        pendingTwist: null,
-        triggered: false,
-        totalTwistsTriggered: 0
-    };
-    if (!chat_metadata?.dooms_tracker?.doomCounterState) {
-        return { ...defaults };
-    }
-    return { ...defaults, ...chat_metadata.dooms_tracker.doomCounterState };
-}
-
-/**
- * Saves the Doom Counter state to chat metadata.
- * @param {Object} state - The doom counter state to save
- */
-export function setDoomCounterState(state) {
-    if (!chat_metadata) return;
-    if (!chat_metadata.dooms_tracker) {
-        chat_metadata.dooms_tracker = {};
-    }
-    // Skip the write when nothing changed — onResponseReceived calls this on
-    // every AI message including no-op paths, and an immediate save serializes
-    // the whole chat. Only pay that cost when the state actually moved.
-    const prev = chat_metadata.dooms_tracker.doomCounterState;
-    const unchanged = prev && JSON.stringify(prev) === JSON.stringify(state);
-    chat_metadata.dooms_tracker.doomCounterState = state;
-    if (unchanged) return;
-    // Immediate save: a debounced write is lost if the user switches chats
-    // before it flushes.
-    Promise.resolve(saveChatConditional()).catch(err => console.error('[DES] doom counter save failed', err));
-}
-
-/**
- * Whether Knives are enabled for the current chat. Knives themselves live on
- * character records (Character Workshop); this per-chat switch controls
- * whether the Doom Counter draws them when it triggers. Default: off.
- * @returns {boolean}
- */
-export function isDoomKnivesEnabled() {
-    return chat_metadata?.dooms_tracker?.knivesEnabled === true;
-}
-
-/**
- * Enables/disables Knives for the current chat.
- * @param {boolean} enabled
- */
-export function setDoomKnivesEnabled(enabled) {
-    if (!chat_metadata) return;
-    if (!chat_metadata.dooms_tracker) {
-        chat_metadata.dooms_tracker = {};
-    }
-    chat_metadata.dooms_tracker.knivesEnabled = !!enabled;
-    // Immediate save: fires once per toggle click; see setDoomCounterState.
-    Promise.resolve(saveChatConditional()).catch(err => console.error('[DES] knives toggle save failed', err));
 }
 
 /**

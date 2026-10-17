@@ -140,15 +140,12 @@ check('renaming a key is reported',
     renamed.some(w => w.key === 'location'));
 check('...and only that key', renamed.length === 1, renamed.map(w => w.key).join(', '));
 
-// ── 7. Doom Counter's key is only required when it's enabled ──
+// ── 7. The Doom Counter was removed: its key is never required ──
 extensionSettings.doomCounter = { enabled: true };
-check('doomTension warned about when the Doom Counter is on',
-    pb.getTrackerPromptKeyWarnings('"quests":"" "infoBox":"" "characters":"" "name":"" "location":"" "time":"" "date":""')
-        .some(w => w.key === 'doomTension'));
-extensionSettings.doomCounter = { enabled: false };
-check('...and not when it is off',
+check('doomTension is never asked for (Doom Counter removed)',
     !pb.getTrackerPromptKeyWarnings('"quests":"" "infoBox":"" "characters":"" "name":"" "location":"" "time":"" "date":""')
         .some(w => w.key === 'doomTension'));
+delete extensionSettings.doomCounter;
 
 // ── 8. Field types (P2) ──
 // The whole point of the type system is that it must be INVISIBLE to anyone

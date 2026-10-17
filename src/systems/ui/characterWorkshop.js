@@ -43,7 +43,6 @@ import { getBase64Async } from '../../../../../../utils.js';
 import { getSafeThumbnailUrl, deletePortraitsIfUnreferenced, takePortraitHistoryValues } from '../../utils/avatars.js';
 import { migrateAvatarsToFiles } from '../../utils/avatarMigration.js';
 import { renderThoughts } from '../rendering/thoughts.js';
-import { generateKnifeSuggestions } from '../generation/doomCounter.js';
 import { i18n } from '../../core/i18n.js';
 import { getAllWorldNames, activateWorld, isWorldActive } from '../lorebook/lorebookAPI.js';
 // Campaign versions of a character (Base + one per campaign). The version
@@ -94,7 +93,7 @@ import { deleteAbilitiesEverywhere } from '../features/characterAbilities.js';
 
 /**
  * Runs a save function, surfacing failures instead of silently discarding
- * the user's edit — a swallowed save error loses knife/alias/color changes
+ * the user's edit — a swallowed save error loses alias/color changes
  * with zero feedback.
  */
 function saveOrWarn(saveFn, what) {
@@ -169,25 +168,6 @@ let stageToken = 0;
 // Zero under performance mode / reduced motion (the CSS also kills the
 // transitions there, this just skips the wait).
 const VERSION_SWITCH_MS = 220;
-/** Guard so rapid clicks on Generate Knives don't stack API calls. */
-let _knifeGenInProgress = false;
-
-/**
- * Knife generation themes. Clicking Generate Knives shows these as chips;
- * the chosen theme steers the AI so every batch doesn't drift toward
- * betrayal/villainy — Regrets and Fortune in particular produce knives
- * that make a character sympathetic or lucky rather than compromised.
- */
-const KNIFE_THEMES = [
-    { id: 'mixed',    emoji: '🎲', label: 'Mixed',      guidance: 'Mix sympathetic, neutral, and compromising beats across the options — debts, secrets, old flames, rivals, regrets, lucky breaks. Do NOT make every knife paint the character as a villain or traitor.' },
-    { id: 'betrayal', emoji: '🗡️', label: 'Betrayal',   guidance: 'Focus on betrayal where {{user}} is the betrayed party — divided loyalties, double lives, deals with the wrong side, and broken promises that are set to cut {{user}} specifically, not strangers or off-screen characters.' },
-    { id: 'enemies',  emoji: '⚔️', label: 'Enemies',    guidance: 'Focus on rivals, grudges, and people from the character\'s past hunting them or wanting them ruined — danger that comes FOR the character, not treachery BY them.' },
-    { id: 'debts',    emoji: '💰', label: 'Debts',      guidance: 'Focus on money owed, favors about to be called in, contracts, and obligations the character cannot easily pay.' },
-    { id: 'flames',   emoji: '💔', label: 'Old Flames', guidance: 'Focus on past romances, heartbreak, lost loves, exes, and unresolved feelings that resurface.' },
-    { id: 'secrets',  emoji: '🤫', label: 'Secrets',    guidance: 'Focus on hidden identities, concealed pasts, and truths the character keeps — not necessarily shameful ones: some secrets are protective, sad, or wondrous.' },
-    { id: 'regrets',  emoji: '🩹', label: 'Regrets',    guidance: 'Focus on guilt, grief, old wounds, and mistakes that haunt the character — sympathetic beats that make them vulnerable rather than villainous.' },
-    { id: 'fortune',  emoji: '🍀', label: 'Fortune',    guidance: 'Focus on POSITIVE surprises: inheritances, secret talents, old friends returning with help, debts owed TO the character, lucky breaks from their past.' },
-];
 let _wsInitialized = false; // guard: don't double-register window/eventSource listeners
 let pendingInjectClear = false; // true while an inject prompt is queued
 // True only between a real (non-quiet, non-dryRun) GENERATION_STARTED and its
@@ -508,7 +488,7 @@ function motionDisabled() {
  * @param {boolean} isUser
  * @param {string|null} versionId - 'base', a campaign id, or null for the live default
  * @param {{fullReset?: boolean, carry?: object|null}} [options]
- *   fullReset: also clear the knife/alias inputs, suggestions and jump to
+ *   fullReset: also clear the alias input and jump to
  *   the Identity pane (opening the card). A version switch keeps the pane
  *   and the half-typed inputs. carry: dirty version-independent fields
  *   (colour, aliases) from the previous draft to keep across the switch.
@@ -531,21 +511,17 @@ function loadVersion(name, isUser, versionId, { fullReset = false, carry = null 
     renderIdentity();
     renderAppearance();
     renderInjection();
-    renderKnives();
     renderAliases();
     renderStats();
     renderMemories();
     renderVersionStrip();
     if (fullReset) {
-        $modal.find('#cw-knife-input').val('');
         $modal.find('#cw-alias-input').val('');
         resetStatAddForm();
         $modal.find('#cw-mem-input').val('');
         $modal.find('#cw-mem-error').text('');
         activatePane('identity');
     }
-    // Suggestions generated for another version must not be kept for this one.
-    clearKnifeSuggestions();
 }
 
 /**
@@ -602,7 +578,7 @@ function statRowHtml(stat) {
                 <input type="checkbox" class="cw-stat-ai-input"${stat.ai ? ' checked' : ''}${disabledAttr}> AI
             </label>
             ${onSwitch}
-            ${stat.builtin ? '<span class="cw-stat-del-spacer"></span>' : `<button type="button" class="rpg-dc-knife-btn cw-stat-delete" title="Delete ${escapeHtml(stat.name)} for every character"><i class="fa-solid fa-trash"></i></button>`}
+            ${stat.builtin ? '<span class="cw-stat-del-spacer"></span>' : `<button type="button" class="cw-del-btn cw-stat-delete" title="Delete ${escapeHtml(stat.name)} for every character"><i class="fa-solid fa-trash"></i></button>`}
         </div>`;
 }
 
@@ -638,7 +614,7 @@ function renderMemories() {
                 ${m.source === 'ai' ? '<span class="cw-mem-tag" title="Added by the AI">AI</span>' : ''}
                 ${isFaded ? '<span class="cw-mem-tag is-faded" title="Older than the most recent memories: kept here, no longer sent to the AI">faded</span>' : ''}
             </span>
-            <button type="button" class="rpg-dc-knife-btn cw-mem-delete" title="Delete memory"><i class="fa-solid fa-trash"></i></button>
+            <button type="button" class="cw-del-btn cw-mem-delete" title="Delete memory"><i class="fa-solid fa-trash"></i></button>
         </div>`;
     }).join(''));
 }
@@ -750,18 +726,12 @@ function clearDirtyFlags() {
 }
 
 /**
- * Folds a half-typed knife or alias (text sitting in the input, Add not yet
+ * Folds a half-typed alias (text sitting in the input, Add not yet
  * clicked) into the draft so a save keeps it, then clears the inputs. Used
  * by every "save before switching" path; a plain discard clears them only.
  */
 function pushPendingInputs() {
     if (!draft) return;
-    const knife = String($modal.find('#cw-knife-input').val() || '').trim();
-    if (knife) {
-        draft.knives.push({ id: 'knife_' + Date.now(), text: knife, used: false });
-        draft.dirty.knives = true;
-    }
-    $modal.find('#cw-knife-input').val('');
     if (!draft.isUser) {
         const alias = String($modal.find('#cw-alias-input').val() || '').trim();
         const lower = alias.toLowerCase();
@@ -777,10 +747,9 @@ function pushPendingInputs() {
 function hasVersionedEdits() {
     if (!draft) return false;
     const d = draft.dirty || {};
-    if (d.avatar || d.injection || d.relationship || d.knives || d.appearance) return true;
-    // A half-typed knife or alias lives only in the input until Add is
+    if (d.avatar || d.injection || d.relationship || d.appearance) return true;
+    // A half-typed alias lives only in the input until Add is
     // clicked; count it so a switch never silently drops it.
-    if (String($modal.find('#cw-knife-input').val() || '').trim()) return true;
     if (String($modal.find('#cw-alias-input').val() || '').trim()) return true;
     return false;
 }
@@ -804,7 +773,6 @@ async function switchVersion(versionId) {
             pushPendingInputs();
             commitDraft();
         } else {
-            $modal.find('#cw-knife-input').val('');
             $modal.find('#cw-alias-input').val('');
         }
     }
@@ -898,7 +866,6 @@ export function refreshWorkshopIfOpen() {
             pushPendingInputs();
             commitDraft();
         }
-        $modal.find('#cw-knife-input').val('');
         $modal.find('#cw-alias-input').val('');
     }
     const carry = versionIndependentCarry();
@@ -1392,13 +1359,12 @@ function buildDraft(name, isUser = false, versionId = null) {
                 lorebook: typeof inj.lorebook === 'string' ? inj.lorebook : '',
                 promptTemplate: typeof inj.promptTemplate === 'string' ? inj.promptTemplate : '',
             },
-            knives: Array.isArray(u.knives) ? u.knives.map(k => ({ ...k })) : [],
             // Aliases are NPC-only (a persona's name is the player's own);
             // kept on the draft so shared render code can no-op safely.
             aliases: [],
             stats: cloneStats(getStatSheet(name, true)),
             statsPending: false,
-            dirty: { color: false, avatar: false, injection: false, relationship: false, pronouns: false, linkedPersona: false, knives: false, aliases: false, stats: false },
+            dirty: { color: false, avatar: false, injection: false, relationship: false, pronouns: false, linkedPersona: false, aliases: false, stats: false },
         };
     }
     const version = versionId || defaultVersionFor(name);
@@ -1425,11 +1391,10 @@ function buildDraft(name, isUser = false, versionId = null) {
         aliases: Array.isArray(npcAliases) ? npcAliases.filter(a => typeof a === 'string') : [],
         stats: cloneStats(getStatSheet(name, false)),
         statsPending: isStatGenerationPending(name, false),
-        dirty: { color: false, avatar: false, injection: false, relationship: false, knives: false, aliases: false, appearance: false, stats: false },
+        dirty: { color: false, avatar: false, injection: false, relationship: false, aliases: false, appearance: false, stats: false },
     };
     if (live) {
         const inj = extensionSettings?.characterInjection?.[name] || {};
-        const npcKnives = extensionSettings?.characterKnives?.[name];
         return {
             ...common,
             avatar: extensionSettings?.npcAvatars?.[name] || '',
@@ -1440,7 +1405,6 @@ function buildDraft(name, isUser = false, versionId = null) {
                 lorebook: typeof inj.lorebook === 'string' ? inj.lorebook : '',
                 promptTemplate: typeof inj.promptTemplate === 'string' ? inj.promptTemplate : '',
             },
-            knives: Array.isArray(npcKnives) ? npcKnives.map(k => ({ ...k })) : [],
             appearance: typeof extensionSettings?.characterAppearance?.[name] === 'string' ? extensionSettings.characterAppearance[name] : '',
         };
     }
@@ -1460,7 +1424,6 @@ function buildDraft(name, isUser = false, versionId = null) {
             lorebook: typeof inj.lorebook === 'string' ? inj.lorebook : '',
             promptTemplate: typeof inj.promptTemplate === 'string' ? inj.promptTemplate : '',
         },
-        knives: Array.isArray(p.knives) ? p.knives.map(k => ({ ...k })) : [],
         appearance: typeof p.appearance === 'string' ? p.appearance : '',
     };
 }
@@ -1487,75 +1450,6 @@ function renderTitle() {
     $modal.find('#cw-user-badge').prop('hidden', !draft.isUser);
     $modal.find('#cw-modal-title').text(draft.isUser ? 'User Character Workshop' : 'Character Workshop');
     $modal.find('#cw-inject-label').text(draft.isUser ? 'Inject persona' : 'Inject into Scene');
-}
-
-/**
- * Renders the theme picker shown when Generate Knives is clicked.
- * Picking a chip starts the actual generation with that theme.
- */
-function renderKnifeThemePicker() {
-    const $sugg = $modal.find('#cw-knife-suggestions');
-    const chips = KNIFE_THEMES.map((t, i) => `
-        <button type="button" class="rpg-rel-chip cw-knife-theme-chip" data-theme-index="${i}" title="${escapeHtml(t.guidance)}">
-            <span>${t.emoji}</span> ${t.label}
-        </button>
-    `).join('');
-    $sugg.prop('hidden', false).html(`
-        <p class="helper" style="margin: 0 0 6px;">What kind of knives should the AI forge?</p>
-        <div class="rpg-rel-chips">${chips}</div>
-    `);
-}
-
-/**
- * Renders AI-generated knife suggestions as checkbox rows so the player
- * can pick which ones to keep. Suggestions are stashed on the container's
- * data so the Keep handler can read them back by index.
- */
-function renderKnifeSuggestions(suggestions) {
-    const $sugg = $modal.find('#cw-knife-suggestions');
-    const rows = suggestions.map((text, i) => `
-        <label class="cw-knife-suggestion">
-            <input type="checkbox" data-index="${i}">
-            <span class="rpg-dc-knife-icon">🔪</span>
-            <span class="rpg-dc-knife-text">${escapeHtml(text)}</span>
-        </label>
-    `).join('');
-    $sugg.prop('hidden', false).html(`
-        <p class="helper" style="margin: 0 0 4px;">Pick the knives worth keeping — the rest are discarded:</p>
-        ${rows}
-        <div class="cw-knife-sugg-actions">
-            <button type="button" class="rpg-btn rpg-btn-primary" id="cw-knife-sugg-keep">
-                <i class="fa-solid fa-check"></i> Keep selected
-            </button>
-            <button type="button" class="rpg-btn rpg-btn-ghost" id="cw-knife-sugg-discard">Discard all</button>
-        </div>
-    `);
-    $sugg.data('suggestions', suggestions);
-}
-
-function clearKnifeSuggestions() {
-    $modal.find('#cw-knife-suggestions').prop('hidden', true).empty().removeData('suggestions');
-}
-
-function renderKnives() {
-    const $list = $modal.find('#cw-knives-list');
-    if (!$list.length) return;
-    const knives = draft?.knives || [];
-    if (!knives.length) {
-        $list.html('<div class="rpg-dc-knives-empty">No knives yet — story beats you add here lie in wait until the Doom Counter strikes while this character is in the scene.</div>');
-        return;
-    }
-    $list.html(knives.map(k => `
-        <div class="rpg-dc-knife-row${k.used ? ' rpg-dc-knife-used' : ''}" data-id="${escapeHtml(k.id)}">
-            <span class="rpg-dc-knife-icon">🔪</span>
-            <span class="rpg-dc-knife-text">${escapeHtml(k.text)}</span>
-            ${k.used ? `
-                <span class="rpg-dc-knife-used-badge">used</span>
-                <button class="rpg-dc-knife-btn rpg-dc-knife-rearm" type="button" title="Re-arm this knife so it can be offered again"><i class="fa-solid fa-rotate-left"></i></button>
-            ` : ''}
-            <button class="rpg-dc-knife-btn rpg-dc-knife-delete" type="button" title="Delete knife"><i class="fa-solid fa-trash"></i></button>
-        </div>
-    `).join(''));
 }
 
 function isHiddenFromPanel(name) {
@@ -2003,31 +1897,6 @@ function bindStaticListeners() {
         if (e.key === 'Escape') { e.stopPropagation(); closeVersionAddMenu(); $modal.find('#cw-version-add').trigger('focus'); }
     });
 
-    // Knives — edits live on the draft and persist on Save
-    $modal.on('click.cw', '#cw-knife-add', function () {
-        if (!draft) return;
-        const $input = $modal.find('#cw-knife-input');
-        const text = String($input.val() || '').trim();
-        if (!text) return;
-        draft.knives.push({ id: 'knife_' + Date.now(), text, used: false });
-        draft.dirty.knives = true;
-        $input.val('');
-        renderKnives();
-    });
-    $modal.on('click.cw', '#cw-knives-list .rpg-dc-knife-delete', function () {
-        if (!draft) return;
-        const id = $(this).closest('.rpg-dc-knife-row').data('id');
-        draft.knives = draft.knives.filter(k => k.id !== id);
-        draft.dirty.knives = true;
-        renderKnives();
-    });
-    $modal.on('click.cw', '#cw-knives-list .rpg-dc-knife-rearm', function () {
-        if (!draft) return;
-        const id = $(this).closest('.rpg-dc-knife-row').data('id');
-        draft.knives = draft.knives.map(k => k.id === id ? { ...k, used: false } : k);
-        draft.dirty.knives = true;
-        renderKnives();
-    });
     // Stats — sheet edits live on the draft and persist on Save.
     $modal.on('change.cw', '#cw-stats-editor .cw-stat-base-input', function () {
         const stat = findDraftStat(this);
@@ -2211,70 +2080,6 @@ function bindStaticListeners() {
         renderAliases();
     });
 
-    // Generate Knives is a two-step flow: the button shows the theme
-    // picker, and choosing a theme chip fires the actual API call.
-    $modal.on('click.cw', '#cw-knife-generate', function () {
-        if (!draft || _knifeGenInProgress) return;
-        renderKnifeThemePicker();
-    });
-    $modal.on('click.cw', '.cw-knife-theme-chip', async function () {
-        if (!draft || _knifeGenInProgress) return;
-        const theme = KNIFE_THEMES[parseInt($(this).attr('data-theme-index'))];
-        if (!theme) return;
-        _knifeGenInProgress = true;
-        const $btn = $modal.find('#cw-knife-generate');
-        const forName = draft.name;
-        // The draft object identifies the character AND the version on the
-        // stage: a version switch mid-call builds a new draft, and the
-        // suggestions must not land in it.
-        const startDraft = draft;
-        const $sugg = $modal.find('#cw-knife-suggestions');
-        $btn.prop('disabled', true);
-        $sugg.prop('hidden', false).html(`<div class="cw-knife-sugg-loading">Forging ${escapeHtml(theme.label.toLowerCase())} knives&hellip; (asking your AI)</div>`);
-        try {
-            const suggestions = await generateKnifeSuggestions(forName, {
-                isUser: draft.isUser,
-                count: 5,
-                existingKnives: (draft.knives || []).map(k => k.text),
-                theme,
-            });
-            // Modal may have closed or switched character/version during the API call
-            if (draft !== startDraft) return;
-            if (!suggestions.length) throw new Error('Empty suggestion list');
-            renderKnifeSuggestions(suggestions);
-        } catch (e) {
-            console.error('[Dooms Tracker] Workshop: knife generation failed', e);
-            if (draft === startDraft) {
-                $sugg.html('<div class="cw-knife-sugg-loading">Generation failed &mdash; check your API connection and try again.</div>');
-            }
-            try { if (window.toastr) window.toastr.error('Failed to generate knives.', 'Character Workshop', { timeOut: 4000 }); } catch (err) {}
-        } finally {
-            _knifeGenInProgress = false;
-            $btn.prop('disabled', false);
-        }
-    });
-    $modal.on('click.cw', '#cw-knife-sugg-keep', function () {
-        if (!draft) return;
-        const $sugg = $modal.find('#cw-knife-suggestions');
-        const suggestions = $sugg.data('suggestions') || [];
-        const picked = [];
-        $sugg.find('input[type="checkbox"]:checked').each(function () {
-            const idx = parseInt($(this).data('index'));
-            if (suggestions[idx]) picked.push(suggestions[idx]);
-        });
-        if (!picked.length) {
-            try { if (window.toastr) window.toastr.info('Tick at least one knife to keep, or Discard all.', 'Character Workshop', { timeOut: 3000 }); } catch (e) {}
-            return;
-        }
-        const now = Date.now();
-        picked.forEach((text, i) => draft.knives.push({ id: `knife_${now}_${i}`, text, used: false }));
-        draft.dirty.knives = true;
-        clearKnifeSuggestions();
-        renderKnives();
-    });
-    $modal.on('click.cw', '#cw-knife-sugg-discard', function () {
-        clearKnifeSuggestions();
-    });
     $modal.on('click.cw', function (e) {
         if (e.target === this) closeCharacterWorkshop();
     });
@@ -2906,7 +2711,6 @@ function commitDraft() {
             pronouns: draft.pronouns || '',
             linkedPersona: draft.linkedPersona || '',
             injection: { description: desc, lorebook: book, ...(tpl ? { promptTemplate: tpl } : {}) },
-            knives: Array.isArray(draft.knives) ? draft.knives.map(k => ({ ...k })) : [],
         };
         extensionSettings.userCharacters[name] = next;
         saveOrWarn(saveSettings, 'settings');
@@ -3061,16 +2865,6 @@ function commitDraft() {
             changed = true;
         }
 
-        if (draft.dirty.knives) {
-            if (!extensionSettings.characterKnives) extensionSettings.characterKnives = {};
-            if (Array.isArray(draft.knives) && draft.knives.length) {
-                extensionSettings.characterKnives[name] = draft.knives.map(k => ({ ...k }));
-            } else {
-                delete extensionSettings.characterKnives[name];
-            }
-            changed = true;
-        }
-
         if (draft.dirty.appearance) {
             if (!extensionSettings.characterAppearance) extensionSettings.characterAppearance = {};
             const appearance = String(draft.appearance || '').trim();
@@ -3092,7 +2886,7 @@ function commitDraft() {
             }
             changed = true;
         }
-    } else if (draft.dirty.avatar || draft.dirty.relationship || draft.dirty.knives || draft.dirty.appearance || draft.dirty.injection) {
+    } else if (draft.dirty.avatar || draft.dirty.relationship || draft.dirty.appearance || draft.dirty.injection) {
         // A saved copy (shadowed Base or an inactive campaign): merge the
         // dirty fields into the stored version and write it back whole.
         const profile = readVersion(draft.versionId, name) || {};
@@ -3109,10 +2903,6 @@ function commitDraft() {
         if (draft.dirty.relationship) {
             if (draft.relationship) profile.relationship = draft.relationship;
             else delete profile.relationship;
-        }
-        if (draft.dirty.knives) {
-            if (Array.isArray(draft.knives) && draft.knives.length) profile.knives = draft.knives.map(k => ({ ...k }));
-            else delete profile.knives;
         }
         if (draft.dirty.appearance) {
             const appearance = String(draft.appearance || '').trim();
@@ -3311,7 +3101,7 @@ function deleteCharacter(name) {
         ...deleteCharacterEverywhere(name),
     ];
     // Every version-backed store (portraits, injection extras, relationship,
-    // knives, appearance, hero position, auto-portrait meta) — the same set
+    // appearance, hero position, auto-portrait meta) — the same set
     // the campaign switch swaps. Matches characterRoster.purgeCharacter so
     // delete-from-Workshop and delete-from-Roster stay symmetric.
     removeFromLive(name);

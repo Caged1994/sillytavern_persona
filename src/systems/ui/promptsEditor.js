@@ -14,18 +14,10 @@ let tempPrompts = null; // Temporary prompts for cancel functionality
 // (import-free module) so generation code doesn't depend on this UI module.
 // Re-exported here for backward compatibility.
 export {
-    DEFAULT_PLOT_TWIST_TEMPLATE_PROMPT,
-    DEFAULT_KNIFE_TEMPLATE_PROMPT,
-    DEFAULT_KNIFE_GENERATOR_RULES_PROMPT,
     DEFAULT_NEW_FIELDS_BOOST_PROMPT,
-    DEFAULT_TWIST_GENERATOR_RULES_PROMPT,
 } from '../generation/defaultPrompts.js';
 import {
-    DEFAULT_PLOT_TWIST_TEMPLATE_PROMPT,
-    DEFAULT_KNIFE_TEMPLATE_PROMPT,
-    DEFAULT_KNIFE_GENERATOR_RULES_PROMPT,
     DEFAULT_NEW_FIELDS_BOOST_PROMPT,
-    DEFAULT_TWIST_GENERATOR_RULES_PROMPT,
 } from '../generation/defaultPrompts.js';
 
 // Default prompts
@@ -40,11 +32,7 @@ const DEFAULT_PROMPTS = {
     // NOTE: deception, omniscience, cyoa, spotify removed (see git history)
     narrator: DEFAULT_NARRATOR_PROMPT,
     contextInstructions: DEFAULT_CONTEXT_INSTRUCTIONS_PROMPT,
-    plotTwistTemplate: DEFAULT_PLOT_TWIST_TEMPLATE_PROMPT,
-    knifeTemplate: DEFAULT_KNIFE_TEMPLATE_PROMPT,
-    knifeGeneratorRules: DEFAULT_KNIFE_GENERATOR_RULES_PROMPT,
     newFieldsBoost: DEFAULT_NEW_FIELDS_BOOST_PROMPT,
-    twistGeneratorRules: DEFAULT_TWIST_GENERATOR_RULES_PROMPT,
     trackerInstructions: 'Replace X with actual numbers (e.g., 69) and replace all placeholders with concrete in-world details that {userName} perceives about the current scene and the present characters. For example: "Location" becomes Forest Clearing, "Mood Emoji" becomes "\u{1F60A}". DO NOT include {userName} in the characters section, only NPCs. Consider the last trackers in the conversation (if they exist). Manage them accordingly and realistically; raise, lower, change, or keep the values unchanged based on the user\'s actions, the passage of time, and logical consequences (0% if the time progressed only by a few minutes, 1-5% normally, and above 5% only if a major time-skip/event occurs).',
     trackerContinuation: 'After updating the trackers, continue directly from where the last message in the chat history left off. Ensure the trackers you provide naturally reflect and influence the narrative. Character behavior, dialogue, and story events should acknowledge these conditions when relevant, such as fatigue affecting the protagonist\'s performance, low hygiene influencing their social interactions, environmental factors shaping the scene, a character\'s emotional state coloring their responses, and so on. Remember, all placeholders (e.g., "Location", "Mood Emoji") MUST be replaced with actual content.',
     characterThoughts: "Internal Monologue (in first person from character's POV, up to three sentences long)",
@@ -148,11 +136,7 @@ function openPromptsEditor() {
         dialogueColoring: extensionSettings.customDialogueColoringPrompt || '',
         narrator: extensionSettings.customNarratorPrompt || '',
         contextInstructions: extensionSettings.customContextInstructionsPrompt || '',
-        plotTwistTemplate: extensionSettings.customPlotTwistTemplatePrompt || '',
-        knifeTemplate: extensionSettings.customKnifeTemplatePrompt || '',
-        knifeGeneratorRules: extensionSettings.customKnifeGeneratorRulesPrompt || '',
         newFieldsBoost: extensionSettings.customNewFieldsBoostPrompt || '',
-        twistGeneratorRules: extensionSettings.customTwistGeneratorRulesPrompt || '',
         trackerInstructions: extensionSettings.customTrackerInstructionsPrompt || '',
         trackerContinuation: extensionSettings.customTrackerContinuationPrompt || '',
         trackerFull: extensionSettings.customTrackerPrompt || '',
@@ -165,11 +149,7 @@ function openPromptsEditor() {
     $('#rpg-prompt-dialogue-coloring').val(extensionSettings.customDialogueColoringPrompt || DEFAULT_PROMPTS.dialogueColoring);
     $('#rpg-prompt-narrator').val(extensionSettings.customNarratorPrompt || DEFAULT_PROMPTS.narrator);
     $('#rpg-prompt-context-instructions').val(extensionSettings.customContextInstructionsPrompt || DEFAULT_PROMPTS.contextInstructions);
-    $('#rpg-prompt-plot-twist-template').val(extensionSettings.customPlotTwistTemplatePrompt || DEFAULT_PROMPTS.plotTwistTemplate);
-    $('#rpg-prompt-knife-template').val(extensionSettings.customKnifeTemplatePrompt || DEFAULT_PROMPTS.knifeTemplate);
-    $('#rpg-prompt-knife-generator-rules').val(extensionSettings.customKnifeGeneratorRulesPrompt || DEFAULT_PROMPTS.knifeGeneratorRules);
     $('#rpg-prompt-new-fields-boost').val(extensionSettings.customNewFieldsBoostPrompt || DEFAULT_PROMPTS.newFieldsBoost);
-    $('#rpg-prompt-twist-generator-rules').val(extensionSettings.customTwistGeneratorRulesPrompt || DEFAULT_PROMPTS.twistGeneratorRules);
     $('#rpg-prompt-tracker-instructions').val(extensionSettings.customTrackerInstructionsPrompt || DEFAULT_PROMPTS.trackerInstructions);
     $('#rpg-prompt-tracker-continuation').val(extensionSettings.customTrackerContinuationPrompt || DEFAULT_PROMPTS.trackerContinuation);
     $('#rpg-prompt-weather').val(extensionSettings.customWeatherPrompt || DEFAULT_PROMPTS.weather);
@@ -247,11 +227,7 @@ function savePrompts() {
     extensionSettings.customDialogueColoringPrompt = $('#rpg-prompt-dialogue-coloring').val().trim();
     extensionSettings.customNarratorPrompt = $('#rpg-prompt-narrator').val().trim();
     extensionSettings.customContextInstructionsPrompt = $('#rpg-prompt-context-instructions').val().trim();
-    extensionSettings.customPlotTwistTemplatePrompt = $('#rpg-prompt-plot-twist-template').val().trim();
-    extensionSettings.customKnifeTemplatePrompt = $('#rpg-prompt-knife-template').val().trim();
-    extensionSettings.customKnifeGeneratorRulesPrompt = $('#rpg-prompt-knife-generator-rules').val().trim();
     extensionSettings.customNewFieldsBoostPrompt = $('#rpg-prompt-new-fields-boost').val().trim();
-    extensionSettings.customTwistGeneratorRulesPrompt = $('#rpg-prompt-twist-generator-rules').val().trim();
     extensionSettings.customTrackerInstructionsPrompt = $('#rpg-prompt-tracker-instructions').val().trim();
     // Tracker Prompt: store an override ONLY when the text actually differs
     // from what DES would generate. Saving the prefilled text verbatim would
@@ -299,20 +275,8 @@ function restorePromptToDefault(promptType) {
         case 'contextInstructions':
             extensionSettings.customContextInstructionsPrompt = '';
             break;
-        case 'plotTwistTemplate':
-            extensionSettings.customPlotTwistTemplatePrompt = '';
-            break;
-        case 'knifeTemplate':
-            extensionSettings.customKnifeTemplatePrompt = '';
-            break;
-        case 'knifeGeneratorRules':
-            extensionSettings.customKnifeGeneratorRulesPrompt = '';
-            break;
         case 'newFieldsBoost':
             extensionSettings.customNewFieldsBoostPrompt = '';
-            break;
-        case 'twistGeneratorRules':
-            extensionSettings.customTwistGeneratorRulesPrompt = '';
             break;
         case 'trackerInstructions':
             extensionSettings.customTrackerInstructionsPrompt = '';
@@ -349,11 +313,7 @@ function restoreAllToDefaults() {
     // NOTE: deception, omniscience, cyoa, spotify restore lines archived
     $('#rpg-prompt-narrator').val(DEFAULT_PROMPTS.narrator);
     $('#rpg-prompt-context-instructions').val(DEFAULT_PROMPTS.contextInstructions);
-    $('#rpg-prompt-plot-twist-template').val(DEFAULT_PROMPTS.plotTwistTemplate);
-    $('#rpg-prompt-knife-template').val(DEFAULT_PROMPTS.knifeTemplate);
-    $('#rpg-prompt-knife-generator-rules').val(DEFAULT_PROMPTS.knifeGeneratorRules);
     $('#rpg-prompt-new-fields-boost').val(DEFAULT_PROMPTS.newFieldsBoost);
-    $('#rpg-prompt-twist-generator-rules').val(DEFAULT_PROMPTS.twistGeneratorRules);
     $('#rpg-prompt-tracker-instructions').val(DEFAULT_PROMPTS.trackerInstructions);
     $('#rpg-prompt-tracker-continuation').val(DEFAULT_PROMPTS.trackerContinuation);
     $('#rpg-prompt-weather').val(DEFAULT_PROMPTS.weather);
@@ -378,11 +338,7 @@ function restoreAllToDefaults() {
     // NOTE: customDeceptionPrompt, customOmnisciencePrompt, customCYOAPrompt, customSpotifyPrompt archived
     extensionSettings.customNarratorPrompt = '';
     extensionSettings.customContextInstructionsPrompt = '';
-    extensionSettings.customPlotTwistTemplatePrompt = '';
-    extensionSettings.customKnifeTemplatePrompt = '';
-    extensionSettings.customKnifeGeneratorRulesPrompt = '';
     extensionSettings.customNewFieldsBoostPrompt = '';
-    extensionSettings.customTwistGeneratorRulesPrompt = '';
     extensionSettings.customTrackerInstructionsPrompt = '';
     extensionSettings.customTrackerContinuationPrompt = '';
     // The Tracker Prompt override outranks every other setting in this dialog,

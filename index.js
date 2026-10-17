@@ -31,7 +31,7 @@ import {
     clearSessionAvatarPrompts,
     applyNewPlayerProfile
 } from './src/core/state.js';
-import { loadSettings, saveSettings, saveChatData, loadChatData, updateMessageSwipeData, setDoomKnivesEnabled } from './src/core/persistence.js';
+import { loadSettings, saveSettings, saveChatData, loadChatData, updateMessageSwipeData } from './src/core/persistence.js';
 import { registerAllEvents } from './src/core/events.js';
 import { registerSettingsUIInitializer, ensureSettingsUI } from './src/core/lazyUI.js';
 import { ensureCss, removeCss } from './src/core/cssLoader.js';
@@ -127,8 +127,7 @@ import {
     updatePersonaAvatar,
     clearExtensionPrompts,
     onGenerationEnded,
-    initHistoryInjection,
-    initDoomCounterListener
+    initHistoryInjection
 } from './src/systems/integration/sillytavern.js';
 import {
     initExpressionSync,
@@ -140,8 +139,6 @@ import {
     onExpressionSyncChatChanged,
     classifyActiveUserExpression,
 } from './src/systems/integration/expressionSync.js';
-// Doom Counter
-import { triggerDoomCounter, updateDoomCounterUI, resetCounters, isTrapTwistPending, clearTrapTwistFlag } from './src/systems/generation/doomCounter.js';
 // System Log & Notification Log
 import { initSystemLog, openSystemLog } from './src/systems/ui/systemLog.js';
 import { initNotificationLog } from './src/systems/ui/notificationLog.js';
@@ -1421,7 +1418,6 @@ function bindSettingsUI() {
         updateChatSceneHeaders();
     });
 
-    // ── Doom Counter customization ──
     // ── Inline Banners ──
     const _ibSettings = () => {
         if (!extensionSettings.inlineBanners) extensionSettings.inlineBanners = {};
@@ -1440,126 +1436,6 @@ function bindSettingsUI() {
         _ibSettings().style = $(this).val();
         saveSettings();
         updateChatSceneHeaders();
-    });
-
-    // ── Doom Counter ──
-    const _dcSettings = () => {
-        if (!extensionSettings.doomCounter) extensionSettings.doomCounter = {};
-        return extensionSettings.doomCounter;
-    };
-
-    $('#rpg-toggle-doom-counter').on('change', function () {
-        _dcSettings().enabled = $(this).prop('checked');
-        saveSettings();
-        $('#rpg-dc-badge').text($(this).prop('checked') ? 'on' : 'off');
-        $('#rpg-dc-options').toggle($(this).prop('checked'));
-        updateDoomCounterUI();
-    });
-
-    $('#rpg-dc-ceiling').on('input', function () {
-        const v = parseInt($(this).val());
-        _dcSettings().lowTensionCeiling = v;
-        $('#rpg-dc-ceiling-value').text(`1-${v}`);
-        saveSettings();
-    });
-
-    $('#rpg-dc-threshold').on('input', function () {
-        const v = parseInt($(this).val());
-        _dcSettings().lowTensionThreshold = v;
-        $('#rpg-dc-threshold-value').text(v);
-        $('#rpg-dc-streak-max').text(v);
-        saveSettings();
-    });
-
-    $('#rpg-dc-countdown').on('input', function () {
-        const v = parseInt($(this).val());
-        _dcSettings().countdownLength = v;
-        $('#rpg-dc-countdown-value').text(v);
-        saveSettings();
-    });
-
-    $('#rpg-dc-choices').on('change', function () {
-        _dcSettings().twistChoiceCount = parseInt($(this).val());
-        saveSettings();
-    });
-
-    $('#rpg-dc-trap-mode').on('change', function () {
-        _dcSettings().trapMode = $(this).prop('checked');
-        saveSettings();
-        updateDoomCounterUI();
-        updateChatSceneHeaders();
-    });
-
-    // ── Advanced section toggle ──
-    $('.rpg-dc-advanced-toggle').on('click', function () {
-        const $body = $('.rpg-dc-advanced-body');
-        const $chevron = $(this).find('.rpg-dc-advanced-chevron');
-        $body.slideToggle(200);
-        $chevron.toggleClass('fa-chevron-down fa-chevron-up');
-    });
-
-    // ── Advanced: Context Messages ──
-    $('#rpg-dc-context-messages').on('input', function () {
-        const v = parseInt($(this).val());
-        _dcSettings().twistContextMessages = v;
-        $('#rpg-dc-context-messages-value').text(v);
-        saveSettings();
-    });
-
-    // ── Advanced: Message Truncation ──
-    $('#rpg-dc-msg-truncation').on('input', function () {
-        const v = parseInt($(this).val());
-        _dcSettings().twistMessageTruncation = v;
-        $('#rpg-dc-msg-truncation-value').text(v);
-        saveSettings();
-    });
-
-    // ── Advanced: Twist Injection Depth ──
-    $('#rpg-dc-injection-depth').on('input', function () {
-        const v = parseInt($(this).val());
-        _dcSettings().twistInjectionDepth = v;
-        $('#rpg-dc-injection-depth-value').text(v);
-        saveSettings();
-    });
-
-    $('#rpg-dc-debug-display').on('change', function () {
-        const isDebug = $(this).prop('checked');
-        _dcSettings().debugDisplay = isDebug;
-        saveSettings();
-        updateChatSceneHeaders();
-        // Expand threshold slider range to 0 in debug mode for quick testing
-        const $slider = $('#rpg-dc-threshold');
-        if (isDebug) {
-            $slider.attr('min', 0);
-        } else {
-            $slider.attr('min', 3);
-            // Clamp value back up if it was set below 3
-            const cur = parseInt($slider.val());
-            if (cur < 3) {
-                $slider.val(3);
-                _dcSettings().lowTensionThreshold = 3;
-                $('#rpg-dc-threshold-value').text(3);
-                $('#rpg-dc-streak-max').text(3);
-                saveSettings();
-            }
-        }
-    });
-
-    $('#rpg-dc-trigger-now').on('click', function () {
-        triggerDoomCounter().catch(err => console.error('[Doom Counter] Manual trigger failed:', err));
-    });
-
-    $('#rpg-dc-reset').on('click', function () {
-        resetCounters();
-        saveChatData();
-        updateDoomCounterUI();
-        toastr.info('Doom Counter reset.', '', { timeOut: 2000 });
-    });
-
-    // ── Knives (per-chat toggle; the knives themselves live on character
-    //    cards in the Character Workshop) ──
-    $('#rpg-dc-knives-enabled').on('change', function () {
-        setDoomKnivesEnabled($(this).prop('checked'));
     });
 
     // NOTE: Name Ban handlers removed — feature superseded by Character
@@ -2164,31 +2040,6 @@ function bindSettingsUI() {
     $('#rpg-ib-options').toggle(ib.enabled || false);
     $('#rpg-ib-style').val(ib.style || 'cinematic');
 
-    // Doom Counter
-    const dc = extensionSettings.doomCounter || {};
-    $('#rpg-toggle-doom-counter').prop('checked', dc.enabled || false);
-    $('#rpg-dc-badge').text(dc.enabled ? 'on' : 'off');
-    $('#rpg-dc-options').toggle(dc.enabled || false);
-    $('#rpg-dc-ceiling').val(dc.lowTensionCeiling || 4);
-    $('#rpg-dc-ceiling-value').text(`1-${dc.lowTensionCeiling || 4}`);
-    $('#rpg-dc-threshold').attr('min', dc.debugDisplay ? 0 : 3).val(dc.lowTensionThreshold || 5);
-    $('#rpg-dc-threshold-value').text(dc.lowTensionThreshold || 5);
-    $('#rpg-dc-streak-max').text(dc.lowTensionThreshold || 5);
-    $('#rpg-dc-countdown').val(dc.countdownLength || 3);
-    $('#rpg-dc-countdown-value').text(dc.countdownLength || 3);
-    $('#rpg-dc-choices').val(dc.twistChoiceCount || 3);
-    $('#rpg-dc-context-messages').val(dc.twistContextMessages || 15);
-    $('#rpg-dc-context-messages-value').text(dc.twistContextMessages || 15);
-    $('#rpg-dc-msg-truncation').val(dc.twistMessageTruncation || 1200);
-    $('#rpg-dc-msg-truncation-value').text(dc.twistMessageTruncation || 1200);
-    $('#rpg-dc-injection-depth').val(dc.twistInjectionDepth || 0);
-    $('#rpg-dc-injection-depth-value').text(dc.twistInjectionDepth || 0);
-    $('#rpg-dc-trap-mode').prop('checked', dc.trapMode || false);
-    $('#rpg-dc-debug-display').prop('checked', dc.debugDisplay || false);
-    updateDoomCounterUI();
-    // (Doom Counter toast listener is registered eagerly in initUI — it must
-    // work before the settings UI has ever been opened.)
-
     // NOTE: Name Ban settings init removed — feature superseded by Character Aliases.
 
     // ── Doom Button (FAB) ──
@@ -2454,12 +2305,10 @@ async function initUI() {
         });
     });
     // Global appliers that used to run with the (now-deferred) settings
-    // binder: bubble CSS settings, ST top-bar visibility, the doom-counter
-    // trigger listener.
+    // binder: bubble CSS settings, ST top-bar visibility.
     try { applyChatBubbleSettings(); } catch (e) { console.error('[Dooms Tracker] applyChatBubbleSettings() FAILED:', e); }
     try { applyHideStTopBar(); } catch (e) { console.error('[Dooms Tracker] applyHideStTopBar() FAILED:', e); }
     try { applyPerformanceMode(); } catch (e) { console.error('[Dooms Tracker] applyPerformanceMode() FAILED:', e); }
-    try { initDoomCounterListener(); } catch (e) { console.error('[Dooms Tracker] initDoomCounterListener() FAILED:', e); }
     if (extensionSettings.chatBubbleSettings?.hideStAvatar) {
         document.body.classList.add('dooms-hide-st-avatar');
     }
@@ -3204,18 +3053,6 @@ jQuery(async () => {
                 // pipeline (recolor ~600ms, bubbles 800ms) has stopped
                 // rewriting .mes_text — see scheduleInlineThoughtsRefresh.
                 scheduleInlineThoughtsRefresh();
-                // Show trap mode notification on the message that received the silent twist
-                if (isTrapTwistPending() && messageElement) {
-                    clearTrapTwistFlag();
-                    const $mes = $(messageElement);
-                    if (!$mes.find('.dooms-dc-trap-badge').length) {
-                        $mes.find('.mes_block').append(`
-                            <div class="dooms-dc-trap-badge" title="A hidden plot twist was woven into this response by the Doom Counter's Trap Mode">
-                                <i class="fa-solid fa-skull"></i> Trap triggered
-                            </div>
-                        `);
-                    }
-                }
                 const renderedMessage = chat[messageId];
                 if (renderedMessage && !renderedMessage.is_user && !renderedMessage.is_system) {
                     queueExpressionCaptureForSpeaker(renderedMessage.name);

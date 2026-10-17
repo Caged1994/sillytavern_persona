@@ -31,8 +31,6 @@ const SLOT_REGISTRY = {
     'dooms-tracker-html':              { label: 'HTML Formatting Prompt',   source: 'injector',  feature: 'HTML Output' },
     'dooms-tracker-dialogue-coloring': { label: 'Dialogue Coloring Prompt', source: 'injector',  feature: 'Dialogue Coloring' },
     'dooms-tracker-new-fields':        { label: 'New-Field Boost',          source: 'injector',  feature: 'Tracker (new widgets)' },
-    'dooms-doom-counter-twist':        { label: 'Pending Plot Twist',       source: 'injector',  feature: 'Doom Counter' },
-    'dooms-doom-counter-tension':      { label: 'Tension Reporting',        source: 'injector',  feature: 'Doom Counter' },
     'dooms-workshop-scene-inject':     { label: 'Workshop: Inject Character', source: 'workshop', feature: 'Character Workshop' },
     'dooms-workshop-scene-eject':      { label: 'Workshop: Eject Character',  source: 'workshop', feature: 'Character Workshop' },
     'dooms-workshop-banned-characters':{ label: 'Workshop: Banned Characters', source: 'workshop', feature: 'Character Workshop' },

@@ -43,11 +43,7 @@ export let extensionSettings = {
     customTrackerContinuationPrompt: '', // Custom tracker continuation prompt (empty = use default)
     customWeatherPrompt: '', // Custom weather forecast instruction for info box JSON (empty = use default)
     customCharacterThoughtsPrompt: '', // Custom character thoughts/present characters prompt (empty = use default)
-    customPlotTwistTemplatePrompt: '', // Custom plot twist injection template (empty = use default)
-    customKnifeTemplatePrompt: '', // Custom knife injection template (empty = use default)
-    customKnifeGeneratorRulesPrompt: '', // Custom knife generator rules prompt (empty = use default)
     customNewFieldsBoostPrompt: '', // Custom new fields boost template (empty = use default)
-    customTwistGeneratorRulesPrompt: '', // Custom twist generator rules prompt (empty = use default)
     // NOTE: enableDeceptionSystem, enableOmniscienceFilter, enableCYOA, enableSpotifyMusic
     // and their custom prompt fields have been removed (see git history)
     heroPositions: {},         // Per-character hero art positioning { characterName: { x, y } }
@@ -399,24 +395,6 @@ export let extensionSettings = {
         autoLinkByName: true,   // feature toggle (Settings → Lore Library)
         autoLinked: [],         // ledger: the books auto-link switched on — only these get switched off
     },
-    // Doom Counter — tension-driven plot twist system
-    // Uses its own 1-10 numeric tension scale (independent of the infoBox tension widget)
-    doomCounter: {
-        enabled: false,                        // Master toggle
-        debugDisplay: false,                   // Show debug badge in scene tracker
-        lowTensionThreshold: 5,                // Consecutive low-tension responses before countdown activates
-        countdownLength: 3,                    // Starting countdown value when phase 2 activates
-        twistChoiceCount: 3,                   // Number of twist options generated (2-6)
-        lowTensionCeiling: 4,                  // Tension values 1-N count as "low" (default: 1-4)
-        // Countdown speed by tension level (lower tension = faster countdown):
-        // tension 1 → decrement by 3, tension 2 → by 2, tension 3-4 → by 1
-        // tension 5-10 → resets streak entirely
-        // Advanced twist generation settings
-        twistContextMessages: 15,              // Number of recent chat messages included in twist prompt (1-30)
-        twistMessageTruncation: 1200,          // Max characters per message in twist prompt (200-3000)
-        twistInjectionDepth: 0,                // Insertion depth for the twist prompt (0 = bottom of context, higher = further back)
-        trapMode: false,                       // Silent mode: hides countdown, generates 1 twist, auto-injects without showing the user
-    },
     // Preset management for tracker configurations
     presetManager: {
         // Map of preset ID to preset data (contains name and trackerConfig)
@@ -472,7 +450,6 @@ export const NEW_PLAYER_PROFILE = {
     'performanceMode': false,
     'historyPersistence.enabled': false,
     'inlineBanners.enabled': false,
-    'doomCounter.enabled': false,
     'lorebook.enabled': false,
 };
 

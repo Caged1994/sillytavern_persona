@@ -29,7 +29,6 @@ import { revertAIPersonasForReplacedMessage } from '../features/characterPersona
 import { revertAIConfidantsForReplacedMessage } from '../features/characterConfidants.js';
 import { revertAICalendarForReplacedMessage } from '../features/calendar.js';
 import { revertAIChecksForReplacedMessage } from '../features/characterChecks.js';
-import { getPendingTwist, isPendingTwistAKnife, getPendingKnifeCharacter, clearPendingTwist, buildDoomTensionInstruction, DOOM_TWIST_SLOT, DOOM_TENSION_SLOT } from './doomCounter.js';
 import {
     generateTrackerExample,
     generateTrackerInstructions,
@@ -40,7 +39,7 @@ import {
     DEFAULT_NARRATOR_PROMPT,
     DEFAULT_CONTEXT_INSTRUCTIONS_PROMPT
 } from './promptBuilder.js';
-import { DEFAULT_PLOT_TWIST_TEMPLATE_PROMPT, DEFAULT_KNIFE_TEMPLATE_PROMPT, DEFAULT_NEW_FIELDS_BOOST_PROMPT } from './defaultPrompts.js';
+import { DEFAULT_NEW_FIELDS_BOOST_PROMPT } from './defaultPrompts.js';
 // Track suppression state for event handler
 let currentSuppressionState = false;
 // Cache of the last GENERATION_STARTED args (type/data/dryRun) so the
@@ -740,39 +739,8 @@ export async function onGenerationStarted(type, data, dryRun) {
     // Fires each generation; self-clears once fields appear in AI output.
     injectNewFieldBoost(shouldSuppress);
 
-    // ─── Doom Counter injections ──────────────────────────────────────────────
-    // 1. Inject pending twist (chosen by user) into the prompt at IN_PROMPT level.
-    //    IMPORTANT: The twist injection intentionally bypasses shouldSuppress.
-    //    The user explicitly chose a twist via the modal — suppressing it would
-    //    silently discard their choice. Tracker instructions are suppressed during
-    //    guided generations, but the twist is a one-shot user action, not a tracker.
-    if (extensionSettings.doomCounter?.enabled) {
-        const pendingTwist = getPendingTwist();
-        const twistDepth = extensionSettings.doomCounter?.twistInjectionDepth || 0;
-        if (pendingTwist) {
-            // Knives (player-authored story beats) get their own wrapper template.
-            // Read the flag BEFORE clearPendingTwist(), which resets it.
-            let twistPrompt;
-            if (isPendingTwistAKnife()) {
-                const knifeTemplate = extensionSettings.customKnifeTemplatePrompt || DEFAULT_KNIFE_TEMPLATE_PROMPT;
-                const knifeCharacter = getPendingKnifeCharacter() || 'a character in the scene';
-                twistPrompt = `\n${knifeTemplate.replace('{knife}', pendingTwist).replace('{character}', knifeCharacter)}\n`;
-            } else {
-                const twistTemplate = extensionSettings.customPlotTwistTemplatePrompt || DEFAULT_PLOT_TWIST_TEMPLATE_PROMPT;
-                twistPrompt = `\n${twistTemplate.replace('{twist}', pendingTwist)}\n`;
-            }
-            setExtensionPrompt(DOOM_TWIST_SLOT, twistPrompt, extension_prompt_types.IN_CHAT, twistDepth, false);
-            // Clear the pending twist after injecting — it's a one-shot
-            clearPendingTwist();
-            console.log(`[Doom Counter] Twist injected into prompt at depth ${twistDepth}.`);
-        } else {
-            setExtensionPrompt(DOOM_TWIST_SLOT, '', extension_prompt_types.IN_CHAT, twistDepth, false);
-        }
-    } else {
-        // Clear twist slot if disabled
-        setExtensionPrompt(DOOM_TWIST_SLOT, '', extension_prompt_types.IN_CHAT, 0, false);
-    }
-    // ──────────────────────────────────────────────────────────────────────────
+    // The removed Doom Counter's slot stays empty (an old chat may still hold a twist).
+    setExtensionPrompt('dooms-doom-counter-twist', '', extension_prompt_types.IN_CHAT, 0, false);
 
     const currentChatLength = chat ? chat.length : 0;
     // For TOGETHER mode: Commit when user sends message (before first generation)

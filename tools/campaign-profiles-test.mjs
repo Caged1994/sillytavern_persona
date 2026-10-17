@@ -51,7 +51,6 @@ function reset() {
     extensionSettings.npcAvatarsFullRes = { Hex: '/user/images/des-portraits/hex-aaaaaaaa.png?t=1' };
     extensionSettings.npcAvatarHistory = {};
     extensionSettings.characterRelationships = { Hex: 'Ally' };
-    extensionSettings.characterKnives = { Hex: [{ id: 'k1', text: 'owes money', used: false }] };
     extensionSettings.heroPositions = { Hex: { x: 40, y: 10 } };
     extensionSettings.generatedPortraits = {};
     extensionSettings.userCharacters = {};
@@ -203,7 +202,6 @@ test('deleteCharacterEverywhere clears every bucket and the shadow', () => {
     assert.ok(extensionSettings.npcAvatars.Hex);
     cp.removeFromLive('Hex');
     assert.equal(extensionSettings.npcAvatars.Hex, undefined);
-    assert.equal(extensionSettings.characterKnives.Hex, undefined);
     // switching away afterwards must not resurrect anything
     activate(null);
     assert.equal(extensionSettings.npcAvatars.Hex, undefined);
@@ -274,8 +272,6 @@ test('book bookkeeping follows renames and deletes', () => {
 
 test('snapshots are clones, not references', () => {
     const snap = cp.snapshotLive('Hex');
-    snap.knives[0].text = 'mutated';
-    assert.equal(extensionSettings.characterKnives.Hex[0].text, 'owes money');
     cp.addProfile('c1', 'Hex');
     const p = cp.getProfile('c1', 'Hex');
     p.injection.description = 'mutated';

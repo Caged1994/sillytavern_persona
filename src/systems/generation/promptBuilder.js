@@ -296,13 +296,6 @@ export function getTrackerPromptKeyWarnings(promptText) {
         need('characters', 'Present Characters');
         need('name', 'Present Characters — character names');
     }
-    // doomTension rides inside the infoBox block, so it's only ever asked for
-    // when the Scene Tracker is on. Warning on doomCounter alone flagged DES's
-    // own untouched default prompt as broken for anyone running the Doom
-    // Counter with the Scene Tracker off.
-    if (extensionSettings.doomCounter?.enabled && extensionSettings.showInfoBox) {
-        need('doomTension', 'Doom Counter');
-    }
     return missing;
 }
 

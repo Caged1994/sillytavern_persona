@@ -10,7 +10,7 @@
  * inside it — the decoration pipeline (recolor, chat bubbles, edits) rewrites
  * .mes_text's innerHTML and would destroy anything inside it (inline thoughts
  * pay a re-insertion scheduler for living there; a sibling survives for free,
- * same trick as the Doom Counter's trap badge).
+ * the same way a badge is added to a rendered message).
  */
 import { extensionSettings, lastGeneratedData } from '../../core/state.js';
 import { saveChatDebounced } from '../../../../../../../script.js';

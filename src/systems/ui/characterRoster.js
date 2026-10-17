@@ -1127,7 +1127,7 @@ function purgeCharacter(name) {
         ...deleteCharacterEverywhere(name),
     ];
     // Every version-backed store (portraits, injection extras, relationship,
-    // knives, appearance, hero position, auto-portrait meta) — the same set
+    // appearance, hero position, auto-portrait meta) — the same set
     // the Workshop's delete clears.
     removeFromLive(name);
     if (s.knownCharacters) delete s.knownCharacters[name];

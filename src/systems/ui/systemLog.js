@@ -21,7 +21,7 @@ const _origError = console.error;
  * a prefix are still captured at warn/error so unhandled ST/library
  * failures that affect DES still land in the buffer.
  */
-const DES_PREFIXES = ['[Dooms', '[DES', '[Doom Counter]', '[Doom\'s'];
+const DES_PREFIXES = ['[Dooms', '[DES', '[Doom\'s'];
 
 function isBranded(text) {
     if (typeof text !== 'string') return false;
@@ -185,7 +185,6 @@ function buildDiagnosticHeader() {
         lines.push(`historyPersistence.enabled: ${s.historyPersistence?.enabled}`);
         lines.push(`historyPersistence.injectionPosition: ${s.historyPersistence?.injectionPosition || '(unset)'}`);
         lines.push(`historyPersistence.contextPreamble: ${JSON.stringify(s.historyPersistence?.contextPreamble || '')}`);
-        lines.push(`doomCounter.enabled: ${s.doomCounter?.enabled}`);
         lines.push(`theme: ${s.theme || '(unset)'}`);
         lines.push(`activeUserCharacter: ${s.activeUserCharacter || '(none)'}`);
         lines.push(`userCharacters count: ${Object.keys(s.userCharacters || {}).length}`);

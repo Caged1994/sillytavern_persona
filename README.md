@@ -20,7 +20,7 @@ Persona Stats is a modified version of [Better Stats](https://github.com/Caged19
 - Combat rebalanced for the 1–99 scale: HP, damage and healing grow with level, hit/flee chances compare Agility as a ratio, Luck raises critical hits; a fight between equals takes about five hits at any level. Condition maluses and the AI's guidance for item/condition effects scaled up to match.
 - Combat, dungeon, effects and conditions remapped to the new attributes.
 - Checks (d20) use the social stats instead: d20 + 2 × (rank − 1) + bonus (±5) against the difficulty; a natural 1 always fails and no check is ever above 95%.
-- Removed: Bunny Mo integration, the human-scale (average/peak) tiers, the Character Sheet feature and the sphere grid.
+- Removed: Bunny Mo integration, the human-scale (average/peak) tiers, the Character Sheet feature, the sphere grid and the Doom Counter (tension-driven plot twists, with the characters' Knives).
 - Kept: weather, Lore Library, portrait bar, scene headers, chat bubbles, themes.
 
 ## Persona Compendium (lorebook)
@@ -64,7 +64,7 @@ July 13 evening — Fireworks festival
 
 A date without a year repeats every year. A swipe undoes what the replaced reply changed.
 
-**Without the Info Box.** The Info Box is optional. Turn it off, or just its date widget, and the calendar carries the whole scene by itself. The AI sends `"calendar": {"date", "slot", "weather", "location"}` when one of them changes. The context line tells it where and when the scene is. The weather effects and the chat scene header read the calendar instead. You can also type the place in the Calendar tab. The only feature still tied to the Info Box is the Doom Counter (tension), which Persona Stats inherited from Better Stats.
+**Without the Info Box.** The Info Box is optional. Turn it off, or just its date widget, and the calendar carries the whole scene by itself. The AI sends `"calendar": {"date", "slot", "weather", "location"}` when one of them changes. The context line tells it where and when the scene is. The weather effects and the chat scene header read the calendar instead. You can also type the place in the Calendar tab. Nothing else depends on the Info Box.
 
 ## Confidant abilities (teammates)
 

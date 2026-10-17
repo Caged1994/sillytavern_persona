@@ -24,8 +24,6 @@ import { parseResponse, parseQuests } from '../generation/parser.js';
 import { updateRPGData, parseCharacterEntriesFromThoughts } from '../generation/apiClient.js';
 import { removeLocks } from '../generation/lockManager.js';
 import { onGenerationStarted, initHistoryInjectionListeners, clearBoostForAppearedFields } from '../generation/injector.js';
-// Doom Counter
-import { onResponseReceived as doomCounterOnResponse, triggerDoomCounter, updateDoomCounterUI, isTriggerInProgress } from '../generation/doomCounter.js';
 // Rendering
 import { renderInfoBox } from '../rendering/infoBox.js';
 import { renderThoughts, updateChatThoughts } from '../rendering/thoughts.js';
@@ -82,7 +80,7 @@ function findLastUserMessageText() {
  * The message-received handler renders several panels and THEN persists the
  * turn's tracker data. A throw from any one renderer used to abort the rest
  * of the handler — so a single broken panel silently took out the portrait
- * bar, auto-portraits, the doom counter, AND `saveChatData`, meaning that
+ * bar, auto-portraits, AND `saveChatData`, meaning that
  * turn's tracker data was never written to the chat file. (Field report: a
  * stale panel reference made renderThoughts throw on every message; the
  * visible symptom was "the panels stopped updating and my injected
@@ -373,23 +371,6 @@ export async function onMessageReceived(data) {
             // Save to chat metadata (immediate: generation-end commit point)
             saveChatData({ immediate: true });
 
-            // Doom Counter: evaluate tension after parsing (only for fresh generations, not history loads)
-            if (extensionSettings.doomCounter?.enabled && isAwaitingNewMessage) {
-                const dcResult = doomCounterOnResponse();
-                updateDoomCounterUI();
-                if (dcResult.triggered && !isTriggerInProgress()) {
-                    // Auto-launch the inline twist picker
-                    toastr.warning('☠️ The Doom Counter has triggered!', '', { timeOut: 2000 });
-                    // Small delay so the AI response finishes rendering before we append
-                    setTimeout(() => triggerDoomCounter().catch(err => console.error('[Doom Counter] Auto-trigger failed:', err)), 600);
-                } else if (dcResult.countdownActive) {
-                    toastr.info(
-                        `Countdown: ${dcResult.countdownCount} remaining (tension: ${dcResult.tensionValue}/10)`,
-                        '⏳ Doom Counter',
-                        { timeOut: 3000 }
-                    );
-                }
-            }
         }
     } else if (extensionSettings.generationMode === 'separate' || extensionSettings.generationMode === 'external') {
         // In separate/external mode, no additional rendering needed for the main message
@@ -422,21 +403,6 @@ export async function onMessageReceived(data) {
                         classifyActiveUserExpression(lastUserText)
                             .then(() => updatePortraitBar())
                             .catch(err => console.error('[DES] User expression classification failed:', err));
-                    }
-                }
-                // Doom Counter: evaluate tension after separate mode update
-                if (extensionSettings.doomCounter?.enabled) {
-                    const dcResult = doomCounterOnResponse();
-                    updateDoomCounterUI();
-                    if (dcResult.triggered && !isTriggerInProgress()) {
-                        toastr.warning('☠️ The Doom Counter has triggered!', '', { timeOut: 2000 });
-                        setTimeout(() => triggerDoomCounter().catch(err => console.error('[Doom Counter] Auto-trigger failed:', err)), 600);
-                    } else if (dcResult.countdownActive) {
-                        toastr.info(
-                            `Countdown: ${dcResult.countdownCount} remaining (tension: ${dcResult.tensionValue}/10)`,
-                            '⏳ Doom Counter',
-                            { timeOut: 3000 }
-                        );
                     }
                 }
             }, 500);
@@ -483,8 +449,6 @@ export function onCharacterChanged() {
     renderThoughts();
     renderQuests();
 
-    // Update Doom Counter UI with this chat's state
-    updateDoomCounterUI();
     // Scene header layouts that render into <body> or #chat directly (not into a specific
     // message element) can also render immediately — ticker, ticker-bottom, and hud don't
     // need any .mes elements to exist. This lets the scene tracker appear at the same
@@ -698,6 +662,7 @@ export function clearExtensionPrompts() {
     setExtensionPrompt('dooms-tracker-dialogue-coloring', '', extension_prompt_types.IN_CHAT, 0, false);
     setExtensionPrompt('dooms-tracker-spotify', '', extension_prompt_types.IN_CHAT, 0, false);
     setExtensionPrompt('dooms-tracker-context', '', extension_prompt_types.IN_CHAT, 1, false);
+    // Leftover slot of the removed Doom Counter (an old chat may still hold a twist).
     setExtensionPrompt('dooms-doom-counter-twist', '', extension_prompt_types.IN_PROMPT, 0, false);
     // Note: dooms-tracker-plot is not cleared here since it's passed via quiet_prompt option
 }
@@ -716,12 +681,3 @@ export function initHistoryInjection() {
     initHistoryInjectionListeners();
 }
 
-/**
- * Initialize Doom Counter event listener.
- * Kept as a legacy hook for the DOM event (in case other code dispatches it).
- */
-export function initDoomCounterListener() {
-    document.addEventListener('doom-counter-trigger', () => {
-        triggerDoomCounter().catch(err => console.error('[Doom Counter] Event trigger failed:', err));
-    });
-}

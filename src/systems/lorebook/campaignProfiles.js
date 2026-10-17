@@ -42,7 +42,6 @@ export const PROFILE_FIELDS = Object.freeze([
     { field: 'avatarFullRes', store: 'npcAvatarsFullRes' },
     { field: 'avatarHistory', store: 'npcAvatarHistory' },
     { field: 'relationship',  store: 'characterRelationships' },
-    { field: 'knives',        store: 'characterKnives' },
     { field: 'heroPosition',  store: 'heroPositions' },
     { field: 'portraitMeta',  store: 'generatedPortraits' },
 ]);

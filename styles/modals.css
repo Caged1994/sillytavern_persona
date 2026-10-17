@@ -5812,7 +5812,7 @@ body.dooms-perf-mode #character-workshop-popup .cw-version-add {
 }
 
 /* The wrapping default stays for every OTHER chip row using this class —
-   #cw-pronoun-chips and the knife-theme picker, neither of which has arrows.
+   #cw-pronoun-chips, which has no arrows.
    Making the class itself non-wrapping put their overflow out of mouse reach. */
 #character-workshop-popup .rpg-rel-chips {
     display: flex;
