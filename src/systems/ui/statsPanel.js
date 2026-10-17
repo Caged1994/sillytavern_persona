@@ -366,7 +366,7 @@ function personaHtml() {
                 <select data-pr-field="arcana" aria-label="Arcana"><option value="">Arcana…</option>${ARCANA.map(a => `<option${a === personaForm.arcana ? ' selected' : ''}>${a}</option>`).join('')}</select>
                 <select data-pr-field="focus" aria-label="Strongest stat"><option value="">Even stats</option>${P_STATS.map(id => `<option value="${id}"${id === personaForm.focus ? ' selected' : ''}>Leans on ${P_LABELS[id]}</option>`).join('')}</select>
             </div>` : ''}
-            ${known ? `<p class="dsp-section-hint">From the Compendium: ${escapeHtml(known.arcana)} · Lv ${known.level}${capNow !== null && !personaForm.level && known.level !== capNow ? ` — comes in at ${escapeHtml(selected.name)}'s level (${capNow})` : ''}</p>` : (personaForm.name.trim() ? `<p class="dsp-section-hint">Not in the Compendium: the extension sets its stats from the level${capNow !== null ? ` (up to ${capNow})` : ''}.</p>` : '')}
+            ${known ? `<p class="dsp-section-hint">From the Compendium: ${escapeHtml(known.arcana)} · Lv ${known.level}${capNow !== null && (!personaForm.level ? known.level !== capNow : Number(personaForm.level) > capNow) ? ` — comes in at ${escapeHtml(selected.name)}'s level (${capNow})` : ''}</p>` : (personaForm.name.trim() ? `<p class="dsp-section-hint">Not in the Compendium: the extension sets its stats from the level${capNow !== null ? ` (up to ${capNow})` : ''}.</p>` : '')}
             <div class="dsp-item-form-row">
                 <span class="dsp-item-error" role="alert">${escapeHtml(personaForm.error)}</span>
                 <button type="button" class="dsp-text-btn is-primary" data-action="pr-add">Add</button>

@@ -140,7 +140,9 @@ check('its skills join the spells', Ab.getAbilities('Mastera', true).some(a => a
 S.setCurrentStatValue('Mastera', true, 'st', 5);
 check('editing St edits the Persona', Pe.getActivePersona('Mastera', true).stats.st === 5);
 check('...not the Compendium', ars.stats.st === 2);
-check('a Persona above the character\'s level is refused', !!Pe.addPersona('Mastera', true, { name: 'Bicorn', arcana: 'Hermit', focus: 'st', level: 6 }).error);
+const bic0 = Pe.addPersona('Mastera', true, { name: 'Bicorn', arcana: 'Hermit', focus: 'st', level: 6 });
+check('a Persona asked above the character\'s level comes in at the character\'s level', bic0.persona?.level === P.getProgress('Mastera', true).level);
+Pe.removePersona('Mastera', true, bic0.persona?.id);
 P.setLevel('Mastera', true, 7);
 check('...the equipped one levels with the character', Pe.getActivePersona('Mastera', true).level === 7);
 r = Pe.addPersona('Mastera', true, { name: 'Bicorn', arcana: 'Hermit', focus: 'st', level: 6 });
@@ -174,7 +176,9 @@ Comp.setCompendiumForTests([ars, { ...ars, name: 'Satanael', level: 95, stats: {
 const satHand = Pe.addPersona('Mastera', true, 'Satanael');
 check('a strong Compendium Persona added by hand comes in at the character\'s level', satHand.persona?.level === P.getProgress('Mastera', true).level, JSON.stringify(satHand.error || satHand.persona?.level));
 Pe.removePersona('Mastera', true, satHand.persona?.id);
-check('...but asking for a level above the character is refused', !!Pe.addPersona('Mastera', true, { name: 'Satanael', level: 95 }).error);
+const sat95 = Pe.addPersona('Mastera', true, { name: 'Satanael', level: 95 });
+check('...and so does one asked for at a level above the character', sat95.persona?.level === P.getProgress('Mastera', true).level);
+Pe.removePersona('Mastera', true, sat95.persona?.id);
 chat.push({ is_user: true, mes: 'q1' }, { is_user: false, mes: 'q2' });
 Pe.applyAIPersonas({ Mastera: { add: 'Satanael' } }, last());
 const sat = Pe.getPersonas('Mastera', true).find(p => p.name === 'Satanael');

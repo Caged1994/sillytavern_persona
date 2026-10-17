@@ -183,15 +183,20 @@ export function addPersona(name, isUser, desc) {
     // Without a level typed in, it comes in at its user's level (as an awakening does).
     const persona = makePersonaFor(name, isUser, d, { atUserLevel: !d.level });
     if (!persona) return { error: 'Give the Persona a name.' };
-    console.log(`[Dooms Tracker] Personas: adding ${persona.name} to ${name} — ${findInCompendium(d.name) ? 'from the Compendium' : 'not in the Compendium (made from its level)'}, Lv ${persona.level}`);
-    if (!canUsePersona(name, isUser, persona)) {
-        return { error: `${persona.name} is level ${persona.level}: ${name} must reach level ${persona.level} first (now ${personaLevelCap(name, isUser)}).` };
-    }
+    // A level typed above the user's: brought down to it (never above its user).
+    const cap = personaLevelCap(name, isUser);
+    if (cap !== null && persona.level > cap) Object.assign(persona, P.setPersonaLevel(persona, cap).persona);
     const key = statKey(name, isUser);
     const rec = readKey(key);
     const res = addTo(rec, persona);
+    console.log(`[Dooms Tracker] Personas: adding ${persona.name} to ${name} (${isUser ? 'user' : 'npc'}, ${rec.wildCard ? 'Wild Card' : 'one Persona'}, character level ${cap ?? 'off'}) — ${findInCompendium(d.name) ? 'from the Compendium' : 'not in the Compendium'}, Lv ${persona.level}: ${res.error ? `refused (${res.error})` : 'added'}`);
     if (res.error) return res;
     writeKey(key, rec);
+    const saved = readKey(key).list.some(p => p.id === persona.id);
+    if (!saved) {
+        console.warn(`[Dooms Tracker] Personas: ${persona.name} could not be stored — no chat data to write to (is a chat open and saved?)`);
+        return { error: 'It could not be saved in this chat. Send a message first (a new chat is not saved until then), then try again.' };
+    }
     changed(name, isUser);
     return res;
 }
