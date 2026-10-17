@@ -1,10 +1,14 @@
 {
-    "version": "0.1.0",
-    "title": "Persona Stats",
+    "version": "0.2.0",
+    "title": "Persona Stats 0.2",
     "items": [
         {
-            "title": "Persona stats",
-            "body": "St, Ma, En, Ag and Lu replace the D&D attributes. HP and SP are shown; satiety, energy, hygiene and morale are off until you switch them on."
+            "title": "Personas, Velvet Room and Shuffle Time",
+            "body": "Persona Compendium from a lorebook (card, chat or global), fusion in the Velvet Room, Shuffle Time cards after won fights."
+        },
+        {
+            "title": "Confidants, Calendar and the Otherworld",
+            "body": "Confidants with battle abilities, a calendar with times of day and deadlines, labyrinths and domains kept in the chat."
         }
     ]
 }
