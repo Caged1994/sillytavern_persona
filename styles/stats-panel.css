@@ -1729,3 +1729,45 @@ input.dsp-xp-big { width: 3em; font-size: 20px; text-align: center; }
     paint-order: stroke fill; -webkit-text-stroke: 3px var(--p5-ink);
 }
 .dsp-p-row.is-points { grid-template-columns: 50px minmax(84px, auto) minmax(60px, 1fr) auto; }
+
+/* ══ Confidants: tarot cards ═══════════════════════════════════════════ */
+.dsp-conf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(98px, 1fr)); gap: 8px; margin: 6px 0 10px; }
+.dsp-conf {
+    position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px;
+    aspect-ratio: 3 / 4.4; padding: 8px 6px 7px; font: inherit; color: #fff; cursor: pointer; overflow: hidden;
+    border: 2px solid #c9a24a; border-radius: 8px;
+    background:
+        linear-gradient(180deg, #d7192e 0 22%, transparent 22%),
+        repeating-linear-gradient(135deg, rgba(255,255,255,0.04) 0 3px, transparent 3px 9px),
+        #0c0d16;
+    box-shadow: inset 0 0 0 2px #05060c, 0 3px 10px rgba(0,0,0,0.4);
+}
+.dsp-conf:hover { filter: brightness(1.12); }
+.dsp-conf.is-viewed { outline: 2px solid #fff23a; outline-offset: 1px; }
+.dsp-conf.is-max { border-color: #fff23a; }
+.dsp-conf.is-unmet { opacity: 0.55; border-style: dashed; background: #0c0d16; }
+.dsp-conf-num { font-family: Georgia, "Times New Roman", serif; font-weight: 700; font-size: 15px; letter-spacing: 0.06em; color: #fff; }
+.dsp-conf-arcana { font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; color: #c9a24a; margin-top: 6px; }
+.dsp-conf-rank {
+    font-family: "Arial Black", "Arial Bold", Impact, sans-serif; font-style: italic; font-size: 30px; line-height: 1;
+    color: #fff23a; paint-order: stroke fill; -webkit-text-stroke: 3px #05060c; margin: 2px 0;
+}
+.dsp-conf.is-unmet .dsp-conf-rank { color: #bbb; }
+.dsp-conf-name {
+    font-size: 11px; font-weight: 800; font-style: italic; background: #05060c; padding: 1px 6px;
+    transform: skewX(-10deg); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dsp-conf-pips { display: flex; gap: 2px; margin-top: auto; }
+.dsp-conf-pips i { width: 6px; height: 6px; border-radius: 50%; background: rgba(255,255,255,0.15); }
+.dsp-conf-pips i.is-on { background: #fff23a; }
+.dsp-conf-pips.is-unmet { font-size: 9px; color: #aaa; text-transform: uppercase; letter-spacing: 0.08em; }
+.dsp-conf-bar { width: 80%; height: 3px; border-radius: 2px; background: rgba(255,255,255,0.12); overflow: hidden; margin-top: 3px; }
+.dsp-conf-bar span { display: block; height: 100%; background: #c9a24a; }
+.dsp-conf-detail { padding: 10px; border: 1px solid var(--dsp-border); border-radius: 10px; background: linear-gradient(160deg, rgba(215,25,46,0.14), rgba(255,255,255,0.02)); }
+.dsp-conf-list { margin: 4px 0 6px; padding-left: 18px; font-size: 12px; }
+.dsp-conf-list li { color: var(--dsp-muted); }
+.dsp-conf-list li.is-done { color: var(--dsp-text); }
+.dsp-conf-list li.is-done::marker { content: "✓ "; color: #7ee2a8; }
+.dsp-conf-pending { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.dsp-conf-ask { display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; border-radius: 8px; border: 1px solid #c9a24a; background: rgba(201,162,74,0.12); }
+.dsp-conf-ask > span { flex: 1; }

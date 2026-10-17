@@ -1218,6 +1218,47 @@
                         <select id="rpg-persona-compendium" class="text_pole" style="max-width:200px;"></select>
                     </div>
 
+                    <div class="rpg-subsection-label" style="margin-top:16px;">Confidants</div>
+                    <div class="rpg-setting-row">
+                        <div class="rpg-setting-label-group">
+                            <span class="rpg-setting-label">Confidants</span>
+                            <span class="rpg-setting-hint">Social Links: one person per Arcana, rank 1–10, raised by time spent together (the AI gives the points). Lorebook entries starting with "Confidant:" describe the ones a card has planned (see the README).</span>
+                        </div>
+                        <label class="rpg-toggle-switch">
+                            <input type="checkbox" id="rpg-confidants-enabled" />
+                            <span class="rpg-toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div class="rpg-setting-row">
+                        <div class="rpg-setting-label-group">
+                            <span class="rpg-setting-label">Who can become one <span id="rpg-confidant-card"></span></span>
+                            <span class="rpg-setting-hint">For this card. Defined: only the lorebook's Confidants (and yours). Mixed: the lorebook's keep their Arcana, the story fills the free ones. Sandbox: all from the story. Automatic: Mixed when an active lorebook has Confidants, Sandbox otherwise. <span id="rpg-confidant-mode-now"></span></span>
+                        </div>
+                        <select id="rpg-confidant-mode" class="text_pole" style="max-width:160px;">
+                            <option value="auto">Automatic</option>
+                            <option value="defined">Defined</option>
+                            <option value="mixed">Mixed</option>
+                            <option value="sandbox">Sandbox</option>
+                        </select>
+                    </div>
+                    <div class="rpg-setting-row">
+                        <div class="rpg-setting-label-group">
+                            <span class="rpg-setting-label">Affinity needed</span>
+                            <span class="rpg-setting-hint">Before the story can turn someone not in the lorebook into a Confidant, their affinity toward you must be at least this (−100…100; 20 = Friendly).</span>
+                        </div>
+                        <input type="number" id="rpg-confidant-min" class="text_pole" min="-100" max="100" step="5" style="max-width:80px;" />
+                    </div>
+                    <div class="rpg-setting-row">
+                        <div class="rpg-setting-label-group">
+                            <span class="rpg-setting-label">Ask before a new one</span>
+                            <span class="rpg-setting-hint">A bond the AI starts (not from the lorebook) waits in the Confidants tab for Accept / Reject.</span>
+                        </div>
+                        <label class="rpg-toggle-switch">
+                            <input type="checkbox" id="rpg-confidant-confirm" />
+                            <span class="rpg-toggle-slider"></span>
+                        </label>
+                    </div>
+
                     <div class="rpg-subsection-label" style="margin-top:16px;">Social stats</div>
                     <div class="rpg-setting-row">
                         <div class="rpg-setting-label-group">

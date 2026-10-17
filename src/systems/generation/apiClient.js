@@ -38,6 +38,7 @@ import { applyAIMoney, applyAICurrency } from '../features/characterMoney.js';
 import { applyAIAffinity } from '../features/characterAffinity.js';
 import { applyAISocial } from '../features/characterSocial.js';
 import { applyAIPersonas } from '../features/characterPersonas.js';
+import { applyAIConfidants } from '../features/characterConfidants.js';
 import { settleChecks } from '../features/characterChecks.js';
 import { renderThoughts, updateChatThoughts } from '../rendering/thoughts.js';
 import { renderQuests } from '../rendering/quests.js';
@@ -379,6 +380,10 @@ export async function updateRPGData(renderInfoBox, renderThoughts) {
             // Personas: before stats, so new attributes are in place.
             if (parsedData.personas) {
                 try { applyAIPersonas(parsedData.personas, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Personas: applying AI update failed', e); }
+            }
+            // Confidants: bonds started and points earned.
+            if (parsedData.confidants) {
+                try { applyAIConfidants(parsedData.confidants, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Confidants: applying AI update failed', e); }
             }
             if (parsedData.social) {
                 try { applyAISocial(parsedData.social, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Social: applying AI update failed', e); }

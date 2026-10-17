@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Confidants: lorebook format, ranks with requirements and unlocks, per-card mode (automatic / defined / mixed / sandbox), affinity gate, one per Arcana, optional Accept / Reject, AI points with swipe undo, tarot-card tab in the Stats panel.
 - A Persona can never be above its user's level (Levels on): adding or equipping one refused, the AI's stronger awakenings come in at the user's level, + capped.
 - Hit chances raised (about 90% between equals, as in the games).
 - HP and SP shown and edited as points (current / max) in the Stats panel, fights and dungeons; max HP from En and level, max SP from level; SP costs are the game's points.

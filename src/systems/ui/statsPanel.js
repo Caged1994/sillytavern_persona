@@ -54,6 +54,11 @@ import { isDungeonEnabled, hasLiveDungeon } from '../features/dungeon.js';
 import { isSocialEnabled, getSocialView, setSocialPoints } from '../features/characterSocial.js';
 import { isResource, getResource, setResourcePoints } from '../features/characterResources.js';
 import {
+    isConfidantsEnabled, getBonds, getPending, getUnmet, freeArcana, getConfidantMode, startConfidant, removeConfidant,
+    setConfidantRank, acceptPending, rejectPending, CONFIDANTS_CHANGED_EVENT,
+} from '../features/characterConfidants.js';
+import { arcanaNumber, MAX_RANK as CONF_MAX } from '../../utils/confidantModel.js';
+import {
     isPersonasEnabled, getPersonaRecord, getActivePersona, addPersona, equipPersona, removePersona, personaLevelCap,
     setPersonaLevel, setPersonaStat, cyclePersonaAffinity, addPersonaSkill, removePersonaSkill, setWildCard,
 } from '../features/characterPersonas.js';
@@ -88,6 +93,7 @@ const SECTIONS = [
     { id: 'stats', label: 'Stats', icon: 'fa-chart-simple' },
     { id: 'persona', label: 'Persona', icon: 'fa-masks-theater' },
     { id: 'social', label: 'Social', icon: 'fa-star' },
+    { id: 'confidants', label: 'Confidants', icon: 'fa-people-arrows' },
     { id: 'equipment', label: 'Equipment', icon: 'fa-shield-halved' },
     { id: 'abilities', label: 'Abilities', icon: 'fa-wand-sparkles' },
     { id: 'memories', label: 'Memories', icon: 'fa-brain' },
@@ -112,6 +118,9 @@ const xpForm = { amount: '', reason: '' };
 const personaView = { id: null };
 const PERSONA_FORM = { name: '', arcana: '', focus: '', level: '', skill: '', error: '' };
 const personaForm = { ...PERSONA_FORM };
+// The Confidants tab: the card shown in detail and the "add" form.
+const confView = { name: null };
+const confForm = { name: '', arcana: '', error: '' };
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -406,6 +415,75 @@ function submitPersonaSkill() {
     renderAll();
 }
 
+// ─── Confidants ─────────────────────────────────────────────────────────────
+
+function confCardHtml(b, { unmet = false } = {}) {
+    const num = arcanaNumber(b.arcana);
+    const pips = unmet ? '' : Array.from({ length: CONF_MAX }, (_, i) => `<i class="${i < b.rank ? 'is-on' : ''}"></i>`).join('');
+    const tip = unmet ? `${b.name} — ${b.arcana}: not met yet as a Confidant` : `${b.name} — ${b.arcana}, rank ${b.rank}${b.progress.maxed ? ' (MAX)' : `, ${b.progress.points}/${b.progress.cost} to the next`}`;
+    return `<button type="button" class="dsp-conf${unmet ? ' is-unmet' : ''}${b.progress?.maxed ? ' is-max' : ''}${confView.name === b.name ? ' is-viewed' : ''}" data-conf="${escapeHtml(b.name)}" title="${escapeHtml(tip)}">
+        <span class="dsp-conf-num">${escapeHtml(num || '★')}</span>
+        <span class="dsp-conf-arcana">${escapeHtml(b.arcana)}</span>
+        <span class="dsp-conf-rank">${unmet ? '?' : (b.progress.maxed ? 'MAX' : b.rank)}</span>
+        <span class="dsp-conf-name">${escapeHtml(b.name)}</span>
+        ${unmet ? '<span class="dsp-conf-pips is-unmet">not met</span>' : `<span class="dsp-conf-pips">${pips}</span>`}
+        ${unmet || b.progress.maxed ? '' : `<span class="dsp-conf-bar"><span style="width:${b.progress.pct}%"></span></span>`}
+    </button>`;
+}
+
+function confDetailHtml(b) {
+    const def = b.def;
+    const unlocks = (def?.unlocks || []).map(u => `<li class="${u.rank <= b.rank ? 'is-done' : ''}"><b>Rank ${u.rank}</b> ${escapeHtml(u.text)}</li>`).join('');
+    const reqs = (def?.requires || []).filter(r => r.rank > b.rank).map(r => `<li><b>Rank ${r.rank}</b> needs ${r.level ? `level ${r.level}` : `${escapeHtml(r.social[0].toUpperCase() + r.social.slice(1))} ${r.socialRank}`}</li>`).join('');
+    return `<div class="dsp-conf-detail">
+        <div class="dsp-pr-head">
+            <div class="dsp-pr-title"><span class="dsp-pr-name">${escapeHtml(b.name)}</span><span class="dsp-pr-arc">${escapeHtml(b.arcana)} · ${escapeHtml({ lorebook: 'from the lorebook', ai: 'from the story', user: 'added by you' }[b.source] || '')}</span></div>
+            <div class="dsp-pr-level">
+                <button type="button" class="dsp-icon-btn" data-conf-rank="-1" title="One rank down"><i class="fa-solid fa-minus"></i></button>
+                <span>Rank <b>${b.rank}</b></span>
+                <button type="button" class="dsp-icon-btn" data-conf-rank="1" title="One rank up"${b.rank >= CONF_MAX ? ' disabled' : ''}><i class="fa-solid fa-plus"></i></button>
+            </div>
+        </div>
+        ${b.progress.maxed ? '<p class="dsp-section-hint">Bond maxed.</p>' : `<p class="dsp-section-hint">${b.progress.points} / ${b.progress.cost} points to rank ${b.rank + 1}. The AI adds 1–5 when you spend real time together.</p>`}
+        ${def?.desc ? `<p class="dsp-pr-desc">${escapeHtml(def.desc)}</p>` : ''}
+        ${unlocks ? `<div class="dsp-subhead"><i class="fa-solid fa-unlock"></i> Unlocks</div><ul class="dsp-conf-list">${unlocks}</ul>` : ''}
+        ${reqs ? `<div class="dsp-subhead"><i class="fa-solid fa-lock"></i> Requirements</div><ul class="dsp-conf-list">${reqs}</ul>` : ''}
+        <div class="dsp-pr-actions"><span class="dsp-spacer"></span><button type="button" class="dsp-text-btn" data-action="conf-remove"><i class="fa-solid fa-trash"></i> End the bond</button></div>
+    </div>`;
+}
+
+function confidantsHtml() {
+    const bonds = getBonds();
+    const unmet = getUnmet();
+    const pending = getPending();
+    const mode = getConfidantMode();
+    if (!bonds.some(b => b.name === confView.name)) confView.name = bonds[0]?.name || null;
+    const viewed = bonds.find(b => b.name === confView.name) || null;
+    const free = freeArcana();
+    if (!free.includes(confForm.arcana)) confForm.arcana = free[0] || '';
+    const people = characterTabs().filter(t => !t.isUser && !bonds.some(b => b.name.toLowerCase() === t.name.toLowerCase())).map(t => t.name);
+    return `<section class="dsp-section dsp-confidants">
+        <p class="dsp-section-hint">Mode for this card: <b>${escapeHtml({ defined: 'Defined', mixed: 'Mixed', sandbox: 'Sandbox' }[mode])}</b> (Settings → RPG &amp; Stats).</p>
+        ${pending.length ? `<div class="dsp-conf-pending">${pending.map(p => `
+            <div class="dsp-conf-ask"><span><b>${escapeHtml(p.name)}</b> could become your <b>${escapeHtml(p.arcana)}</b> Confidant${p.reason ? ` — ${escapeHtml(p.reason)}` : ''}</span>
+                <button type="button" class="dsp-text-btn is-primary" data-action="conf-accept" data-name="${escapeHtml(p.name)}">Accept</button>
+                <button type="button" class="dsp-text-btn" data-action="conf-reject" data-name="${escapeHtml(p.name)}">Reject</button></div>`).join('')}</div>` : ''}
+        ${bonds.length || unmet.length ? `<div class="dsp-conf-grid">${bonds.map(b => confCardHtml(b)).join('')}${unmet.map(d => confCardHtml({ ...d }, { unmet: true })).join('')}</div>`
+            : '<div class="dsp-items-empty">No Confidants yet. They form when the story seals a bond — or add one here.</div>'}
+        ${viewed ? confDetailHtml(viewed) : ''}
+        ${free.length ? `<div class="dsp-pr-add">
+            <div class="dsp-subhead"><i class="fa-solid fa-plus"></i> Add a Confidant</div>
+            <div class="dsp-item-form-row">
+                <input type="text" class="dsp-pr-in-name" data-cf-field="name" list="dsp-cf-people" value="${escapeHtml(confForm.name)}" placeholder="Who" maxlength="60" aria-label="Character">
+                <datalist id="dsp-cf-people">${people.map(n => `<option value="${escapeHtml(n)}"></option>`).join('')}</datalist>
+                <select data-cf-field="arcana" aria-label="Arcana">${free.map(a => `<option${a === confForm.arcana ? ' selected' : ''}>${escapeHtml(a)}</option>`).join('')}</select>
+                <button type="button" class="dsp-text-btn is-primary" data-action="conf-add">Add</button>
+            </div>
+            <span class="dsp-item-error" role="alert">${escapeHtml(confForm.error)}</span>
+        </div>` : ''}
+    </section>`;
+}
+
 // Where each circle of the social block sits (centre, in % of the block),
 // a pentagon of overlapping circles as on the Persona social stats screen.
 const SOCIAL_POS = [[50, 25], [80, 45], [70, 77], [30, 77], [20, 45]];
@@ -620,6 +698,7 @@ function buildHtml({ popout }) {
     if (states.length || attrs.length) sections.push({ id: 'stats' });
     if (isPersonasEnabled()) sections.push({ id: 'persona', count: getPersonaRecord(selected.name, selected.isUser).list.length });
     if (selected.isUser && isSocialEnabled()) sections.push({ id: 'social' });
+    if (selected.isUser && isConfidantsEnabled()) sections.push({ id: 'confidants', count: getBonds().length, dot: getPending().length > 0 });
     if (isEquipmentEnabled()) sections.push({ id: 'equipment', count: getEquipment(selected.name, selected.isUser).length });
     if (isAbilitiesEnabled()) sections.push({ id: 'abilities', count: getAbilities(selected.name, selected.isUser).length });
     if (!selected.isUser && isMemoriesEnabled()) sections.push({ id: 'memories', count: getMemories(selected.name).length });
@@ -659,6 +738,8 @@ function buildHtml({ popout }) {
         content = socialHtml();
     } else if (section === 'persona') {
         content = personaHtml();
+    } else if (section === 'confidants') {
+        content = confidantsHtml();
     } else if (section === 'equipment') {
         content = equipmentHtml();
     } else if (section === 'abilities') {
@@ -1483,6 +1564,19 @@ function bindRootListeners(root) {
             removeLogEntry(selected.name, selected.isUser, logRow.getAttribute('data-id'));
             return;
         }
+        const confCard = e.target.closest('.dsp-conf');
+        if (confCard) {
+            if (!confCard.classList.contains('is-unmet')) confView.name = confCard.getAttribute('data-conf');
+            else confForm.name = confCard.getAttribute('data-conf');
+            renderAll();
+            return;
+        }
+        const confRank = e.target.closest('[data-conf-rank]');
+        if (confRank && confView.name) {
+            const b = getBonds().find(x => x.name === confView.name);
+            if (b) setConfidantRank(b.name, b.rank + Number(confRank.getAttribute('data-conf-rank')));
+            return;
+        }
         const prCard = e.target.closest('.dsp-pr-card');
         if (prCard) { personaView.id = prCard.getAttribute('data-persona'); renderAll(); return; }
         const prStat = e.target.closest('button.dsp-pr-stat-val');
@@ -1517,6 +1611,19 @@ function bindRootListeners(root) {
         if (action === 'item-add') { submitItemForm(); return; }
         if (action === 'xp-add') { submitXpForm(); return; }
         if (action === 'pr-add') { submitPersonaForm(); return; }
+        if (action === 'conf-accept') { const r = acceptPending(e.target.closest('[data-name]').getAttribute('data-name')); if (r.error) { confForm.error = r.error; renderAll(); } return; }
+        if (action === 'conf-reject') { rejectPending(e.target.closest('[data-name]').getAttribute('data-name')); return; }
+        if (action === 'conf-add') {
+            const r = startConfidant(confForm.name, confForm.arcana);
+            if (r.error) { confForm.error = r.error; renderAll(); return; }
+            confView.name = confForm.name.trim();
+            Object.assign(confForm, { name: '', arcana: '', error: '' });
+            return;
+        }
+        if (action === 'conf-remove' && confView.name) {
+            if ((root.ownerDocument.defaultView || window).confirm(`End the bond with ${confView.name}? Its rank is lost.`)) { removeConfidant(confView.name); confView.name = null; }
+            return;
+        }
         if (action === 'pr-refresh') { refreshCompendium({ force: true }).then(() => renderAll()).catch(() => {}); return; }
         if (action === 'pr-equip' && selected && personaView.id) {
             const r = equipPersona(selected.name, selected.isUser, personaView.id);
@@ -1573,6 +1680,8 @@ function bindRootListeners(root) {
     });
     // Add-item form fields live in itemForm so a repaint keeps them.
     root.addEventListener('input', (e) => {
+        const cfField = e.target.getAttribute && e.target.getAttribute('data-cf-field');
+        if (cfField) { confForm[cfField] = e.target.value; confForm.error = ''; return; }
         const prField = e.target.getAttribute && e.target.getAttribute('data-pr-field');
         if (prField) {
             const wasKnown = !!findInCompendium(personaForm.name);
@@ -1612,6 +1721,8 @@ function bindRootListeners(root) {
             else e.target.checked = true;
             renderAll();
         }
+        const cfSel = e.target.getAttribute && e.target.getAttribute('data-cf-field');
+        if (cfSel && e.target.tagName === 'SELECT') confForm[cfSel] = e.target.value;
         const prSel = e.target.getAttribute && e.target.getAttribute('data-pr-field');
         if (prSel && e.target.tagName === 'SELECT') personaForm[prSel] = e.target.value;
         if (prSel === 'name') renderAll();
@@ -1638,6 +1749,7 @@ function bindGlobalListeners() {
     listenersBound = true;
     window.addEventListener(MEMORIES_CHANGED_EVENT, () => requestAnimationFrame(() => renderAll()));
     window.addEventListener(COMPENDIUM_CHANGED_EVENT, () => requestAnimationFrame(() => renderAll()));
+    window.addEventListener(CONFIDANTS_CHANGED_EVENT, () => requestAnimationFrame(() => renderAll()));
     window.addEventListener(STATS_CHANGED_EVENT, () => {
         // Collapse bursts (an AI update changes many values) into one paint.
         requestAnimationFrame(() => renderAll());

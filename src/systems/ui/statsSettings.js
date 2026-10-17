@@ -40,6 +40,23 @@ import { setMoneyEnabled, getCurrency, setCurrency } from '../features/character
 import { setAffinityEnabled } from '../features/characterAffinity.js';
 import { setSocialEnabled } from '../features/characterSocial.js';
 import { setPersonasEnabled } from '../features/characterPersonas.js';
+import {
+    setConfidantsEnabled, getConfidantModeSetting, setConfidantMode, getConfidantMode, getMinAffinity, setMinAffinity,
+    isConfirmOn, setConfirm, refreshConfidantBook, CONFIDANTS_CHANGED_EVENT,
+} from '../features/characterConfidants.js';
+
+function renderConfidantSettings() {
+    const sel = document.getElementById('rpg-confidant-mode');
+    if (sel) sel.value = getConfidantModeSetting();
+    const min = document.getElementById('rpg-confidant-min');
+    if (min && document.activeElement !== min) min.value = String(getMinAffinity());
+    const conf = document.getElementById('rpg-confidant-confirm');
+    if (conf) conf.checked = isConfirmOn();
+    const card = document.getElementById('rpg-confidant-card');
+    if (card) card.textContent = currentCardName() ? `(${currentCardName()})` : '';
+    const now = document.getElementById('rpg-confidant-mode-now');
+    if (now) { try { now.textContent = `In use now: ${getConfidantMode()}.`; } catch (e) { now.textContent = ''; } }
+}
 import { refreshCompendium, getCompendiumInfo, COMPENDIUM_CHANGED_EVENT } from '../features/personaCompendium.js';
 import { getAllWorldNames } from '../lorebook/lorebookAPI.js';
 import { saveSettings as savePersonaSettings } from '../../core/persistence.js';
@@ -140,6 +157,11 @@ export function initStatsSettings() {
     flag('rpg-affinity-enabled', 'characterAffinityEnabled');
     flag('rpg-social-enabled', 'characterSocialEnabled');
     flag('rpg-personas-enabled', 'personasEnabled');
+    flag('rpg-confidants-enabled', 'confidantsEnabled');
+    renderConfidantSettings();
+    window.addEventListener(CONFIDANTS_CHANGED_EVENT, renderConfidantSettings);
+    document.getElementById('rpg-confidant-mode')?.addEventListener('focus', renderConfidantSettings);
+    refreshConfidantBook().catch(() => {});
     renderCompendiumSetting();
     document.getElementById('rpg-persona-compendium')?.addEventListener('focus', renderCompendiumSetting);
     window.addEventListener(COMPENDIUM_CHANGED_EVENT, renderCompendiumSetting);
@@ -176,6 +198,10 @@ export function initStatsSettings() {
         else if (el.id === 'rpg-affinity-enabled') setAffinityEnabled(el.checked);
         else if (el.id === 'rpg-social-enabled') setSocialEnabled(el.checked);
         else if (el.id === 'rpg-personas-enabled') setPersonasEnabled(el.checked);
+        else if (el.id === 'rpg-confidants-enabled') setConfidantsEnabled(el.checked);
+        else if (el.id === 'rpg-confidant-mode') { setConfidantMode(el.value); renderConfidantSettings(); }
+        else if (el.id === 'rpg-confidant-min') { setMinAffinity(el.value); renderConfidantSettings(); }
+        else if (el.id === 'rpg-confidant-confirm') setConfirm(el.checked);
         else if (el.id === 'rpg-persona-compendium') {
             extensionSettings.personaCompendiumBook = el.value || '';
             savePersonaSettings();
