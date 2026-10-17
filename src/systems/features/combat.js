@@ -35,6 +35,7 @@ import { getEffectiveStatValues } from './characterModifiers.js';
 import { getEquipment, addItem, updateItem, isEquipmentEnabled } from './characterEquipment.js';
 import { getAbilities, activeManaTiers, isAbilitiesEnabled } from './characterAbilities.js';
 import { addCondition, getConditions, isConditionsEnabled } from './characterConditions.js';
+import { combatBond, batonNeedsBond } from './confidantAbilities.js';
 import { getLevelInfo, getPartyMembers, isPartyMember, awardPartyXp, getXpSettings, isXpEnabled, isProgressEnabled } from './characterProgress.js';
 import { getMoney, setMoney, isMoneyEnabled, getCurrency } from './characterMoney.js';
 import { adjustAffinity } from './characterAffinity.js';
@@ -282,6 +283,7 @@ export function buildPartyMember(name, isUser, id = combatId('p', name)) {
         armor, atkBonus, actions, affinities,
         spMax: hasMana ? spPointsAt(level) : null,
         persona: persona ? persona.name : undefined,
+        bond: combatBond(name, isUser) || undefined,
     });
     return { combatant, unlabelled };
 }
@@ -512,6 +514,8 @@ export function buildEncounter(party, enemySpecs, { environment = '', seed = Dat
     const enemies = enemySpecs.map((spec, i) => M.buildEnemy(enrichEnemySpec(spec), { partyLevel, partySize: members.length, id: `e${i + 1}` }));
     const state = M.createCombat({ combatants: [...members, ...enemies], seed, environment });
     state.partyLevel = partyLevel;
+    // With Confidants on, Baton Pass needs the bond (as in P5).
+    state.batonBond = batonNeedsBond();
     // Marks a fight that belongs to something else (a dungeon room), so that one can find its result.
     if (tag) state.tag = tag;
     return state;

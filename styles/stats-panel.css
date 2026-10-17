@@ -1810,3 +1810,13 @@ input.dsp-xp-big { width: 3em; font-size: 20px; text-align: center; }
 .dsp-conf-pending { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
 .dsp-conf-ask { display: flex; align-items: center; gap: 6px; padding: 6px 8px; font-size: 12px; border-radius: 8px; border: 1px solid #c9a24a; background: rgba(201,162,74,0.12); }
 .dsp-conf-ask > span { flex: 1; }
+
+/* Confidant abilities in battle. */
+.dsp-conf-abl { list-style: none; margin: 4px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.dsp-conf-abl li {
+    display: grid; grid-template-columns: 22px 1fr auto; column-gap: 6px; align-items: baseline;
+    padding: 5px 8px; font-size: 12px; border-radius: 8px; background: var(--dsp-card); opacity: 0.5;
+}
+.dsp-conf-abl li.is-done { opacity: 1; background: color-mix(in srgb, var(--dsp-accent) 14%, transparent); }
+.dsp-conf-abl-rank { font-size: 11px; color: var(--dsp-muted); }
+.dsp-conf-abl-desc { grid-column: 2 / 4; color: var(--dsp-muted); }

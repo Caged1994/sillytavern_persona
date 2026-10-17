@@ -46,6 +46,21 @@ A ready-made Compendium is in `compendium/Persona-Compendium.json`: the 242 Pers
 
 Affinities accept `Wk`/`Weak`, `Rs`/`Resist`, `Nu`/`Null`, `Dr`/`Drain`, `Rp`/`Repel` and `-` for normal. An entry without a stats line gets an even spread for its level. When a character obtains a Persona whose name is in the Compendium, a copy is made for that chat; levelling it up never changes the lorebook.
 
+## Confidant abilities (teammates)
+
+A Confidant who fights with you (a party member) unlocks abilities in battle as the bond grows, as P5's teammates do:
+
+| Rank | Ability | Effect |
+|---|---|---|
+| 2 | Baton Pass | Can take and pass on a 1 More. With Confidants on, Baton Pass needs it: you (the leader) can always pass, a teammate only once their bond has it. |
+| 4 | Follow Up | After your single-target attack that did not knock the enemy down, may strike too: 30%, +5% a rank, at most 50%. |
+| 6 | Endure | Survives a fatal blow with 1 HP, once a fight. |
+| 7 | Harisen Recovery | May cure your ailment at the start of your turn: 35%, +5% a rank, at most 50%. |
+| 8 | Protect | Takes a fatal blow meant for you, once a fight. |
+| 10 | Awakening | A button in the Confidants tab evolves their equipped Persona, once. |
+
+A lorebook Confidant can move any of them with its unlock lines: `Rank 3 unlocks: Follow Up` sets Follow Up to rank 3. `Rank 10 unlocks: Captain Kidd evolves into Seiten Taisei` makes the Awakening turn the Persona into Seiten Taisei (taken from the Compendium, keeping the old skills where they fit, never above the teammate's level). Without a named evolution, the Persona loses its weaknesses and gains +2 to every stat. Confidants who are not party members get no battle abilities; their unlock texts stay story notes. The AI is told which abilities each teammate has. With Confidants off, nobody has them and Baton Pass is free, as before.
+
 ## Velvet Room (fusion)
 
 A Wild Card with at least two Personas can fuse them from the Persona tab (Settings → Velvet Room switches it off). The rules are Persona 5 Royal's:

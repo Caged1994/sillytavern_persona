@@ -228,6 +228,20 @@ export function removePersona(name, isUser, id) {
     return true;
 }
 
+/** Puts `persona` in place of the Persona `id` (an evolution), keeping it equipped if it was. */
+export function replacePersona(name, isUser, id, persona) {
+    const key = statKey(name, isUser);
+    const rec = readKey(key);
+    const i = rec.list.findIndex(p => p.id === id);
+    const next = P.normalizePersona({ ...persona, id });
+    if (i === -1 || !next) return { error: 'That Persona is not there.' };
+    if (rec.list.some((p, j) => j !== i && P.nameKey(p.name) === P.nameKey(next.name))) return { error: `Already has ${next.name}.` };
+    rec.list[i] = next;
+    writeKey(key, rec);
+    changed(name, isUser);
+    return { persona: next };
+}
+
 /**
  * Velvet Room: the parents leave, the result comes in (equipped if one of the
  * parents was). Returns { persona } or { error }.

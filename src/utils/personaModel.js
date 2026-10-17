@@ -185,6 +185,7 @@ export function normalizePersona(raw) {
         learns: normalizeLearns(raw.learns),
         desc: clip(raw.desc, 300),
         source: ['compendium', 'ai', 'user'].includes(raw.source) ? raw.source : 'user',
+        ...(raw.awakened ? { awakened: true } : {}),
     };
 }
 

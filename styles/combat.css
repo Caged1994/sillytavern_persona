@@ -400,4 +400,5 @@
 .dcb-btn.is-allout { background: #d7192e; border-color: #d7192e; color: #fff; font-weight: 800; }
 .dcb-btn.is-baton { background: #ffd166; border-color: #ffd166; color: #1a1406; font-weight: 800; }
 .dcb-log li.is-knock, .dcb-log li.is-onemore, .dcb-log li.is-allout, .dcb-log li.is-baton { color: #ffd166; font-weight: 700; }
+.dcb-log li.is-bond { color: #9fe0ff; font-weight: 700; }
 .dcb-log li.is-block, .dcb-log li.is-reflect { color: #9dbfff; }

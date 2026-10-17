@@ -62,6 +62,7 @@ import {
     isPersonasEnabled, getPersonaRecord, getActivePersona, addPersona, equipPersona, removePersona, personaLevelCap,
     setPersonaLevel, setPersonaStat, cyclePersonaAffinity, addPersonaSkill, removePersonaSkill, setWildCard,
 } from '../features/characterPersonas.js';
+import { getBondAbilities, awakeningInfo, awakenPersona } from '../features/confidantAbilities.js';
 import { canFuse, previewFusion, listFusions, fuse, isVelvetEnabled } from '../features/velvetRoom.js';
 import { getCompendium, getCompendiumInfo, findInCompendium, refreshCompendium, COMPENDIUM_CHANGED_EVENT } from '../features/personaCompendium.js';
 import { ELEMENTS, AFFINITIES, ARCANA, STAT_IDS as P_STATS, STAT_LABELS as P_LABELS, MAX_SKILLS, MAX_STOCK } from '../../utils/personaModel.js';
@@ -508,6 +509,19 @@ function confCardHtml(b, { unmet = false } = {}) {
     </button>`;
 }
 
+/** A teammate's fight abilities by rank, and the Awakening button. */
+function confAbilitiesHtml(b) {
+    const { teammate, list } = getBondAbilities(b.name);
+    if (!teammate) return `<p class="dsp-section-hint">Make ${escapeHtml(b.name)} a party member and the bond also unlocks fight abilities (Baton Pass, Follow Up, Endure…).</p>`;
+    const aw = awakeningInfo(b.name);
+    return `<div class="dsp-subhead"><i class="fa-solid fa-hand-fist"></i> In battle</div>
+        <ul class="dsp-conf-abl">${list.map(a => `<li class="${a.unlocked ? 'is-done' : ''}" title="${escapeHtml(a.desc)}">
+            <span class="dsp-conf-abl-icon">${a.icon}</span><b>${escapeHtml(a.name)}</b><span class="dsp-conf-abl-rank">Rank ${a.rank}</span>
+            <span class="dsp-conf-abl-desc">${escapeHtml(a.desc)}</span></li>`).join('')}</ul>
+        ${aw.can ? `<div class="dsp-pr-actions"><button type="button" class="dsp-text-btn is-primary" data-action="conf-awaken" title="${escapeHtml(aw.into ? `${aw.persona.name} becomes ${aw.into}` : `${aw.persona.name} loses its weaknesses, every stat +2`)}">🌟 Awaken ${escapeHtml(aw.persona.name)}${aw.into ? ` → ${escapeHtml(aw.into)}` : ''}</button></div>`
+            : aw.done ? `<p class="dsp-section-hint">🌟 ${escapeHtml(aw.reason)}</p>` : ''}`;
+}
+
 function confDetailHtml(b) {
     const def = b.def;
     const unlocks = (def?.unlocks || []).map(u => `<li class="${u.rank <= b.rank ? 'is-done' : ''}"><b>Rank ${u.rank}</b> ${escapeHtml(u.text)}</li>`).join('');
@@ -525,6 +539,7 @@ function confDetailHtml(b) {
         ${def?.desc ? `<p class="dsp-pr-desc">${escapeHtml(def.desc)}</p>` : ''}
         ${unlocks ? `<div class="dsp-subhead"><i class="fa-solid fa-unlock"></i> Unlocks</div><ul class="dsp-conf-list">${unlocks}</ul>` : ''}
         ${reqs ? `<div class="dsp-subhead"><i class="fa-solid fa-lock"></i> Requirements</div><ul class="dsp-conf-list">${reqs}</ul>` : ''}
+        ${confAbilitiesHtml(b)}
         <div class="dsp-pr-actions"><span class="dsp-spacer"></span><button type="button" class="dsp-text-btn" data-action="conf-remove"><i class="fa-solid fa-trash"></i> End the bond</button></div>
     </div>`;
 }
@@ -1711,6 +1726,11 @@ function bindRootListeners(root) {
             if (r.error) { confForm.error = r.error; renderAll(); return; }
             confView.name = confForm.name.trim();
             Object.assign(confForm, { name: '', arcana: '', error: '' });
+            return;
+        }
+        if (action === 'conf-awaken' && confView.name) {
+            const r = awakenPersona(confView.name);
+            if (r.error) { confForm.error = r.error; renderAll(); }
             return;
         }
         if (action === 'conf-remove' && confView.name) {

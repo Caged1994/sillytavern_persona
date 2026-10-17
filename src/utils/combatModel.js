@@ -45,6 +45,7 @@
  *     skillModel.js) carry their own power, hits, accuracy, crit, ailment
  *     and costs (SP, or HP for Phys skills).
  */
+import { BOND_IDS, followUpChance, harisenChance } from './bondModel.js';
 
 // ─── Tuning ─────────────────────────────────────────────────────────────────
 
@@ -350,6 +351,11 @@ export function makeCombatant(spec) {
         known: {},
     };
     if (spec.persona) c.persona = String(spec.persona);
+    // Confidant abilities of a teammate (bondModel.js): { rank, abilities: [ids] }.
+    if (spec.bond && Array.isArray(spec.bond.abilities)) {
+        c.bond = { rank: Math.round(spec.bond.rank) || 0, abilities: spec.bond.abilities.filter(x => BOND_IDS.includes(x)), ranks: { ...(spec.bond.ranks || {}) } };
+        c.bondUsed = {};
+    }
     if (spec.tier) c.tier = spec.tier;
     if (spec.description) c.description = String(spec.description);
     if (spec.loot) c.loot = spec.loot;
@@ -530,7 +536,28 @@ export function affinityOf(target, el) {
 
 const AFF_WORD = { wk: 'WEAK', rs: 'Resist', nu: 'Block', dr: 'Drain', rp: 'Repel' };
 
+export const hasBond = (c, id) => !!c?.bond?.abilities?.includes(id);
+
 function takeDamage(state, events, c, amount, text, extra = {}) {
+    // Protect: a teammate takes the fatal blow meant for the leader (once a fight).
+    if (c.isUser && c.side === 'party' && !extra.dot && !extra.protected && amount >= c.hp && c.hp > 0) {
+        const guard = alive(state, 'party').find(a => a.id !== c.id && hasBond(a, 'protect') && !a.bondUsed.protect);
+        if (guard) {
+            guard.bondUsed.protect = true;
+            push(state, events, { type: 'bond', ability: 'protect', actor: guard.id, target: c.id, text: `${guard.name} shoves ${c.name} aside and takes the blow! 🫂` });
+            takeDamage(state, events, guard, amount, `${guard.name} takes ${amount} damage`, { ...extra, protected: true });
+            return;
+        }
+    }
+    // Endure: a teammate holds on at 1 HP (once a fight).
+    if (c.side === 'party' && !extra.dot && hasBond(c, 'endure') && !c.bondUsed.endure && amount >= c.hp && c.hp > 1) {
+        c.bondUsed.endure = true;
+        const taken = c.hp - 1;
+        c.hp = 1;
+        push(state, events, { type: 'damage', target: c.id, amount: taken, text, ...extra });
+        push(state, events, { type: 'bond', ability: 'endure', actor: c.id, text: `${c.name} endures it — still standing with 1 HP! 🛡️` });
+        return;
+    }
     c.hp = Math.max(0, c.hp - amount);
     push(state, events, { type: 'damage', target: c.id, amount, text, ...extra });
     if (!extra.dot && hasStatus(c, 'sleep')) c.statuses = c.statuses.filter(s => s.id !== 'sleep');
@@ -1012,11 +1039,30 @@ export function performAction(state, actorId, actionId, targetId = null) {
         push(state, events, { type: 'use', actor: actor.id, text: `${verb} on ${targets[0].name}.` });
         for (const t of targets) revive(state, events, actor, t, TUNING.revivePct[powerOf(p)] * 100);
     }
+    followUp(state, events, actor, p, targets, ctx);
     // A Charge / Concentrate is spent by the attack that used it.
     if (ctx.chargeUsed) actor.statuses = actor.statuses.filter(s => s.id !== 'charged');
     if (ctx.focusUsed) actor.statuses = actor.statuses.filter(s => s.id !== 'focused');
     if (!checkEnd(state, events) && ctx.more && !actor.down) state.pendingMore = actor.id;
     return events;
+}
+
+/** Follow Up: after the leader's single-target attack that did not knock the foe down. */
+function followUp(state, events, actor, p, targets, ctx) {
+    if (!actor.isUser || actor.side !== 'party' || ctx.more || state.phase !== 'active') return;
+    const attack = p.type === 'damage' || (p.type === 'skill' && p.fx?.k === 'dmg');
+    if (!attack || targets.length !== 1) return;
+    const foe = targets[0];
+    if (foe.side !== 'enemy' || foe.down || foe.knocked) return;
+    const mates = alive(state, 'party')
+        .filter(a => a.id !== actor.id && hasBond(a, 'followup') && !a.knocked && !a.statuses.some(s => STATUSES[s.id]?.skip || STATUSES[s.id]?.bad))
+        .sort((a, b) => (b.bond.rank || 0) - (a.bond.rank || 0));
+    const mate = mates[0];
+    if (!mate || nextRandom(state) >= followUpChance(mate.bond.rank, mate.bond.ranks?.followup)) return;
+    push(state, events, { type: 'bond', ability: 'followup', actor: mate.id, target: foe.id, text: `Follow Up! ${mate.name} jumps in ⚔️` });
+    const sub = { more: false };
+    strike(state, events, mate, foe, basicAttack(mate), sub);
+    if (sub.more) ctx.more = true;
 }
 
 // ─── 1 More: Baton Pass and All-Out Attack ──────────────────────────────────
@@ -1026,8 +1072,11 @@ export function batonTargets(state) {
     if (!inOneMore(state)) return [];
     const actor = currentActor(state);
     if (!actor || actor.side !== 'party') return [];
+    // With Confidants on (state.batonBond), only the leader and teammates whose bond has Baton Pass take part.
+    const can = (c) => !state.batonBond || c.isUser || hasBond(c, 'baton');
+    if (!can(actor)) return [];
     const passed = state.extra.passed || [];
-    return alive(state, 'party').filter(c => c.id !== actor.id && !c.knocked && !passed.includes(c.id)).map(c => c.id);
+    return alive(state, 'party').filter(c => c.id !== actor.id && !c.knocked && !passed.includes(c.id) && can(c)).map(c => c.id);
 }
 
 /** Hands the 1 More to an ally: they act now, stronger (+50% per pass). */
@@ -1149,6 +1198,14 @@ function beginTurn(state, events) {
         if (actor.knocked) {
             actor.knocked = false;
             push(state, events, { type: 'info', actor: actor.id, text: `${actor.name} gets back up.` });
+        }
+        // Harisen Recovery: a teammate may snap the leader out of an ailment.
+        if (actor.isUser && actor.side === 'party' && actor.statuses.some(s => STATUSES[s.id]?.bad)) {
+            const mate = alive(state, 'party').filter(a => a.id !== actor.id && hasBond(a, 'harisen')).sort((a, b) => b.bond.rank - a.bond.rank)[0];
+            if (mate && nextRandom(state) < harisenChance(mate.bond.rank, mate.bond.ranks?.harisen)) {
+                actor.statuses = actor.statuses.filter(s => !STATUSES[s.id]?.bad);
+                push(state, events, { type: 'bond', ability: 'harisen', actor: mate.id, target: actor.id, text: `${mate.name} snaps ${actor.name} out of it! 💫` });
+            }
         }
         const skip = actor.statuses.find(s => STATUSES[s.id]?.skip || s.id === 'stun');
         const maybe = !skip && actor.statuses.find(s => STATUSES[s.id]?.maybeSkip);

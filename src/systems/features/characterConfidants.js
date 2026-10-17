@@ -28,7 +28,8 @@ import { getPersonaName, notifyStatsChanged } from './characterStats.js';
 import { resolveTarget } from './characterEquipment.js';
 import { getAffinity, isAffinityEnabled } from './characterAffinity.js';
 import { getSocialView, isSocialEnabled } from './characterSocial.js';
-import { getProgress, isProgressEnabled } from './characterProgress.js';
+import { getProgress, isProgressEnabled, isPartyMember } from './characterProgress.js';
+import { unlockedIds, abilityName } from '../../utils/bondModel.js';
 import { getActiveWorldNames, loadWorldData } from '../lorebook/lorebookAPI.js';
 import { nameKey } from '../../utils/personaModel.js';
 import * as C from '../../utils/confidantModel.js';
@@ -298,6 +299,15 @@ export function deleteConfidant(name) {
 
 // ─── Prompt ─────────────────────────────────────────────────────────────────
 
+/** A teammate's unlocked fight abilities join the unlock texts the AI is told about. */
+function withTeamAbilities(b) {
+    let mate = false;
+    try { mate = isPartyMember(b.name); } catch (e) { /* no levels */ }
+    if (!mate) return b.unlocked;
+    const names = unlockedIds(b.rank, b.def).map(abilityName).filter(n => !b.unlocked.some(u => u.toLowerCase().includes(n.toLowerCase())));
+    return [...b.unlocked, ...names];
+}
+
 export function buildConfidantPromptForGeneration({ compact = true, standalone = false } = {}) {
     if (!isConfidantsEnabled()) return '';
     const player = getPersonaName();
@@ -305,7 +315,7 @@ export function buildConfidantPromptForGeneration({ compact = true, standalone =
     const mode = getConfidantMode();
     return C.buildConfidantPrompt({
         player,
-        bonds: getBonds().map(b => ({ name: b.name, arcana: b.arcana, rank: b.rank, unlocked: b.unlocked })),
+        bonds: getBonds().map(b => ({ name: b.name, arcana: b.arcana, rank: b.rank, unlocked: withTeamAbilities(b) })),
         unmet: getUnmet().map(d => ({ name: d.name, arcana: d.arcana })),
         free: mode === 'defined' ? [] : freeArcana({ forStory: true }),
         mode,
