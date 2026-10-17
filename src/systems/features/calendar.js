@@ -1,0 +1,431 @@
+/**
+ * Calendar — the in-game date and time of day (rules in calendarModel.js).
+ *
+ *   chat_metadata.dooms_tracker.betterStats.calendar =
+ *     { now: { date: 'YYYY-MM-DD', slot }, events: [event], days: { 'YYYY-MM-DD': { weather, forecast } } }
+ *
+ * The calendar is in charge of the Info Box date and time: the AI writes them
+ * there as before, the calendar reads them, refuses to go back in time, and
+ * writes its own date (and a time in its slot) back into the Info Box. When
+ * the Info Box has no date widget the AI uses the "calendar" key instead.
+ * The day's weather is taken from the Info Box; the AI can add a forecast,
+ * events and deadlines ("calendar" key). Lorebook entries titled
+ * "Calendar: …" add events too. A swipe undoes what the replaced reply did.
+ */
+import { chat, chat_metadata } from '../../../../../../../script.js';
+import { extensionSettings, lastGeneratedData, committedTrackerData } from '../../core/state.js';
+import { saveSettings, saveChatData } from '../../core/persistence.js';
+import { isRpgModeActive } from './rpgMode.js';
+import { chatStore, saveChatScope, CHAT_SCOPE } from './chatScope.js';
+import { notifyStatsChanged } from './characterStats.js';
+import { getActiveWorldNames, loadWorldData } from '../lorebook/lorebookAPI.js';
+import { repairJSON } from '../../utils/jsonRepair.js';
+import * as K from '../../utils/calendarModel.js';
+
+export const CALENDAR_CHANGED_EVENT = 'dooms:calendar';
+const KEEP_DAYS = 120;
+
+export function isCalendarEnabled() {
+    return isRpgModeActive() && extensionSettings.calendarEnabled !== false;
+}
+
+export function setCalendarEnabled(on) {
+    extensionSettings.calendarEnabled = !!on;
+    saveSettings();
+    notifyStatsChanged({ source: 'calendar' });
+}
+
+// ─── Storage ────────────────────────────────────────────────────────────────
+
+function store(create = false) {
+    const s = chatStore('calendar', create);
+    if (s) {
+        if (!Array.isArray(s.events)) s.events = [];
+        if (!s.days || typeof s.days !== 'object') s.days = {};
+        if (s.now && !K.normalizeMoment(s.now)) s.now = null;
+    }
+    return s;
+}
+
+const snapshot = () => {
+    const s = store();
+    return s ? JSON.parse(JSON.stringify({ now: s.now || null, events: s.events, days: s.days })) : { now: null, events: [], days: {} };
+};
+
+function restore(snap) {
+    const s = store(true);
+    if (!s) return;
+    s.now = snap.now ? { ...snap.now } : null;
+    s.events = JSON.parse(JSON.stringify(snap.events || []));
+    s.days = JSON.parse(JSON.stringify(snap.days || {}));
+}
+
+function trimDays(s) {
+    if (!s.now) return;
+    for (const d of Object.keys(s.days)) {
+        const diff = K.dayDiff(s.now.date, d);
+        if (!Number.isFinite(diff) || diff < -KEEP_DAYS || diff > 31) delete s.days[d];
+    }
+}
+
+function changed({ sync = true } = {}) {
+    if (sync) syncInfoBox();
+    saveChatScope();
+    notifyStatsChanged({ source: 'calendar' });
+    try { window.dispatchEvent(new CustomEvent(CALENDAR_CHANGED_EVENT)); } catch (e) { /* no window */ }
+}
+
+// ─── Lorebook events ────────────────────────────────────────────────────────
+
+let book = { list: [], books: [], at: 0 };
+let loading = null;
+
+export function refreshCalendarBook({ force = false } = {}) {
+    if (loading) return loading;
+    loading = (async () => {
+        const books = [...getActiveWorldNames()];
+        const entries = [];
+        for (const b of books) {
+            try {
+                const data = await loadWorldData(b, force);
+                entries.push(...Object.values(data?.entries || {}));
+            } catch (e) { /* unreadable lorebook: skip */ }
+        }
+        book = { list: K.parseCalendarBook(entries), books, at: Date.now() };
+        try { window.dispatchEvent(new CustomEvent(CALENDAR_CHANGED_EVENT)); } catch (e) { /* no window */ }
+        return book.list;
+    })().finally(() => { loading = null; });
+    return loading;
+}
+
+function bookEvents() {
+    let books = [];
+    try { books = [...getActiveWorldNames()]; } catch (e) { books = []; }
+    const same = books.length === book.books.length && books.every((b, i) => b === book.books[i]);
+    if (!same || Date.now() - book.at > 60000) refreshCalendarBook().catch(() => {});
+    return book.list;
+}
+
+/** For tests: use this list as the lorebook events. */
+export function setBookEventsForTests(list) {
+    let books = [];
+    try { books = [...getActiveWorldNames()]; } catch (e) { books = []; }
+    book = { list: list || [], books, at: Date.now() };
+}
+
+// ─── Reading ────────────────────────────────────────────────────────────────
+
+export function getNow() {
+    const s = store();
+    return s?.now ? { ...s.now } : null;
+}
+
+/** Every event: the chat's own and the lorebook's (lorebook ones marked done in the chat stay done). */
+export function getEvents() {
+    const s = store();
+    const own = s?.events || [];
+    const doneBook = new Set(own.filter(e => e.bookRef && e.done).map(e => e.bookRef));
+    const fromBook = bookEvents().map(e => ({ ...e, id: `lb:${e.date}:${e.title}`, done: doneBook.has(`${e.date}:${e.title}`) }));
+    return [...own.filter(e => !e.bookRef), ...fromBook];
+}
+
+export function getDay(date) {
+    const s = store();
+    return s?.days?.[date] ? { ...s.days[date] } : null;
+}
+
+/** Everything the panel needs for a month. */
+export function getMonthView(year, month) {
+    const now = getNow();
+    const events = getEvents();
+    const first = K.ymd(year, month, 1);
+    const days = [];
+    for (let d = first; d && K.splitYmd(d).m === month; d = K.addDays(d, 1)) {
+        days.push({
+            date: d,
+            day: K.splitYmd(d).d,
+            weekday: K.weekday(d),
+            today: now?.date === d,
+            past: now ? K.dayDiff(now.date, d) < 0 : false,
+            weather: getDay(d)?.weather || '',
+            forecast: !!getDay(d)?.forecast,
+            events: events.filter(e => K.eventOn(e, d)),
+        });
+    }
+    return { year, month, days, now };
+}
+
+export function getUpcoming(days = 30) {
+    const now = getNow();
+    return now ? K.upcoming(getEvents(), now.date, days) : [];
+}
+
+// ─── Changing it by hand ────────────────────────────────────────────────────
+
+/** Sets the moment (by hand: may go back). */
+export function setNow(date, slot = 'morning') {
+    const m = K.normalizeMoment({ date, slot });
+    if (!m) return { error: 'Not a valid date.' };
+    const s = store(true);
+    s.now = m;
+    trimDays(s);
+    changed();
+    return { now: m };
+}
+
+/** Moves on by one slot or to the next morning. */
+export function advance(step = 'slot') {
+    const now = getNow();
+    if (!now) return { error: 'Set a date first.' };
+    const next = step === 'day' ? K.nextDay(now) : K.nextSlot(now);
+    return setNow(next.date, next.slot);
+}
+
+export function addEvent(raw) {
+    const now = getNow();
+    const ev = K.normalizeEvent({ ...raw, source: raw?.source || 'user' }, { year: now ? K.splitYmd(now.date).y : null });
+    if (!ev) return { error: 'An event needs a title and a date.' };
+    const s = store(true);
+    if (s.events.length >= K.MAX_EVENTS) return { error: `At most ${K.MAX_EVENTS} events.` };
+    s.events.push(ev);
+    changed({ sync: false });
+    return { event: ev };
+}
+
+export function removeEvent(id) {
+    const s = store(true);
+    const i = s.events.findIndex(e => e.id === id);
+    if (i === -1) return false;
+    s.events.splice(i, 1);
+    changed({ sync: false });
+    return true;
+}
+
+/** Marks an event dealt with (or not). Lorebook events are remembered by date and title. */
+export function setEventDone(id, done = true) {
+    const s = store(true);
+    if (String(id).startsWith('lb:')) {
+        const ref = String(id).slice(3);
+        const ev = bookEvents().find(e => `${e.date}:${e.title}` === ref);
+        if (!ev) return false;
+        let rec = s.events.find(e => e.bookRef === ref);
+        if (!rec) { rec = { ...ev, id: `ref:${ref}`, bookRef: ref }; s.events.push(rec); }
+        rec.done = !!done;
+    } else {
+        const ev = s.events.find(e => e.id === id);
+        if (!ev) return false;
+        if (done) ev.done = true; else delete ev.done;
+    }
+    changed({ sync: false });
+    return true;
+}
+
+export function setWeather(date, weather, { forecast = false } = {}) {
+    if (!K.splitYmd(date)) return false;
+    const s = store(true);
+    const w = String(weather || '').trim().slice(0, 40);
+    if (!w) delete s.days[date];
+    else s.days[date] = { weather: w, ...(forecast ? { forecast: true } : {}) };
+    changed({ sync: false });
+    return true;
+}
+
+// ─── The Info Box ───────────────────────────────────────────────────────────
+
+function readJson(raw) {
+    if (!raw) return null;
+    if (typeof raw === 'object') return raw;
+    const t = String(raw).trim();
+    if (!t.startsWith('{')) return null;
+    try { return JSON.parse(t); } catch (e) { return repairJSON(t) || null; }
+}
+
+/** { date, slot, weather } the Info Box text says, any of them null. */
+export function readInfoBox(raw, { year = null } = {}) {
+    const j = readJson(raw);
+    if (!j) {
+        const text = String(raw || '');
+        const dl = text.match(/(?:Date:|🗓️:)\s*(.+)/);
+        const tl = text.match(/(?:Time:|🕒:)\s*(.+)/);
+        return { date: dl ? K.parseDate(dl[1], { year }) : null, slot: tl ? K.normalizeSlot(tl[1].split('→')[0]) : null, weather: null };
+    }
+    const dateText = typeof j.date === 'string' ? j.date : j.date?.value;
+    const timeText = typeof j.time === 'string' ? j.time.split('→')[0] : j.time?.start;
+    const w = j.weather;
+    const weather = w ? [w.emoji, w.forecast].filter(Boolean).join(' ').trim() || null : null;
+    return { date: dateText ? K.parseDate(dateText, { year }) : null, slot: timeText ? K.normalizeSlot(timeText) : null, weather };
+}
+
+/** The Info Box JSON with the calendar's date and a time in its slot, or null when unchanged. */
+export function patchInfoBox(raw, now) {
+    const j = readJson(raw);
+    if (!j || !now) return null;
+    let touched = false;
+    const long = K.formatLong(now.date);
+    const curDate = typeof j.date === 'string' ? j.date : j.date?.value;
+    if (curDate !== undefined && curDate !== long) {
+        if (typeof j.date === 'string') j.date = long; else j.date = { ...(j.date || {}), value: long };
+        touched = true;
+    }
+    const timeText = typeof j.time === 'string' ? j.time.split('→')[0] : j.time?.start;
+    if (j.time !== undefined && K.slotFromClock(timeText) !== now.slot && K.normalizeSlot(timeText) !== now.slot) {
+        const clock = K.SLOTS.find(s => s.id === now.slot).clock;
+        if (typeof j.time === 'string') j.time = clock; else j.time = { start: clock, end: '' };
+        touched = true;
+    }
+    return touched ? JSON.stringify(j) : null;
+}
+
+/** Writes the calendar's date and slot into the Info Box shown and sent to the AI. */
+export function syncInfoBox({ render = true } = {}) {
+    if (!isCalendarEnabled()) return false;
+    const now = getNow();
+    if (!now) return false;
+    let any = false;
+    for (const holder of [lastGeneratedData, committedTrackerData]) {
+        const next = patchInfoBox(holder.infoBox, now);
+        if (next) { holder.infoBox = next; any = true; }
+    }
+    if (any && render) import('../rendering/infoBox.js').then(m => m.renderInfoBox?.()).catch(() => {});
+    return any;
+}
+
+/** The user changed the Info Box date or time by hand: the calendar follows (it may go back). */
+export function followInfoBoxEdit(raw) {
+    if (!isCalendarEnabled()) return false;
+    const now = getNow();
+    const r = readInfoBox(raw, { year: now ? K.splitYmd(now.date).y : null });
+    const date = r.date || now?.date;
+    if (!date) return false;
+    const slot = r.slot || now?.slot || 'morning';
+    if (now && now.date === date && now.slot === slot) return false;
+    setNow(date, slot);
+    return true;
+}
+
+// ─── The AI ─────────────────────────────────────────────────────────────────
+
+function infoBoxHasDate() {
+    const w = extensionSettings.trackerConfig?.infoBox?.widgets;
+    return !!(extensionSettings.showInfoBox !== false && w?.date?.enabled);
+}
+
+function needForecast() {
+    const now = getNow();
+    if (!now) return false;
+    for (let i = 1; i <= K.FORECAST_DAYS; i++) if (!getDay(K.addDays(now.date, i))?.weather) return true;
+    return false;
+}
+
+export function buildCalendarPromptForGeneration({ compact = true, standalone = false } = {}) {
+    if (!isCalendarEnabled()) return '';
+    const now = getNow();
+    const events = getEvents();
+    return K.buildCalendarPrompt({
+        now,
+        soon: now ? K.upcoming(events, now.date, 14) : [],
+        late: now ? K.overdue(events, now.date) : [],
+        needForecast: needForecast(),
+        infoBoxDate: infoBoxHasDate(),
+        compact, standalone,
+    });
+}
+
+export function buildCalendarContextSummary() {
+    if (!isCalendarEnabled()) return '';
+    const now = getNow();
+    if (!now) return '';
+    const soon = K.upcoming(getEvents(), now.date, 7);
+    return `Date: ${K.formatLong(now.date)}, ${K.slotName(now.slot).toLowerCase()}${soon.length ? `; coming up: ${soon.map(e => `${e.title} ${K.countdown(e.days)}`).join(', ')}` : ''}`;
+}
+
+function toast(kind, text, title = 'Calendar') {
+    try { globalThis.toastr?.[kind]?.(text, title, { timeOut: 4000 }); } catch (e) { /* no toasts */ }
+}
+
+/**
+ * Applies a fresh reply: the "calendar" key and the Info Box date/time/weather.
+ * Time never goes back here. Returns whether anything changed.
+ */
+export function applyAICalendar(rawKey, rawInfoBox, messageIndex) {
+    if (!isCalendarEnabled()) return false;
+    const before = snapshot();
+    const s = store(true);
+    if (!s) return false;
+    const year = s.now ? K.splitYmd(s.now.date).y : null;
+    const key = rawKey ? K.normalizeAICalendar(rawKey, { year }) : null;
+    const box = rawInfoBox ? readInfoBox(rawInfoBox, { year }) : { date: null, slot: null, weather: null };
+
+    // The moment: the key first, then the Info Box.
+    const date = key?.date || box.date || null;
+    const slot = key?.slot || box.slot || null;
+    let moved = null;
+    if (date || slot) {
+        const target = K.normalizeMoment({ date: date || s.now?.date, slot: slot || (date && s.now && date !== s.now.date ? 'morning' : s.now?.slot) || 'morning' });
+        if (target && (!s.now || K.compareMoments(target, s.now) > 0)) {
+            const days = s.now ? K.dayDiff(s.now.date, target.date) : 0;
+            s.now = target;
+            moved = days;
+        } else if (target && s.now && K.compareMoments(target, s.now) < 0) {
+            console.log(`[Dooms Tracker] Calendar: the reply went back to ${target.date} ${target.slot}; kept ${s.now.date} ${s.now.slot}`);
+        }
+    }
+    // Weather of today, the forecast, events.
+    if (s.now && box.weather) s.days[s.now.date] = { weather: box.weather.slice(0, 40) };
+    for (const f of key?.forecast || []) {
+        if (s.now && K.dayDiff(s.now.date, f.date) > 0 && !(s.days[f.date] && !s.days[f.date].forecast)) s.days[f.date] = { weather: f.weather, forecast: true };
+    }
+    const all = getEvents();
+    for (const ev of key?.events || []) {
+        if (all.some(e => K.eventOn(e, ev.date.length === 5 ? `2000-${ev.date}` : ev.date) && e.title.toLowerCase() === ev.title.toLowerCase())) continue;
+        if (s.events.length < K.MAX_EVENTS) { s.events.push(ev); toast('info', `${K.KINDS[ev.kind].icon} ${ev.title} — ${ev.date.length === 5 ? ev.date : K.formatShort(ev.date)}`); }
+    }
+    for (const t of key?.done || []) {
+        const ev = all.find(e => !e.done && e.title.toLowerCase() === t.toLowerCase());
+        if (!ev) continue;
+        if (String(ev.id).startsWith('lb:')) {
+            const ref = String(ev.id).slice(3);
+            if (!s.events.some(e => e.bookRef === ref)) s.events.push({ ...ev, id: `ref:${ref}`, bookRef: ref, done: true });
+        } else {
+            const own = s.events.find(e => e.id === ev.id);
+            if (own) own.done = true;
+        }
+    }
+    trimDays(s);
+    if (JSON.stringify(snapshot()) === JSON.stringify(before)) { syncInfoBox(); return false; }
+    if (moved && moved > 0) {
+        const due = K.upcoming(getEvents(), s.now.date, 0);
+        toast('info', `${K.formatShort(s.now.date)} · ${K.slotName(s.now.slot)}${due.length ? ` — today: ${due.map(e => e.title).join(', ')}` : ''}`);
+    }
+    try {
+        if (chat_metadata) {
+            if (!chat_metadata.dooms_tracker) chat_metadata.dooms_tracker = {};
+            const prev = chat_metadata.dooms_tracker.calendarUndo;
+            const start = prev && prev.messageIndex === messageIndex ? prev.before : before;
+            chat_metadata.dooms_tracker.calendarUndo = { messageIndex, campaign: CHAT_SCOPE, before: start, after: snapshot() };
+        }
+    } catch (e) { /* undo is best-effort */ }
+    changed();
+    return true;
+}
+
+/** Before a swipe/regenerate: put back what the replaced reply changed, if untouched since. */
+export function revertAICalendarForReplacedMessage(replacedIndex) {
+    try {
+        const rec = chat_metadata?.dooms_tracker?.calendarUndo;
+        if (!rec) return 0;
+        const lastIdx = Array.isArray(chat) ? chat.length - 1 : -1;
+        const idx = typeof replacedIndex === 'number' ? replacedIndex : lastIdx;
+        if (rec.messageIndex !== idx && rec.messageIndex !== idx + 1) return 0;
+        delete chat_metadata.dooms_tracker.calendarUndo;
+        if (JSON.stringify(snapshot()) !== JSON.stringify(rec.after)) { saveChatData(); return 0; }
+        restore(rec.before);
+        saveChatScope();
+        notifyStatsChanged({ source: 'undo' });
+        saveChatData();
+        return 1;
+    } catch (e) {
+        console.warn('[Dooms Tracker] Calendar: undo failed', e);
+        return 0;
+    }
+}

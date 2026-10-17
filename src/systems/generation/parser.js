@@ -93,8 +93,8 @@ function debugLog(message, data = null) {
     }
 }
 /** Keys of the unified tracker object that are not trackers of their own. */
-const EXTRA_KEYS = ['stats', 'memories', 'equipment', 'inventory', 'conditions', 'abilities', 'skills', 'spells', 'xp', 'experience', 'levels', 'money', 'currency', 'affinity', 'social', 'personas', 'persona', 'confidants', 'confidant', 'check'];
-const EXTRA_RESULT_KEYS = ['stats', 'memories', 'equipment', 'conditions', 'abilities', 'xp', 'levels', 'money', 'currency', 'affinity', 'social', 'personas', 'confidants', 'check'];
+const EXTRA_KEYS = ['stats', 'memories', 'equipment', 'inventory', 'conditions', 'abilities', 'skills', 'spells', 'xp', 'experience', 'levels', 'money', 'currency', 'affinity', 'social', 'personas', 'persona', 'confidants', 'confidant', 'calendar', 'check'];
+const EXTRA_RESULT_KEYS = ['stats', 'memories', 'equipment', 'conditions', 'abilities', 'xp', 'levels', 'money', 'currency', 'affinity', 'social', 'personas', 'confidants', 'calendar', 'check'];
 
 /**
  * Copies the Better Stats keys of a parsed tracker object into `result` as
@@ -119,6 +119,7 @@ function extractExtraKeys(parsed, result) {
         social: parsed.social,
         personas: pick('personas', 'persona'),
         confidants: pick('confidants', 'confidant'),
+        calendar: parsed.calendar,
         check: parsed.check,
     };
     for (const key of EXTRA_RESULT_KEYS) {
@@ -173,6 +174,8 @@ export function parseResponse(responseText) {
         personas: null,
         // Confidants (characterConfidants.js): bonds started and points earned.
         confidants: null,
+        // Calendar (calendar.js): events, forecast, date when the Info Box has none.
+        calendar: null,
         // Checks (characterChecks.js): the AI's suggested "check".
         check: null
     };

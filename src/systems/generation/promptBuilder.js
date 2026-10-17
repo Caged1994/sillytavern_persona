@@ -25,6 +25,7 @@ import { buildAffinityPromptForGeneration, buildAffinityContextSummary } from '.
 import { buildSocialPromptForGeneration, buildSocialContextSummary } from '../features/characterSocial.js';
 import { buildPersonaPromptForGeneration, buildPersonaContextSummary } from '../features/characterPersonas.js';
 import { buildConfidantPromptForGeneration, buildConfidantContextSummary } from '../features/characterConfidants.js';
+import { buildCalendarPromptForGeneration, buildCalendarContextSummary } from '../features/calendar.js';
 import { buildChecksPromptForGeneration, buildChecksContextSummary } from '../features/characterChecks.js';
 // Registers the attribute-modifier provider the stats prompt uses.
 import '../features/characterModifiers.js';
@@ -359,6 +360,9 @@ export function generateTrackerInstructions(includeHtmlPrompt = true, includeCon
         // Confidants (Social Links).
         const confidantSection = buildConfidantPromptForGeneration({ compact });
         if (confidantSection) instructions += '\n\n' + confidantSection;
+        // Calendar: date, time of day, events and deadlines.
+        const calendarSection = buildCalendarPromptForGeneration({ compact });
+        if (calendarSection) instructions += '\n\n' + calendarSection;
         // Checks: when to ask for a roll, and the outcome of the last one.
         const checksSection = buildChecksPromptForGeneration({ compact });
         if (checksSection) instructions += '\n\n' + checksSection;
@@ -389,8 +393,9 @@ export function generateTrackerInstructions(includeHtmlPrompt = true, includeCon
         const socialSection = buildSocialPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection });
         const personaSection = buildPersonaPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection });
         const confidantSection = buildConfidantPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection && !personaSection });
-        const checksSection = buildChecksPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection && !personaSection && !confidantSection });
-        const all = [statsSection, memoriesSection, equipmentSection, conditionsSection, abilitiesSection, progressSection, moneySection, affinitySection, socialSection, personaSection, confidantSection, checksSection].filter(Boolean);
+        const calendarSection = buildCalendarPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection && !personaSection && !confidantSection });
+        const checksSection = buildChecksPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection && !personaSection && !confidantSection && !calendarSection });
+        const all = [statsSection, memoriesSection, equipmentSection, conditionsSection, abilitiesSection, progressSection, moneySection, affinitySection, socialSection, personaSection, confidantSection, calendarSection, checksSection].filter(Boolean);
         if (all.length) {
             instructions += '\n' + all.join('\n\n');
             if (includeContinuation) {
@@ -863,6 +868,8 @@ export function generateContextualSummary() {
         if (personas) summary += personas + '\n';
         const confidants = buildConfidantContextSummary();
         if (confidants) summary += confidants + '\n';
+        const calendar = buildCalendarContextSummary();
+        if (calendar) summary += calendar + '\n';
         const checks = buildChecksContextSummary();
         if (checks) summary += checks + '\n';
     } catch (e) {

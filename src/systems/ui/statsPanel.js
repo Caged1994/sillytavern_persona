@@ -63,6 +63,12 @@ import {
     setPersonaLevel, setPersonaStat, cyclePersonaAffinity, addPersonaSkill, removePersonaSkill, setWildCard,
 } from '../features/characterPersonas.js';
 import { getBondAbilities, awakeningInfo, awakenPersona } from '../features/confidantAbilities.js';
+import {
+    isCalendarEnabled, getNow as getCalNow, getEvents as getCalEvents, getDay as getCalDay, getMonthView, getUpcoming,
+    setNow as setCalNow, advance as calAdvance, addEvent as calAddEvent, removeEvent as calRemoveEvent, setEventDone as calSetDone,
+    setWeather as calSetWeather, CALENDAR_CHANGED_EVENT,
+} from '../features/calendar.js';
+import * as CK from '../../utils/calendarModel.js';
 import { canFuse, previewFusion, listFusions, fuse, isVelvetEnabled } from '../features/velvetRoom.js';
 import { getCompendium, getCompendiumInfo, findInCompendium, refreshCompendium, COMPENDIUM_CHANGED_EVENT } from '../features/personaCompendium.js';
 import { ELEMENTS, AFFINITIES, ARCANA, STAT_IDS as P_STATS, STAT_LABELS as P_LABELS, MAX_SKILLS, MAX_STOCK } from '../../utils/personaModel.js';
@@ -96,6 +102,7 @@ const SECTIONS = [
     { id: 'persona', label: 'Persona', icon: 'fa-masks-theater' },
     { id: 'social', label: 'Social', icon: 'fa-star' },
     { id: 'confidants', label: 'Confidants', icon: 'fa-people-arrows' },
+    { id: 'calendar', label: 'Calendar', icon: 'fa-calendar-days' },
     { id: 'equipment', label: 'Equipment', icon: 'fa-shield-halved' },
     { id: 'abilities', label: 'Abilities', icon: 'fa-wand-sparkles' },
     { id: 'memories', label: 'Memories', icon: 'fa-brain' },
@@ -369,6 +376,92 @@ function personaHtml() {
     </section>`;
 }
 
+// ─── Calendar ───────────────────────────────────────────────────────────────
+
+const calView = { y: null, m: null, sel: null, last: null };
+const CAL_FORM = { title: '', kind: 'event', slot: '', setDate: '', setSlot: 'morning', weather: '', error: '' };
+const calForm = { ...CAL_FORM };
+const firstEmoji = (s) => (String(s || '').match(/\p{Extended_Pictographic}️?/u) || [''])[0];
+
+function calendarHtml() {
+    const now = getCalNow();
+    // Open on today's month, and follow the story when the date moves.
+    if (calView.y === null || (now && calView.last !== now.date)) {
+        const base = now ? CK.splitYmd(now.date) : (() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() + 1 }; })();
+        calView.y = base.y; calView.m = base.m;
+        calView.sel = now?.date || null;
+        calView.last = now?.date || null;
+    }
+    const view = getMonthView(calView.y, calView.m);
+    const lead = view.days[0]?.weekday || 0;
+    const todayW = now ? getCalDay(now.date)?.weather : '';
+    const soon = getUpcoming(30);
+    const late = now ? CK.overdue(getCalEvents(), now.date) : [];
+    const sel = calView.sel;
+    const selEvents = sel ? getCalEvents().filter(e => CK.eventOn(e, sel)) : [];
+    const selDay = sel ? getCalDay(sel) : null;
+    const evRow = (e, { left = null } = {}) => `<li class="dsp-cal-ev is-${e.kind}${e.done ? ' is-done' : ''}" data-ev="${escapeHtml(e.id)}">
+        <span class="dsp-cal-ev-icon">${CK.KINDS[e.kind].icon}</span>
+        <span class="dsp-cal-ev-title">${escapeHtml(e.title)}${e.slot ? ` <small>${escapeHtml(CK.slotName(e.slot).toLowerCase())}</small>` : ''}${e.source === 'lorebook' ? ' <small>lorebook</small>' : e.source === 'ai' ? ' <i class="fa-solid fa-robot" title="From the story"></i>' : ''}</span>
+        ${left !== null ? `<span class="dsp-cal-left${left <= 3 && e.kind === 'deadline' ? ' is-urgent' : ''}">${escapeHtml(CK.countdown(left))}</span>` : ''}
+        <button type="button" class="dsp-icon-btn" data-action="cal-done" title="${e.done ? 'Not done' : 'Done'}"><i class="fa-solid ${e.done ? 'fa-rotate-left' : 'fa-check'}"></i></button>
+        ${String(e.id).startsWith('lb:') ? '' : '<button type="button" class="dsp-icon-btn" data-action="cal-del" title="Delete"><i class="fa-solid fa-trash"></i></button>'}
+    </li>`;
+    return `<section class="dsp-section dsp-cal">
+        ${now ? `<div class="dsp-cal-now">
+            <div class="dsp-cal-date"><span class="dsp-cal-md">${escapeHtml(CK.formatShort(now.date).split(' ')[0])}</span><span class="dsp-cal-wd">${escapeHtml(CK.WEEKDAY_SHORT[CK.weekday(now.date)])}</span></div>
+            <div class="dsp-cal-slot"><span class="dsp-cal-slot-name">${CK.SLOTS.find(s => s.id === now.slot).icon} ${escapeHtml(CK.slotName(now.slot))}</span>
+                <span class="dsp-cal-long">${escapeHtml(CK.formatLong(now.date))}${todayW ? ` · ${escapeHtml(todayW)}` : ''}</span>
+                <span class="dsp-cal-pips">${CK.SLOTS.map(s => `<i class="${CK.slotIndex(s.id) <= CK.slotIndex(now.slot) ? 'is-on' : ''}" title="${s.name}"></i>`).join('')}</span></div>
+            <div class="dsp-cal-adv">
+                <button type="button" class="dsp-text-btn" data-action="cal-next" title="Next time of day"><i class="fa-solid fa-forward-step"></i> ${escapeHtml(CK.slotName(CK.nextSlot(now).slot))}</button>
+                <button type="button" class="dsp-text-btn" data-action="cal-day" title="Next morning"><i class="fa-solid fa-forward"></i> Next day</button>
+            </div>
+        </div>` : '<div class="dsp-items-empty">No date yet. The AI sets one in its next reply (from the Info Box), or set it here.</div>'}
+        ${late.length ? `<div class="dsp-cal-late">⏳ Missed: ${late.map(e => escapeHtml(e.title)).join(', ')}</div>` : ''}
+        <div class="dsp-cal-month">
+            <div class="dsp-cal-mhead">
+                <button type="button" class="dsp-icon-btn" data-cal-month="-1" title="Previous month"><i class="fa-solid fa-chevron-left"></i></button>
+                <span>${escapeHtml(CK.MONTHS[calView.m - 1])} ${calView.y}</span>
+                <button type="button" class="dsp-icon-btn" data-cal-month="1" title="Next month"><i class="fa-solid fa-chevron-right"></i></button>
+            </div>
+            <div class="dsp-cal-grid">
+                ${CK.WEEKDAY_SHORT.map((w, i) => `<span class="dsp-cal-wh${i === 0 ? ' is-sun' : i === 6 ? ' is-sat' : ''}">${w}</span>`).join('')}
+                ${'<span></span>'.repeat(lead)}
+                ${view.days.map(d => `<button type="button" class="dsp-cal-day${d.today ? ' is-today' : ''}${d.past ? ' is-past' : ''}${d.date === sel ? ' is-sel' : ''}${d.weekday === 0 ? ' is-sun' : d.weekday === 6 ? ' is-sat' : ''}" data-cal-day="${d.date}" title="${escapeHtml([CK.formatLong(d.date), d.weather ? (d.forecast ? `forecast: ${d.weather}` : d.weather) : '', ...d.events.map(e => `${CK.KINDS[e.kind].icon} ${e.title}`)].filter(Boolean).join('\n'))}">
+                    <span class="dsp-cal-dn">${d.day}</span>
+                    <span class="dsp-cal-dw${d.forecast ? ' is-fc' : ''}">${escapeHtml(firstEmoji(d.weather))}</span>
+                    ${d.events.length ? `<span class="dsp-cal-dots">${d.events.slice(0, 3).map(e => `<i class="is-${e.kind}${e.done ? ' is-done' : ''}"></i>`).join('')}</span>` : ''}
+                </button>`).join('')}
+            </div>
+        </div>
+        ${sel ? `<div class="dsp-cal-sel">
+            <div class="dsp-subhead"><i class="fa-solid fa-calendar-day"></i> ${escapeHtml(CK.formatLong(sel))}${now ? ` <span>${escapeHtml(CK.countdown(CK.dayDiff(now.date, sel)))}</span>` : ''}</div>
+            <div class="dsp-item-form-row">
+                <input type="text" data-cal-field="weather" value="${escapeHtml(calForm.weather || selDay?.weather || '')}" placeholder="Weather (e.g. 🌧️ Rain)" maxlength="40" aria-label="Weather">
+                <button type="button" class="dsp-text-btn" data-action="cal-weather">Save</button>
+                ${now?.date !== sel ? '<button type="button" class="dsp-text-btn" data-action="cal-goto" title="Make this day today">Go to this day</button>' : ''}
+            </div>
+            ${selEvents.length ? `<ul class="dsp-cal-list">${selEvents.map(e => evRow(e)).join('')}</ul>` : ''}
+            <div class="dsp-item-form-row">
+                <input type="text" data-cal-field="title" value="${escapeHtml(calForm.title)}" placeholder="New event" maxlength="80" aria-label="Event">
+                <select data-cal-field="kind" aria-label="Kind">${Object.entries(CK.KINDS).map(([id, k]) => `<option value="${id}"${calForm.kind === id ? ' selected' : ''}>${k.icon} ${k.name}</option>`).join('')}</select>
+                <select data-cal-field="slot" aria-label="Time of day"><option value="">Any time</option>${CK.SLOTS.map(s => `<option value="${s.id}"${calForm.slot === s.id ? ' selected' : ''}>${s.name}</option>`).join('')}</select>
+                <button type="button" class="dsp-text-btn is-primary" data-action="cal-add">Add</button>
+            </div>
+            <span class="dsp-item-error" role="alert">${escapeHtml(calForm.error)}</span>
+        </div>` : ''}
+        ${soon.length ? `<div class="dsp-subhead"><i class="fa-solid fa-hourglass-half"></i> Coming up</div><ul class="dsp-cal-list">${soon.map(e => evRow(e, { left: e.days })).join('')}</ul>` : ''}
+        <details class="dsp-cal-set"${now ? '' : ' open'}><summary>Set the date by hand</summary>
+            <div class="dsp-item-form-row">
+                <input type="date" data-cal-field="setDate" value="${escapeHtml(calForm.setDate || now?.date || '')}" aria-label="Date">
+                <select data-cal-field="setSlot" aria-label="Time of day">${CK.SLOTS.map(s => `<option value="${s.id}"${(calForm.setSlot || now?.slot) === s.id ? ' selected' : ''}>${s.name}</option>`).join('')}</select>
+                <button type="button" class="dsp-text-btn is-primary" data-action="cal-set">Set</button>
+            </div>
+        </details>
+    </section>`;
+}
+
 // ─── Velvet Room ────────────────────────────────────────────────────────────
 
 function velvetHtml(rec) {
@@ -627,6 +720,8 @@ function pointButtons(stat, base, prog) {
 /** Money (persona and party) and affinity toward the persona (NPCs), under the name. */
 function heroExtrasHtml() {
     const parts = [];
+    const calNow = selected.isUser && isCalendarEnabled() ? getCalNow() : null;
+    if (calNow) parts.push(`<button type="button" class="dsp-chip dsp-cal-chip" data-section-go="calendar" title="${escapeHtml(CK.formatLong(calNow.date))} — open the calendar">📅 ${escapeHtml(CK.formatShort(calNow.date))} · ${escapeHtml(CK.slotName(calNow.slot))}</button>`);
     if (isMoneyEnabled() && hasPurse(selected.name, selected.isUser)) {
         const m = getMoney(selected.name, selected.isUser);
         const cur = getCurrency();
@@ -791,6 +886,7 @@ function buildHtml({ popout }) {
     if (isPersonasEnabled()) sections.push({ id: 'persona', count: getPersonaRecord(selected.name, selected.isUser).list.length });
     if (selected.isUser && isSocialEnabled()) sections.push({ id: 'social' });
     if (selected.isUser && isConfidantsEnabled()) sections.push({ id: 'confidants', count: getBonds().length, dot: getPending().length > 0 });
+    if (selected.isUser && isCalendarEnabled()) sections.push({ id: 'calendar', count: getUpcoming(7).length });
     if (isEquipmentEnabled()) sections.push({ id: 'equipment', count: getEquipment(selected.name, selected.isUser).length });
     if (isAbilitiesEnabled()) sections.push({ id: 'abilities', count: getAbilities(selected.name, selected.isUser).length });
     if (!selected.isUser && isMemoriesEnabled()) sections.push({ id: 'memories', count: getMemories(selected.name).length });
@@ -832,6 +928,8 @@ function buildHtml({ popout }) {
         content = personaHtml();
     } else if (section === 'confidants') {
         content = confidantsHtml();
+    } else if (section === 'calendar') {
+        content = calendarHtml();
     } else if (section === 'equipment') {
         content = equipmentHtml();
     } else if (section === 'abilities') {
@@ -1704,6 +1802,46 @@ function bindRootListeners(root) {
         if (action === 'item-add') { submitItemForm(); return; }
         if (action === 'xp-add') { submitXpForm(); return; }
         if (action === 'pr-add') { submitPersonaForm(); return; }
+        const calMonth = e.target.closest('[data-cal-month]')?.getAttribute('data-cal-month');
+        if (calMonth) {
+            let m = calView.m + Number(calMonth);
+            let y = calView.y;
+            if (m < 1) { m = 12; y--; } else if (m > 12) { m = 1; y++; }
+            calView.m = m; calView.y = y;
+            renderAll();
+            return;
+        }
+        const calDay = e.target.closest('[data-cal-day]')?.getAttribute('data-cal-day');
+        if (calDay) { calView.sel = calView.sel === calDay ? null : calDay; calForm.weather = ''; calForm.error = ''; renderAll(); return; }
+        if (action === 'cal-next' || action === 'cal-day') {
+            const r = calAdvance(action === 'cal-day' ? 'day' : 'slot');
+            if (r.now) { const p = CK.splitYmd(r.now.date); calView.y = p.y; calView.m = p.m; calView.sel = r.now.date; }
+            return;
+        }
+        if (action === 'cal-set' || action === 'cal-goto') {
+            const date = action === 'cal-goto' ? calView.sel : (calForm.setDate || getCalNow()?.date);
+            const r = setCalNow(date, action === 'cal-goto' ? 'morning' : (calForm.setSlot || 'morning'));
+            if (r.error) { calForm.error = r.error; renderAll(); return; }
+            const p = CK.splitYmd(r.now.date); calView.y = p.y; calView.m = p.m; calView.sel = r.now.date;
+            calForm.setDate = '';
+            return;
+        }
+        if (action === 'cal-add' && calView.sel) {
+            const r = calAddEvent({ date: calView.sel, title: calForm.title, kind: calForm.kind, slot: calForm.slot || undefined });
+            if (r.error) { calForm.error = r.error; renderAll(); return; }
+            Object.assign(calForm, { title: '', error: '' });
+            renderAll();
+            return;
+        }
+        if (action === 'cal-weather' && calView.sel) { calSetWeather(calView.sel, calForm.weather || ''); calForm.weather = ''; renderAll(); return; }
+        if (action === 'cal-done' || action === 'cal-del') {
+            const id = e.target.closest('[data-ev]')?.getAttribute('data-ev');
+            if (!id) return;
+            if (action === 'cal-del') calRemoveEvent(id);
+            else calSetDone(id, !getCalEvents().find(x => x.id === id)?.done);
+            renderAll();
+            return;
+        }
         if (action === 'vr-open') { Object.assign(velvet, VELVET, { open: true }); renderAll(); return; }
         if (action === 'vr-close') { Object.assign(velvet, VELVET); renderAll(); return; }
         if (action === 'vr-fuse') { submitFusion(); return; }
@@ -1795,6 +1933,8 @@ function bindRootListeners(root) {
     root.addEventListener('input', (e) => {
         const cfField = e.target.getAttribute && e.target.getAttribute('data-cf-field');
         if (cfField) { confForm[cfField] = e.target.value; confForm.error = ''; return; }
+        const calField = e.target.getAttribute && e.target.getAttribute('data-cal-field');
+        if (calField) { calForm[calField] = e.target.value; calForm.error = ''; return; }
         const vrParent = e.target.getAttribute && e.target.getAttribute('data-vr-parent');
         if (vrParent !== null && vrParent !== undefined) {
             velvet.pick[Number(vrParent)] = e.target.value;
@@ -1873,6 +2013,7 @@ function bindGlobalListeners() {
     window.addEventListener(MEMORIES_CHANGED_EVENT, () => requestAnimationFrame(() => renderAll()));
     window.addEventListener(COMPENDIUM_CHANGED_EVENT, () => requestAnimationFrame(() => renderAll()));
     window.addEventListener(CONFIDANTS_CHANGED_EVENT, () => requestAnimationFrame(() => renderAll()));
+    window.addEventListener(CALENDAR_CHANGED_EVENT, () => requestAnimationFrame(() => renderAll()));
     window.addEventListener(STATS_CHANGED_EVENT, () => {
         // Collapse bursts (an AI update changes many values) into one paint.
         requestAnimationFrame(() => renderAll());

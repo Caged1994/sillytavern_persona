@@ -46,6 +46,24 @@ A ready-made Compendium is in `compendium/Persona-Compendium.json`: the 242 Pers
 
 Affinities accept `Wk`/`Weak`, `Rs`/`Resist`, `Nu`/`Null`, `Dr`/`Drain`, `Rp`/`Repel` and `-` for normal. An entry without a stats line gets an even spread for its level. When a character obtains a Persona whose name is in the Compendium, a copy is made for that chat; levelling it up never changes the lorebook.
 
+## Calendar
+
+A real calendar with four times of day: **morning** (from 5:00), **afternoon** (12:00), **evening** (18:00) and **night** (22:00). It is in charge of the Info Box date and time:
+
+- The AI keeps writing the Info Box date ("Weekday, Month Day, Year") and time as before. The calendar reads them and moves forward. If a reply goes back in time, the calendar keeps its moment and writes its own date, and a time in its slot, back into the Info Box. Without the Info Box date widget, the AI uses the `"calendar": {"date", "slot"}` key instead.
+- By hand (Stats panel → Calendar, your character): next time of day, next day, any date (also backwards), or by typing in the Info Box.
+- Weather by day: today's comes from the Info Box. The AI is asked for a 3-day forecast when one is missing; you can also type it on any day.
+- Events: event, deadline, exam or holiday, with a countdown in the panel and in the prompt. Missed deadlines are told to the AI. They come from the story (`"calendar": {"events": [...], "done": [...]}`), by hand, or from lorebook entries titled `Calendar:`, one per line:
+
+```
+Calendar: Shujin Academy
+April 29: Golden Week (holiday)
+2016-05-05: Kamoshida's Palace deadline
+July 13 evening — Fireworks festival
+```
+
+A date without a year repeats every year. A swipe undoes what the replaced reply changed.
+
 ## Confidant abilities (teammates)
 
 A Confidant who fights with you (a party member) unlocks abilities in battle as the bond grows, as P5's teammates do:

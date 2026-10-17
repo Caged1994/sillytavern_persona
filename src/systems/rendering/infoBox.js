@@ -17,6 +17,7 @@ import { repairJSON } from '../../utils/jsonRepair.js';
 import { separateEmojiFromText } from '../../utils/textUtils.js';
 import { escapeHtml, escapeAttr } from '../../utils/html.js';
 import { parseTrackerJson } from '../../utils/trackerParse.js';
+import { syncInfoBox, followInfoBoxEdit } from '../features/calendar.js';
 /**
  * Updates the CSS variable for dynamic text scaling on the location field.
  * @param {jQuery} $element - The location element
@@ -56,6 +57,10 @@ export function initInfoBoxEventDelegation() {
             updateRecentEvent(field, value);
         } else {
             updateInfoBoxField(field, value);
+            // A date or time typed here moves the calendar (by hand it may go back).
+            if (['weekday', 'month', 'year', 'timeStart'].includes(field)) {
+                try { followInfoBoxEdit(lastGeneratedData.infoBox); } catch (e) { /* calendar off */ }
+            }
         }
     });
     // Update location size on input as well (real-time)
@@ -95,6 +100,8 @@ export function renderInfoBox() {
     if (!extensionSettings.showInfoBox || !$infoBoxContainer) {
         return;
     }
+    // The calendar is in charge of the date and time of day.
+    try { syncInfoBox({ render: false }); } catch (e) { /* calendar off or no chat */ }
     // Use committedTrackerData as fallback if lastGeneratedData is empty (e.g., after page refresh)
     const infoBoxData = lastGeneratedData.infoBox || committedTrackerData.infoBox;
     // If no data yet, hide the container (e.g., after cache clear)

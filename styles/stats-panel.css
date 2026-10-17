@@ -1820,3 +1820,62 @@ input.dsp-xp-big { width: 3em; font-size: 20px; text-align: center; }
 .dsp-conf-abl li.is-done { opacity: 1; background: color-mix(in srgb, var(--dsp-accent) 14%, transparent); }
 .dsp-conf-abl-rank { font-size: 11px; color: var(--dsp-muted); }
 .dsp-conf-abl-desc { grid-column: 2 / 4; color: var(--dsp-muted); }
+
+/* Calendar — the Persona 5 corner: red, black and white. */
+.dsp-cal-chip { font-weight: 700; }
+.dsp-cal-now {
+    display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: center;
+    padding: 10px 12px; margin-bottom: 8px; border-radius: 12px;
+    background: linear-gradient(115deg, #d7192d 0 31%, #111 31.2%); color: #fff;
+}
+.dsp-cal-date { display: flex; align-items: baseline; gap: 4px; transform: skewX(-8deg); }
+.dsp-cal-md { font-size: 30px; font-weight: 900; font-style: italic; letter-spacing: -1px; text-shadow: 2px 2px 0 #000; }
+.dsp-cal-wd { font-size: 15px; font-weight: 900; padding: 0 5px; color: #111; background: #fff; }
+.dsp-cal-slot { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dsp-cal-slot-name { font-size: 16px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; }
+.dsp-cal-long { font-size: 12px; color: rgba(255, 255, 255, 0.75); }
+.dsp-cal-pips { display: flex; gap: 4px; }
+.dsp-cal-pips i { width: 18px; height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.25); }
+.dsp-cal-pips i.is-on { background: #fff; }
+.dsp-cal-adv { grid-column: 1 / 3; display: flex; gap: 6px; justify-content: flex-end; }
+.dsp-cal-adv .dsp-text-btn { color: #fff; border-color: rgba(255, 255, 255, 0.35); }
+.dsp-cal-late { margin: 0 0 8px; padding: 6px 10px; font-size: 12px; font-weight: 700; border-radius: 8px; color: #fff; background: rgba(215, 25, 45, 0.45); }
+.dsp-cal-month { padding: 8px; border-radius: 12px; background: var(--dsp-card); }
+.dsp-cal-mhead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; font-weight: 800; }
+.dsp-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
+.dsp-cal-wh { font-size: 10px; font-weight: 700; text-align: center; color: var(--dsp-muted); }
+.dsp-cal-wh.is-sun, .dsp-cal-day.is-sun .dsp-cal-dn { color: #ff6b7a; }
+.dsp-cal-wh.is-sat, .dsp-cal-day.is-sat .dsp-cal-dn { color: #7fb2ff; }
+.dsp-cal-day {
+    position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+    min-height: 42px; padding: 3px 0 2px; cursor: pointer; color: var(--dsp-text);
+    border: 1px solid transparent; border-radius: 7px; background: rgba(255, 255, 255, 0.04);
+}
+.dsp-cal-day:hover { background: var(--dsp-card-hover); }
+.dsp-cal-day.is-past { opacity: 0.45; }
+.dsp-cal-day.is-sel { border-color: var(--dsp-text); }
+.dsp-cal-day.is-today { background: #d7192d; opacity: 1; }
+.dsp-cal-day.is-today .dsp-cal-dn { color: #fff; }
+.dsp-cal-dn { font-size: 12px; font-weight: 800; line-height: 1.1; }
+.dsp-cal-dw { font-size: 13px; line-height: 1.2; min-height: 15px; }
+.dsp-cal-dw.is-fc { opacity: 0.6; }
+.dsp-cal-dots { display: flex; gap: 2px; }
+.dsp-cal-dots i { width: 5px; height: 5px; border-radius: 50%; background: #9fb8ff; }
+.dsp-cal-dots i.is-deadline { background: #ff4d5e; }
+.dsp-cal-dots i.is-exam { background: #ffd166; }
+.dsp-cal-dots i.is-holiday { background: #6ee7a8; }
+.dsp-cal-dots i.is-done { opacity: 0.3; }
+.dsp-cal-sel { margin-top: 8px; }
+.dsp-cal-sel input[type="text"] { flex: 1; min-width: 0; }
+.dsp-cal-list { list-style: none; margin: 4px 0 8px; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.dsp-cal-ev { display: flex; align-items: center; gap: 6px; padding: 4px 6px 4px 8px; font-size: 12px; border-radius: 8px; background: var(--dsp-card); border-left: 3px solid #9fb8ff; }
+.dsp-cal-ev.is-deadline { border-left-color: #ff4d5e; }
+.dsp-cal-ev.is-exam { border-left-color: #ffd166; }
+.dsp-cal-ev.is-holiday { border-left-color: #6ee7a8; }
+.dsp-cal-ev.is-done { opacity: 0.5; text-decoration: line-through; }
+.dsp-cal-ev-title { flex: 1; min-width: 0; }
+.dsp-cal-ev-title small { color: var(--dsp-muted); }
+.dsp-cal-left { font-size: 11px; font-weight: 700; color: var(--dsp-muted); white-space: nowrap; }
+.dsp-cal-left.is-urgent { color: #ff4d5e; }
+.dsp-cal-set { margin-top: 8px; font-size: 12px; }
+.dsp-cal-set summary { cursor: pointer; color: var(--dsp-muted); }

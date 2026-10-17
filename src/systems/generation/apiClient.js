@@ -39,6 +39,7 @@ import { applyAIAffinity } from '../features/characterAffinity.js';
 import { applyAISocial } from '../features/characterSocial.js';
 import { applyAIPersonas } from '../features/characterPersonas.js';
 import { applyAIConfidants } from '../features/characterConfidants.js';
+import { applyAICalendar } from '../features/calendar.js';
 import { settleChecks } from '../features/characterChecks.js';
 import { renderThoughts, updateChatThoughts } from '../rendering/thoughts.js';
 import { renderQuests } from '../rendering/quests.js';
@@ -380,6 +381,10 @@ export async function updateRPGData(renderInfoBox, renderThoughts) {
             // Personas: before stats, so new attributes are in place.
             if (parsedData.personas) {
                 try { applyAIPersonas(parsedData.personas, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Personas: applying AI update failed', e); }
+            }
+            // Calendar: the date and time of day (from the Info Box or its key), events, weather.
+            if (parsedData.calendar || parsedData.infoBox) {
+                try { applyAICalendar(parsedData.calendar, parsedData.infoBox, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Calendar: applying AI update failed', e); }
             }
             // Confidants: bonds started and points earned.
             if (parsedData.confidants) {

@@ -41,6 +41,7 @@ import { setAffinityEnabled } from '../features/characterAffinity.js';
 import { setSocialEnabled } from '../features/characterSocial.js';
 import { setPersonasEnabled } from '../features/characterPersonas.js';
 import { setVelvetEnabled } from '../features/velvetRoom.js';
+import { setCalendarEnabled } from '../features/calendar.js';
 import {
     setConfidantsEnabled, getConfidantModeSetting, setConfidantMode, getConfidantMode, getMinAffinity, setMinAffinity,
     isConfirmOn, setConfirm, refreshConfidantBook, CONFIDANTS_CHANGED_EVENT,
@@ -159,6 +160,7 @@ export function initStatsSettings() {
     flag('rpg-social-enabled', 'characterSocialEnabled');
     flag('rpg-personas-enabled', 'personasEnabled');
     flag('rpg-velvet-enabled', 'velvetRoomEnabled');
+    flag('rpg-calendar-enabled', 'calendarEnabled');
     flag('rpg-confidants-enabled', 'confidantsEnabled');
     renderConfidantSettings();
     window.addEventListener(CONFIDANTS_CHANGED_EVENT, renderConfidantSettings);
@@ -201,6 +203,7 @@ export function initStatsSettings() {
         else if (el.id === 'rpg-social-enabled') setSocialEnabled(el.checked);
         else if (el.id === 'rpg-personas-enabled') setPersonasEnabled(el.checked);
         else if (el.id === 'rpg-velvet-enabled') setVelvetEnabled(el.checked);
+        else if (el.id === 'rpg-calendar-enabled') setCalendarEnabled(el.checked);
         else if (el.id === 'rpg-confidants-enabled') setConfidantsEnabled(el.checked);
         else if (el.id === 'rpg-confidant-mode') { setConfidantMode(el.value); renderConfidantSettings(); }
         else if (el.id === 'rpg-confidant-min') { setMinAffinity(el.value); renderConfidantSettings(); }
