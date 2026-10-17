@@ -865,6 +865,9 @@ export async function onGenerationStarted(type, data, dryRun) {
         if (!shouldSuppress) {
             setExtensionPrompt('dooms-tracker-inject', instructions, extension_prompt_types.IN_CHAT, tiDepth, false, tiRole);
         }
+        console.log(shouldSuppress
+            ? `[Dooms Tracker] Together mode: tracker instructions NOT sent (suppressed: ${skipMode}; guided=${isGuidedGeneration}, impersonation=${isImpersonationGeneration}, quiet=${hasQuietPrompt})`
+            : `[Dooms Tracker] Together mode: tracker instructions sent (${instructions.length} chars, depth ${tiDepth}, as ${tiSettings.role || 'user'})`);
         // Inject HTML prompt separately if enabled (prevents duplication on swipes)
         const htmlSettings = pInjection.html || {};
         const htmlDepth = htmlSettings.depth ?? 0;

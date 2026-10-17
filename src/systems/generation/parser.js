@@ -452,6 +452,9 @@ export function parseResponse(responseText) {
     if (!hasAnyResult(result)) {
         result.parsingFailed = true;
         console.error('[RPG Parser] ❌ No tracker data found in response - parsing failed');
+        // What came back, so a missing block can be told from a malformed one.
+        const tail = String(responseText || '').replace(/\s+/g, ' ').trim();
+        console.log(`[Dooms Tracker] Reply without trackers: ${tail.length} chars, ${(tail.match(/\{/g) || []).length} "{" — ends with: …${tail.slice(-240)}`);
     }
     return result;
 } // End parseResponse
