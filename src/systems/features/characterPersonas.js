@@ -17,8 +17,8 @@
  * "Learns" list holds.
  *
  * As in the games, a Persona can never be above its user's level (when
- * Levels are on): the user cannot add or equip one that is, and one the AI
- * awakens above it comes in at the character's level.
+ * Levels are on): the user cannot add or equip one that is. One the AI
+ * awakens can be any Persona at all and comes in at exactly its user's level.
  *
  * A Wild Card (the player's character by default) holds up to MAX_STOCK
  * Personas and switches between them; anyone else has one, and a new one
@@ -147,13 +147,15 @@ function syncSkills(name, isUser) {
  * A new Persona for a character: the Compendium's when the name is there,
  * otherwise made from the description (numbers from the program).
  */
-export function makePersonaFor(name, isUser, desc, { lowerToCap = false } = {}) {
+export function makePersonaFor(name, isUser, desc, { lowerToCap = false, atUserLevel = false } = {}) {
     const d = typeof desc === 'string' ? { name: desc } : (desc || {});
     const lvl = Number(d.level) || characterLevel(name, isUser);
     const def = findInCompendium(d.name);
     let p = def ? P.personaFromCompendium(def, { level: d.level ? lvl : null })
         : P.personaFromDescription({ ...d, source: d.source || 'ai' }, { level: lvl });
     const cap = personaLevelCap(name, isUser);
+    // An awakening: any Persona, at exactly its user's level (up or down).
+    if (p && atUserLevel && cap !== null && p.level !== cap) p = P.setPersonaLevel(p, cap).persona;
     // Above the character's level: brought down to it (when asked to).
     if (p && lowerToCap && cap !== null && p.level > cap) p = P.setPersonaLevel(p, cap).persona;
     return p;
@@ -402,7 +404,7 @@ export function applyAIPersonas(raw, messageIndex) {
         const rec = readKey(key);
         const notes = [];
         for (const a of change.add) {
-            const persona = makePersonaFor(target.name, target.isUser, { ...a, source: 'ai' }, { lowerToCap: true });
+            const persona = makePersonaFor(target.name, target.isUser, { ...a, source: 'ai', level: undefined }, { atUserLevel: true });
             if (!persona) continue;
             const hadNone = !rec.list.length;
             const res = addTo(rec, persona);

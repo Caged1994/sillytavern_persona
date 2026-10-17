@@ -177,12 +177,18 @@ Pe.applyAIPersonas({ Mastera: { add: 'Satanael' } }, last());
 const sat = Pe.getPersonas('Mastera', true).find(p => p.name === 'Satanael');
 check('the AI awakening one brings it down to the character\'s level', sat && sat.level === P.getProgress('Mastera', true).level && Object.values(sat.stats).every(v => v < 60));
 Pe.revertAIPersonasForReplacedMessage(last());
+chat.push({ is_user: true, mes: 'q5' }, { is_user: false, mes: 'q6' });
+Pe.applyAIPersonas({ Mastera: { add: { name: 'Jack Frost', arcana: 'Magician', level: 1 } } }, last());
+const jf = Pe.getPersonas('Mastera', true).find(p => p.name === 'Jack Frost');
+check('...also one made up from the description', jf && jf.level === P.getProgress('Mastera', true).level);
+Pe.revertAIPersonasForReplacedMessage(last());
 Comp.setCompendiumForTests([ars]);
 
 // ── 4. The AI ──
 let instr = pb.generateTrackerInstructions(false, false);
 check('the prompt lists the equipped Persona', instr.includes('PERSONAS') && instr.includes('Mastera [Wild Card]: Arsène (Fool') && instr.includes('weak Ice, Bless; resists Curse'));
-check('...the Compendium names', instr.includes('Known Personas') && instr.includes('Arsène'));
+check('...a small Compendium by name', instr.includes("This story's Personas") && instr.includes('Arsène'));
+check('...and that an awakening can be anything, at the user\'s level', /any Persona — any Arcana/.test(instr) && /starts at its user's level/.test(instr));
 check('...and how to awaken one', instr.includes('"personas"'));
 chat.push({ is_user: true, mes: 'p1' }, { is_user: false, mes: 'p2' });
 Pe.applyAIPersonas({ Bram: { awaken: { name: 'Captain Kidd', arcana: 'Chariot', focus: 'st', affinities: { Elec: 'rs', Wind: 'weak' }, skills: ['Zio', 'Lunge'] } } }, last());

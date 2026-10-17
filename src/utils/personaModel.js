@@ -456,7 +456,8 @@ export function buildPersonaPrompt({ owners = [], wildCards = [], compendium = [
     out += wildCards.length
         ? `Only a Wild Card (${wildCards.join(', ')}) can hold several and switch: {"Name": {"equip": "Pixie"}}; for anyone else a new Persona replaces the old one (an evolution). `
         : 'A character holds one Persona; a new one replaces it (an evolution). ';
-    out += 'A Persona is never above its user\'s level (a stronger one comes in at the user\'s level). When the story teaches the equipped Persona a skill: {"Name": {"learn": ["Zio"]}}. Leave the key out when nothing changes.';
-    if (compendium.length) out += `\nKnown Personas (use these names when one fits): ${compendium.slice(0, 60).join(', ')}.`;
+    out += 'An awakened Persona can be any Persona — any Arcana, one from the games (use its real name) or an original one that fits the character — and it starts at its user\'s level, whatever its usual one. When the story teaches the equipped Persona a skill: {"Name": {"learn": ["Zio"]}}. Leave the key out when nothing changes.';
+    // A small (homebrew) Compendium is listed; the big one is known to the model by name.
+    if (compendium.length && compendium.length <= 60) out += `\nThis story's Personas (use these names when one fits): ${compendium.join(', ')}.`;
     return out.trim();
 }
