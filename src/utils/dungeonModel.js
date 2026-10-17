@@ -37,7 +37,8 @@ export const ROOM_TYPES = {
 /** Rooms that must be dealt with before walking on (apart from going back). */
 export const BLOCKING = new Set(['combat', 'trap', 'boss']);
 
-export const TRAP_STATS = ['ag', 'lu', 'en'];
+// Checks use the social stats: spotting a trap, keeping one's nerve, disarming it.
+export const TRAP_STATS = ['knowledge', 'guts', 'proficiency'];
 
 /** What camping and resting give back, in points of the HP / SP bars. */
 export const REST = { roomHealth: 45, roomMana: 35, campHealth: 25, campMana: 20 };
@@ -234,9 +235,9 @@ function generateFloor(st, index, total) {
                 money: Math.round((20 + 18 * index) * (0.8 + nextRandom(st) * 0.5)),
                 items: [],
                 locked,
-                lockStat: 'ag',
+                lockStat: 'proficiency',
                 lockDifficulty: ['easy', 'medium', 'hard'][clamp(index, 0, 2)],
-                forceStat: 'st',
+                forceStat: 'guts',
             };
         } else if (room.type === 'rest') {
             room.rest = { health: REST.roomHealth, mana: REST.roomMana };

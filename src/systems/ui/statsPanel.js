@@ -620,13 +620,13 @@ function checkPanelHtml() {
         const recent = getRecentChecks(4).filter(r => !checkForm.last || r.id !== checkForm.last.id);
         html += `<div class="dsp-check-form">
             <div class="dsp-check-row">
-                <label>Attribute <select class="dsp-chk" data-chk="stat">${attrs.map(a => `<option value="${escapeHtml(a.id)}"${a.id === checkForm.stat ? ' selected' : ''}>${escapeHtml(String(a.abbr).toUpperCase())} ${a.value} (${signedNum(a.modifier)})</option>`).join('')}</select></label>
+                <label>Social stat <select class="dsp-chk" data-chk="stat">${attrs.map(a => `<option value="${escapeHtml(a.id)}"${a.id === checkForm.stat ? ' selected' : ''}>${escapeHtml(a.name)} ${a.value}${a.title ? ` · ${escapeHtml(a.title)}` : ''} (${signedNum(a.modifier)})</option>`).join('')}</select></label>
                 <label>Difficulty <select class="dsp-chk" data-chk="difficulty">${DIFFICULTIES.map(d => `<option value="${d.id}"${d.id === diff.id ? ' selected' : ''}>${d.label} · ${d.dc}</option>`).join('')}</select></label>
                 <label>Bonus <input type="number" class="dsp-chk-bonus" data-chk="bonus" value="${escapeHtml(String(checkForm.bonus))}" min="${-MAX_BONUS}" max="${MAX_BONUS}" step="1" title="A favourable (+) or awkward (−) situation"></label>
             </div>
             <div class="dsp-check-row">
                 <input type="text" class="dsp-chk-reason" data-chk="reason" value="${escapeHtml(checkForm.reason)}" placeholder="What is attempted (optional, the AI reads it)" maxlength="100">
-                <span class="dsp-check-chance" title="Natural 20 always succeeds, natural 1 always fails">${chance === null ? '' : `${Math.round(chance * 100)}%`}</span>
+                <span class="dsp-check-chance" title="Natural 20 always succeeds, natural 1 always fails: never above 95%">${chance === null ? '' : `${Math.round(chance * 100)}%`}</span>
                 <button type="button" class="dsp-text-btn is-primary" data-action="check-roll" ${attrs.length ? '' : 'disabled'}><i class="fa-solid fa-dice-d20"></i> Roll</button>
             </div>
             ${checkForm.last ? checkResultHtml(checkForm.last) + '<p class="dsp-section-hint">The result goes into the AI\'s next reply: write what you do and it will follow the roll.</p>' : ''}

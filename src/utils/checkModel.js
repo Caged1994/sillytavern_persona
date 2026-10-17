@@ -1,14 +1,21 @@
 /**
  * Checks — pure model.
  *
- * A check is "d20 + the attribute's modifier + a situational bonus" against a
- * difficulty. The modifier is worked out from the attribute value (1–99).
+ * Checks test a social stat (Knowledge, Guts, Proficiency, Kindness, Charm),
+ * not St/Ma/En/Ag/Lu: those belong to the Persona and are for fights.
  *
- *   modifier = floor((value − 10) / 2)      10 → 0, 14 → +2, 20 → +5, 40 → +15, 99 → +44
- *   a natural 20 always succeeds, a natural 1 always fails
+ *   d20 + rank bonus + situational bonus  against the difficulty
+ *   rank bonus = 2 × (rank − 1)          rank 1 → +0 … rank 5 → +8
+ *   situational bonus −5…+5               a favourable or awkward situation
+ *   a natural 1 always fails, a natural 20 always succeeds
  *
- * The AI only says what is being attempted, with which attribute and how
- * hard it is; the number is rolled here, so it cannot decide the outcome.
+ * So nothing is ever certain: even at rank 5 with every bonus the best is
+ * 95% (a natural 1 still fails), and the hardest roll at rank 1 keeps 5%.
+ *   rank 1 / 3 / 5 against Easy 8: 65% / 85% / 95%; Medium 12: 45% / 65% / 85%;
+ *   Hard 16: 25% / 45% / 65%; Extreme 20: 5% / 25% / 45%.
+ *
+ * The AI only says what is being attempted, with which stat and how hard it
+ * is; the number is rolled here, so it cannot decide the outcome.
  */
 
 export const DIFFICULTIES = [
@@ -21,16 +28,20 @@ export const DEFAULT_DIFFICULTY = 'medium';
 export const MIN_DC = 4;
 export const MAX_DC = 30;
 /** What the player can add by hand for a favourable or awkward situation. */
-export const MAX_BONUS = 10;
+export const MAX_BONUS = 5;
+/** Never better than this: a natural 1 always fails. */
+export const MAX_CHANCE = 0.95;
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
-/** The bonus (or penalty) an attribute value gives to a roll. */
-export function attributeModifier(value) {
-    const v = Number(value);
-    if (!Number.isFinite(v)) return 0;
-    return Math.floor((v - 10) / 2);
+/** The bonus a social stat rank (1–5) gives to a roll: +0, +2, +4, +6, +8. */
+export function rankBonus(rank) {
+    const r = Math.round(Number(rank));
+    if (!Number.isFinite(r)) return 0;
+    return 2 * (clamp(r, 1, 5) - 1);
 }
+/** Kept for older callers: the value of a check stat is its rank. */
+export const attributeModifier = rankBonus;
 
 /**
  * A difficulty from an id ("hard"), a label, or a number (the target itself).
@@ -56,7 +67,7 @@ export function successChance(modifier, dc) {
     for (let face = 1; face <= 20; face++) {
         if (face === 20 || (face !== 1 && face + modifier >= dc)) wins++;
     }
-    return wins / 20;
+    return Math.min(MAX_CHANCE, wins / 20);
 }
 
 /**
@@ -70,7 +81,7 @@ export function successChance(modifier, dc) {
  */
 export function rollCheck({ value, bonus = 0, dc, rng = Math.random } = {}) {
     const die = clamp(Math.floor(rng() * 20) + 1, 1, 20);
-    const modifier = attributeModifier(value);
+    const modifier = rankBonus(value);
     const extra = clamp(Math.round(Number(bonus) || 0), -MAX_BONUS, MAX_BONUS);
     const target = clamp(Math.round(Number(dc) || 12), MIN_DC, MAX_DC);
     const total = die + modifier + extra;
@@ -126,7 +137,7 @@ export function normalizeCheckRequest(raw) {
     }
     if (Array.isArray(data)) data = data[0];
     if (!data || typeof data !== 'object') return null;
-    const stat = String(data.stat ?? data.attribute ?? data.skill ?? '').trim();
+    const stat = String(data.stat ?? data.social ?? data.attribute ?? data.skill ?? '').trim();
     if (!stat) return null;
     const diffRaw = data.difficulty ?? data.dc ?? data.level;
     const d = resolveDifficulty(diffRaw);
@@ -155,8 +166,8 @@ export function buildChecksPrompt({ player, statIds = [], note = '', compact = t
     let out = '';
     if (statIds.length) {
         out += compact
-            ? `CHECKS: when ${player || 'the player'} is about to try something risky whose outcome is uncertain and matters, ${where} "check": {"stat": "${ids}", "difficulty": "easy|medium|hard|extreme", "reason": "short"}. The player rolls it, so do not decide the outcome. Rarely, one at a time; leave it out for easy, safe or impossible actions.`
-            : `CHECKS: when ${player || 'the player'} is about to attempt something risky whose outcome is genuinely uncertain and would matter (forcing a lock, leaping a gap, persuading a guard), ${where} "check": {"stat": "${ids}", "difficulty": "easy|medium|hard|extreme", "reason": "what is attempted, in a few words"}. The player rolls the dice, so never decide the outcome yourself. Use it rarely and one at a time, and leave the key out for trivial, safe or impossible actions.`;
+            ? `CHECKS: when ${player || 'the player'} is about to try something risky whose outcome is uncertain and matters, ${where} "check": {"stat": "${ids}", "difficulty": "easy|medium|hard|extreme", "reason": "short"}. Knowledge: recall, study, puzzles; Guts: danger, fear, standing firm; Proficiency: handiwork, locks, tools, technique; Kindness: comforting, calming, earning trust; Charm: persuading, impressing, bluffing. The player rolls it, so do not decide the outcome. Rarely, one at a time; leave it out for easy, safe or impossible actions.`
+            : `CHECKS: when ${player || 'the player'} is about to attempt something risky whose outcome is genuinely uncertain and would matter, ${where} "check": {"stat": "${ids}", "difficulty": "easy|medium|hard|extreme", "reason": "what is attempted, in a few words"}. Checks use the social stats: Knowledge (recalling, studying, solving puzzles), Guts (facing danger or fear, standing firm, intimidating), Proficiency (handiwork, picking locks, using tools, technical skill), Kindness (comforting, calming someone down, earning trust) and Charm (persuading, impressing, bluffing). The player rolls the dice, so never decide the outcome yourself. Use it rarely and one at a time, and leave the key out for trivial, safe or impossible actions.`;
     }
     if (note) out += `${out ? '\n' : ''}LAST CHECK (rolled by the game, not by you): ${note} This outcome is fixed: write what happens next to match it.`;
     return out.trim();

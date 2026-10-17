@@ -1,8 +1,10 @@
 /**
  * Checks — rolls for the characters, kept in the open chat.
  *
- * A check is d20 + an attribute's modifier against a difficulty
- * (src/utils/checkModel.js). It starts in one of two ways:
+ * A check is d20 + a social stat's rank bonus against a difficulty
+ * (src/utils/checkModel.js). The player's character uses their own social
+ * stats; anyone else counts as rank 2 in each (an ordinary person). It
+ * starts in one of two ways:
  *   - the player rolls by hand (the 🎲 button in the Stats panel);
  *   - the AI suggests one ("check" key of its tracker JSON); it waits as a
  *     pending request until the player rolls or dismisses it.
@@ -20,12 +22,12 @@ import { extensionSettings } from '../../core/state.js';
 import { saveSettings } from '../../core/persistence.js';
 import { isRpgModeActive } from './rpgMode.js';
 import { chatStore, saveChatScope } from './chatScope.js';
-import { getStatCharacters, getStatSheet, getCurrentStatValues, getPersonaName, notifyStatsChanged } from './characterStats.js';
-import { getEffectiveStatValues } from './characterModifiers.js';
+import { getStatCharacters, getPersonaName, notifyStatsChanged } from './characterStats.js';
 import { resolveTarget } from './characterEquipment.js';
-import { activeStats } from '../../utils/statsModel.js';
+import { getSocialView, isSocialEnabled } from './characterSocial.js';
+import { SOCIAL_STATS, rankInfo } from '../../utils/socialModel.js';
 import {
-    DIFFICULTIES, resolveDifficulty, rollCheck, successChance, attributeModifier,
+    DIFFICULTIES, resolveDifficulty, rollCheck, successChance, rankBonus,
     normalizeCheckRequest, describeResult, buildChecksPrompt,
 } from '../../utils/checkModel.js';
 
@@ -54,23 +56,33 @@ const lastIndex = () => (Array.isArray(chat) ? chat.length - 1 : -1);
 
 // ─── Attributes ─────────────────────────────────────────────────────────────
 
+/** Rank of the social stats for someone who is not the player's character. */
+export const NPC_SOCIAL_RANK = 2;
+
 /**
- * The attributes a character can be tested on, with their current value
- * (equipment and conditions included) and modifier.
- * @returns {Array<{id, name, abbr, value, modifier}>}
+ * The social stats a character can be tested on, with their rank (the
+ * value), its title and the bonus it gives.
+ * @returns {Array<{id, name, abbr, value, title, modifier}>}
  */
 export function getCheckAttributes(name, isUser) {
-    const stats = activeStats(getStatSheet(name, isUser));
-    const eff = getEffectiveStatValues(name, isUser, stats).values;
-    const cur = getCurrentStatValues(name, isUser, stats);
-    return stats.filter(s => s.kind === 'attribute').map(s => {
-        const value = Number.isFinite(eff[s.id]) ? eff[s.id] : cur[s.id];
-        return { id: s.id, name: s.name, abbr: s.abbr || s.name, value, modifier: attributeModifier(value) };
+    let view = null;
+    if (isUser) {
+        try { if (isSocialEnabled()) view = getSocialView(name); } catch (e) { view = null; }
+    }
+    return SOCIAL_STATS.map(s => {
+        const own = view ? view.find(v => v.id === s.id) : null;
+        const rank = own ? own.rank : NPC_SOCIAL_RANK;
+        const title = own ? own.title : rankInfo(s, s.thresholds[NPC_SOCIAL_RANK - 1]).title;
+        return { id: s.id, name: s.name, abbr: s.name, value: rank, title, modifier: rankBonus(rank) };
     });
 }
 
+// Older chats and dungeons named a battle attribute: read it as the closest social stat.
+const OLD_STATS = { st: 'guts', en: 'guts', ag: 'proficiency', ma: 'knowledge', lu: 'charm', str: 'guts', dex: 'proficiency', con: 'guts', int: 'knowledge', wis: 'knowledge', cha: 'charm', courage: 'guts', academics: 'knowledge', understanding: 'kindness', expression: 'charm', diligence: 'proficiency' };
+
 function findAttribute(name, isUser, token) {
-    const t = String(token || '').toLowerCase().trim();
+    let t = String(token || '').toLowerCase().trim();
+    if (OLD_STATS[t]) t = OLD_STATS[t];
     if (!t) return null;
     const list = getCheckAttributes(name, isUser);
     return list.find(a => a.id.toLowerCase() === t)
@@ -104,7 +116,7 @@ export function rollCheckFor(name, isUser, { stat, difficulty = 'medium', bonus 
     const entry = {
         id: `chk-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e4).toString(36)}`,
         name, isUser: !!isUser,
-        stat: attr.id, statLabel: String(attr.abbr).toUpperCase(),
+        stat: attr.id, statLabel: attr.name,
         difficultyLabel: diff.id ? diff.id : `DC ${diff.dc}`,
         ...r,
         reason: String(reason || '').replace(/\s+/g, ' ').trim().slice(0, 100),
