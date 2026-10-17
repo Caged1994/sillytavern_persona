@@ -609,6 +609,27 @@ function onGenerateAfterCombinePrompts(eventData) {
     }
 }
 /**
+ * Together mode: where the tracker instructions sit in the prompt that goes
+ * to the model, and what follows them — so "the AI ignored them" can be
+ * told apart from "they never got there" in the System Log.
+ */
+function logTrackerPlacement(messages) {
+    if (extensionSettings.generationMode !== 'together') return;
+    try {
+        const text = m => typeof m?.content === 'string' ? m.content : Array.isArray(m?.content) ? m.content.map(p => p?.text || '').join(' ') : '';
+        const marker = TOGETHER_FORMAT_RULE.slice(0, 40);
+        const at = messages.findIndex(m => text(m).includes(marker));
+        const n = messages.length;
+        if (at < 0) {
+            console.log(`[Dooms Tracker] Final prompt: ${n} messages — the tracker instructions are NOT in it`);
+            return;
+        }
+        const after = messages.slice(at + 1).map(m => `${m.role} (${text(m).length} chars: ${text(m).replace(/\s+/g, ' ').slice(0, 60)}…)`);
+        const own = text(messages[at]);
+        console.log(`[Dooms Tracker] Final prompt: ${n} messages; tracker instructions in #${at + 1} (${messages[at].role}, ${own.length} chars, ${own.length - own.indexOf(marker)} from the rule to its end)` + (after.length ? `; after them: ${after.join(' | ')}` : '; nothing after them'));
+    } catch (e) { /* diagnostics only */ }
+}
+/**
  * Event handler for CHAT_COMPLETION_PROMPT_READY.
  * Injects historical context into the chat message array.
  * Also fixes newline spacing around <context> tags.
@@ -641,6 +662,7 @@ function onChatCompletionPromptReady(eventData) {
         // DON'T clear pendingContextMap here - let it persist for other generations
         // (e.g., prewarm extensions). It will be cleared on GENERATION_ENDED.
     }
+    logTrackerPlacement(eventData.chat);
     // Fix newlines around context tags for all messages
     for (let i = 0; i < eventData.chat.length; i++) {
         const message = eventData.chat[i];
