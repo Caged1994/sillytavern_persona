@@ -28,6 +28,7 @@ import { revertAISocialForReplacedMessage } from '../features/characterSocial.js
 import { revertAIPersonasForReplacedMessage } from '../features/characterPersonas.js';
 import { revertAIConfidantsForReplacedMessage } from '../features/characterConfidants.js';
 import { revertAICalendarForReplacedMessage } from '../features/calendar.js';
+import { revertAIOtherworldForReplacedMessage } from '../features/otherworld.js';
 import { revertAIChecksForReplacedMessage } from '../features/characterChecks.js';
 import {
     generateTrackerExample,
@@ -691,6 +692,7 @@ export async function onGenerationStarted(type, data, dryRun) {
             revertAIPersonasForReplacedMessage(last);
             revertAIConfidantsForReplacedMessage(last);
             revertAICalendarForReplacedMessage(last);
+            revertAIOtherworldForReplacedMessage(last);
             revertAIChecksForReplacedMessage(last);
         } catch (e) { /* best-effort */ }
     }

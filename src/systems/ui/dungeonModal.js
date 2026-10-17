@@ -21,6 +21,9 @@ import * as G from '../features/dungeon.js';
 import { openEncounter } from './combatModal.js';
 import { getCurrency } from '../features/characterMoney.js';
 import { attrLabel } from '../../utils/statsModel.js';
+import * as OW from '../features/otherworld.js';
+import * as SK from '../../utils/siteModel.js';
+import { getNow as calNow } from '../features/calendar.js';
 
 const ROOT_ID = 'dooms-dungeon';
 
@@ -45,6 +48,12 @@ function freshSetup() {
         useAI: true,
         busy: false,
         error: '',
+        // The Otherworld: a place to enter, and the form to add one by hand.
+        siteId: null,
+        block: 0,
+        free: false,
+        addOpen: false,
+        form: { name: '', kind: 'domain', ruler: '', theme: '', deadline: '', areas: '3', blocks: '4' },
     };
 }
 
@@ -122,7 +131,8 @@ function header() {
     let sub = 'New expedition';
     if (view === 'explore' && st) {
         const f = D.floorOf(st);
-        sub = `${escapeHtml(st.title || 'The dungeon')}${st.floors.length > 1 ? ` · ${escapeHtml(f.name || `Floor ${st.floor + 1}`)} (${st.floor + 1}/${st.floors.length})` : ''}`;
+        const label = st.floorOffset ? `Floor ${D.displayFloor(st)}` : `Floor ${st.floor + 1}`;
+        sub = `${escapeHtml(st.title || 'The dungeon')}${st.floors.length > 1 || st.floorOffset ? ` · ${escapeHtml(f.name || label)} (${st.floor + 1}/${st.floors.length})` : ''}${D.floorLevel(st) ? ` · Lv ${D.floorLevel(st)}` : ''}`;
     } else if (view === 'end') sub = 'Finished';
     return `<header class="dcb-head">
         <span class="dcb-title"><i class="fa-solid fa-dungeon"></i> Dungeon</span>
@@ -133,6 +143,61 @@ function header() {
 }
 
 // ── Setup ──
+
+function sitesHtml() {
+    if (!OW.isOtherworldEnabled()) return '';
+    const s = setup;
+    const sites = OW.getSites();
+    const today = calNow()?.date || null;
+    const card = (x) => {
+        const can = OW.canEnter(x);
+        let sub = '';
+        if (x.kind === 'labyrinth') sub = `Reached floor ${x.deepest || 0} · ${SK.unlockedFloors(x)} of ${SK.totalFloors(x)} open${x.requests.some(r => !r.done) ? ` · ${x.requests.filter(r => !r.done).length} request(s)` : ''}`;
+        else {
+            const d = SK.daysLeft(x, today);
+            sub = x.status === 'cleared' ? 'Cleared — open to revisit' : x.status === 'closed' ? 'Gone — the deadline passed' : `${x.ruler ? `${escapeHtml(x.ruler)} · ` : ''}${d === null ? 'no deadline' : d < 0 ? 'deadline passed' : `${d} day${d === 1 ? '' : 's'} left`}${x.saved ? ' · progress kept' : ''}`;
+        }
+        return `<button type="button" class="ddg-site is-${x.kind} is-${x.status}${s.siteId === x.id ? ' is-on' : ''}" data-action="site-pick" data-id="${escapeHtml(x.id)}" ${can.ok ? '' : `title="${escapeHtml(can.reason)}"`}>
+            <span class="ddg-site-icon">${x.kind === 'labyrinth' ? '🗼' : '🏰'}</span>
+            <span class="ddg-site-main"><strong>${escapeHtml(x.name)}</strong><small>${sub}</small></span>
+            <span class="ddg-site-kind">${x.kind === 'labyrinth' ? 'Labyrinth' : 'Domain'}</span>
+        </button>`;
+    };
+    const picked = sites.find(x => x.id === s.siteId) || null;
+    let detail = '';
+    if (picked) {
+        if (picked.kind === 'labyrinth') {
+            const cps = SK.checkpoints(picked);
+            const reqs = picked.requests.filter(r => !r.done);
+            detail = `<div class="dcb-row ddg-opts"><label>Start from <select data-field="block">${cps.map(c => `<option value="${c.block}"${s.block === c.block ? ' selected' : ''}>${escapeHtml(c.name)} — floor ${c.floor} (Lv ~${SK.labyrinthLevel(picked, c.floor)})</option>`).join('')}</select></label></div>
+                ${picked.blocks.map((b, i) => `<span class="ddg-block${b.unlocked ? ' is-open' : ''}${b.cleared ? ' is-cleared' : ''}" title="${escapeHtml(b.unlocked ? (b.cleared ? 'Guardian beaten' : 'Open') : `Sealed — ${b.unlock.type === 'date' ? `opens ${b.unlock.value}` : b.unlock.type === 'site' ? `opens after ${b.unlock.value}` : b.unlock.type === 'manual' ? 'open it by hand' : 'the story opens it'}`)}">${i + 1}</span>`).join('')}
+                ${picked.blocks.some((b, i) => i && !b.unlocked) ? '<button type="button" class="dcb-btn" data-action="site-unlock">Open the next block by hand</button>' : ''}
+                ${reqs.length ? `<p class="dcb-muted">Requests: ${reqs.map(r => `${escapeHtml(r.title)} (floor ${r.floor})`).join(' · ')}</p>` : ''}
+                ${picked.reaper ? `<p class="dcb-muted">💀 Linger too long on a floor and ${escapeHtml(picked.reaper)} comes.</p>` : ''}`;
+        } else if (picked.theme) detail = `<p class="dcb-muted">${escapeHtml(picked.theme)}</p>`;
+        detail += `<div class="dcb-row"><button type="button" class="dcb-btn" data-action="site-remove" title="Forget this place">Remove</button></div>`;
+    }
+    const f = s.form;
+    const form = s.addOpen ? `<div class="ddg-site-form">
+        <div class="dcb-row ddg-opts">
+            <input type="text" class="dcb-text" data-form="name" value="${escapeHtml(f.name)}" placeholder="Name" maxlength="60">
+            <select data-form="kind"><option value="domain"${f.kind === 'domain' ? ' selected' : ''}>Domain (someone's dungeon)</option><option value="labyrinth"${f.kind === 'labyrinth' ? ' selected' : ''}>Labyrinth (the great dungeon)</option></select>
+        </div>
+        ${f.kind === 'domain' ? `<div class="dcb-row ddg-opts">
+            <input type="text" class="dcb-text" data-form="ruler" value="${escapeHtml(f.ruler)}" placeholder="Whose? (its ruler)" maxlength="60">
+            <label>Deadline <input type="date" data-form="deadline" value="${escapeHtml(f.deadline)}"></label>
+            <select data-form="areas">${[2, 3, 4].map(n => `<option${String(n) === f.areas ? ' selected' : ''}>${n}</option>`).join('')}</select> areas
+        </div>` : `<div class="dcb-row ddg-opts"><select data-form="blocks">${[2, 3, 4, 5, 6, 8].map(n => `<option${String(n) === f.blocks ? ' selected' : ''}>${n}</option>`).join('')}</select> blocks of 5 floors (the first open; open the others by hand or from the story)</div>`}
+        <textarea class="dcb-text" data-form="theme" rows="2" maxlength="300" placeholder="What is it like? (optional)">${escapeHtml(f.theme)}</textarea>
+        <div class="dcb-row"><button type="button" class="dcb-btn is-primary" data-action="site-add">Add</button><button type="button" class="dcb-btn" data-action="site-form">Cancel</button></div>
+    </div>` : '';
+    return `<section>
+        <h3>Otherworld</h3>
+        ${sites.length ? `<div class="ddg-sites">${sites.map(card).join('')}</div>` : '<p class="dcb-muted">No places yet: they come from the card\'s lorebook ("Dungeon: …" entries), from the story, or add one here.</p>'}
+        ${detail}
+        ${s.addOpen ? form : '<button type="button" class="dcb-btn" data-action="site-form"><i class="fa-solid fa-plus"></i> Add a place</button>'}
+    </section>`;
+}
 
 function setupHtml() {
     const s = setup;
@@ -146,11 +211,18 @@ function setupHtml() {
         </label>`).join('');
     const sizes = Object.entries(D.SIZES).map(([id, z]) => `<option value="${id}"${s.size === id ? ' selected' : ''}>${z.label} (about ${z.rooms} rooms a floor)</option>`).join('');
     const floors = [1, 2, 3].map(n => `<option value="${n}"${s.floors === n ? ' selected' : ''}>${n} floor${n === 1 ? '' : 's'}</option>`).join('');
+    const ow = OW.isOtherworldEnabled();
+    const site = ow ? OW.getSites().find(x => x.id === s.siteId) || null : null;
+    const enterBtn = site
+        ? `<button type="button" class="dcb-btn is-primary" data-action="site-enter" ${anyParty && !s.busy && OW.canEnter(site).ok ? '' : 'disabled'}>${s.busy ? '<i class="fa-solid fa-spinner fa-spin"></i> Opening the way…' : `<i class="fa-solid fa-door-open"></i> Enter ${escapeHtml(site.name)}`}</button>`
+        : '';
     return `<div class="dcb-body">
         <section>
             <h3>Who goes in</h3>
             <div class="dcb-picks">${party || '<p class="dcb-empty">No characters yet.</p>'}</div>
         </section>
+        ${ow ? sitesHtml() : ''}
+        ${ow ? `<details class="ddg-free"${s.free ? ' open' : ''}><summary data-action="free-toggle">A one-off dungeon (not kept)</summary>` : ''}
         <section>
             <h3>The place</h3>
             <textarea class="dcb-text" data-field="theme" rows="2" maxlength="400" placeholder="What kind of place is it? (optional — e.g. a flooded crypt under the old chapel. Leave empty and the AI takes it from the chat.)">${escapeHtml(s.theme)}</textarea>
@@ -162,9 +234,11 @@ function setupHtml() {
             ${s.error ? `<p class="dcb-error">${escapeHtml(s.error)}</p>` : ''}
             <p class="dcb-muted">The program decides the layout, traps and how hard the fights are; the AI only names and describes.</p>
         </section>
+        ${ow ? '</details>' : ''}
     </div>
     <footer class="dcb-foot">
         <button type="button" class="dcb-btn" data-action="close">Cancel</button>
+        ${enterBtn}
         <button type="button" class="dcb-btn is-primary" data-action="create" ${anyParty && !s.busy ? '' : 'disabled'}>${s.busy ? '<i class="fa-solid fa-spinner fa-spin"></i> Preparing the dungeon…' : '<i class="fa-solid fa-dungeon"></i> Generate and enter'}</button>
     </footer>`;
 }
@@ -257,12 +331,18 @@ function roomCardHtml() {
         }
     } else if (room.type === 'rest' && !room.cleared) {
         body = `<button type="button" class="dcb-btn is-primary" data-action="rest"><i class="fa-solid fa-fire"></i> Rest here <small>(+${room.rest.health} HP, +${room.rest.mana} SP, once)</small></button>`;
+    } else if (room.type === 'gate') {
+        body = '<p class="dcb-muted">The way on: the next checkpoint. You can start from there next time.</p><button type="button" class="dcb-btn is-primary" data-action="gate"><i class="fa-solid fa-person-walking-arrow-right"></i> Go on</button>';
     } else if (room.type === 'stairs') {
         body = D.isLastFloor(st) ? '' : '<button type="button" class="dcb-btn is-primary" data-action="down"><i class="fa-solid fa-stairs"></i> Go down</button>';
     }
     const canCamp = !busy && !D.blocksExit(room) && st.phase === 'active';
     const camp = canCamp ? `<button type="button" class="dcb-btn" data-action="camp" title="Recover some HP and SP. The more you camp, the likelier something finds you."><i class="fa-solid fa-campground"></i> Camp <small>(${pct(D.ambushChance(st))} risk)</small></button>` : '';
+    const rp = D.reaperState(st);
+    const reaperNote = rp && rp.warn ? `<p class="ddg-notice is-bad">💀 ${rp.chance ? `${escapeHtml(st.reaper.name)} is near — ${pct(rp.chance)} each step. Find the stairs.` : 'A chill runs through this floor. Do not linger.'}</p>` : '';
     return `<section class="ddg-room-card t-${room.type}">
+        ${reaperNote}
+        ${room.request && !room.cleared ? `<p class="ddg-notice is-good">📜 Request: ${escapeHtml(room.requestTitle || '')}</p>` : ''}
         <header><span class="ddg-room-icon">${t.icon}</span><div><strong>${escapeHtml(room.name || t.label)}</strong><small>${escapeHtml(t.label)}${room.cleared && D.BLOCKING.has(room.type) ? ' · cleared' : ''}</small></div></header>
         <p class="ddg-desc">${escapeHtml(room.desc || '')}</p>
         ${body}
@@ -330,6 +410,7 @@ function endHtml() {
 function onInput(ev) {
     const t = ev.target;
     if (view === 'setup' && setup && t.dataset.field === 'theme') setup.theme = t.value;
+    if (view === 'setup' && setup && t.dataset.form) setup.form[t.dataset.form] = t.value;
 }
 
 function onChange(ev) {
@@ -339,6 +420,8 @@ function onChange(ev) {
         else if (t.dataset.field === 'floors') setup.floors = Number(t.value) || 1;
         else if (t.dataset.field === 'size') setup.size = t.value;
         else if (t.dataset.field === 'useAI') setup.useAI = t.checked;
+        else if (t.dataset.field === 'block') setup.block = Number(t.value) || 0;
+        else if (t.dataset.form) { setup.form[t.dataset.form] = t.value; if (t.dataset.form === 'kind') render(); }
     } else if (view === 'end' && t.dataset.field === 'narrate') ui.narrate = t.checked;
 }
 
@@ -347,13 +430,65 @@ function onClick(ev) {
     if (!el || !root.contains(el)) return;
     const action = el.dataset.action;
     if (action === 'close') { closeDungeon(); return; }
-    if (view === 'setup') return setupAction(action);
+    if (view === 'setup') return setupAction(action, el);
     if (view === 'explore') return exploreAction(action, el);
     if (view === 'end') return endAction(action);
 }
 
-async function setupAction(action) {
+async function setupAction(action, el) {
     const s = setup;
+    if (action === 'site-pick') { s.siteId = s.siteId === el.dataset.id ? null : el.dataset.id; s.block = 0; const pk = OW.getSite(s.siteId); if (pk && pk.kind === 'labyrinth') { const cps = SK.checkpoints(pk); s.block = cps.length ? cps[cps.length - 1].block : 0; } render(); return; }
+    if (action === 'site-form') { s.addOpen = !s.addOpen; render(); return; }
+    if (action === 'free-toggle') { s.free = !s.free; return; }
+    if (action === 'site-unlock' && s.siteId) {
+        const site = OW.getSite(s.siteId);
+        const idx = site ? site.blocks.findIndex(b => !b.unlocked) : -1;
+        if (idx > 0) OW.setBlockUnlocked(site.id, idx, true);
+        render();
+        return;
+    }
+    if (action === 'site-remove' && s.siteId) {
+        const site = OW.getSite(s.siteId);
+        if (site && window.confirm(`Forget ${site.name} and its progress?`)) { OW.removeSite(site.id); s.siteId = null; }
+        render();
+        return;
+    }
+    if (action === 'site-add') {
+        const f = s.form;
+        const raw = { name: f.name, kind: f.kind, theme: f.theme, source: 'user' };
+        if (f.kind === 'domain') Object.assign(raw, { ruler: f.ruler, deadline: f.deadline || null, areas: Number(f.areas) || 3, level: (s.candidates.find(c => c.isUser)?.level || 1) + 2 });
+        else raw.blocks = Array.from({ length: Number(f.blocks) || 4 }, () => ({ unlock: { type: 'manual' } }));
+        const r = OW.addSite(raw);
+        if (r.error) { s.error = r.error; render(); return; }
+        s.addOpen = false;
+        s.siteId = r.site.id;
+        s.form = { name: '', kind: 'domain', ruler: '', theme: '', deadline: '', areas: '3', blocks: '4' };
+        s.error = '';
+        render();
+        return;
+    }
+    if (action === 'site-enter' && s.siteId && !s.busy) {
+        const party = s.candidates.filter(c => c.on).map(c => ({ name: c.name, isUser: c.isUser }));
+        s.busy = true; s.error = '';
+        render();
+        try {
+            const res = await OW.enterSite(s.siteId, party, { block: s.block, useAI: s.useAI });
+            if (!isOpen() || setup !== s) return;
+            if (res.error) { s.error = res.error; }
+            else {
+                G.saveLiveDungeon(res.state);
+                st = res.state;
+                ui = freshUi();
+                if (res.aiError) { ui.notice = `The AI could not dress the place (${escapeHtml(res.aiError)}) — it uses generic names.`; ui.noticeKind = 'warn'; }
+                view = 'explore';
+            }
+        } catch (e) {
+            s.error = e?.message || 'The way could not be opened.';
+        }
+        s.busy = false;
+        if (isOpen()) render();
+        return;
+    }
     if (action !== 'create' || s.busy) return;
     const party = s.candidates.filter(c => c.on).map(c => ({ name: c.name, isUser: c.isUser }));
     if (!party.length) return;
@@ -401,9 +536,11 @@ function exploreAction(action, el) {
     if (action === 'go') {
         const res = G.goTo(st, el.dataset.id);
         if (!res.ok && res.reason) say(escapeHtml(res.reason), 'warn');
+        if (res.reaper) { say(`${escapeHtml(st.reaper.name)} has come for you!`, 'bad'); return runFight(res.reaper); }
         render();
         return;
     }
+    if (action === 'gate') { G.takeGate(st); afterStep(); return; }
     if (action === 'down') { G.goDown(st); render(); return; }
     if (action === 'rest') { G.useRestRoom(st); render(); return; }
     if (action === 'fight') {

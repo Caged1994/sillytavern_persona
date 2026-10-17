@@ -66,3 +66,23 @@
     .ddg-map { width: 100%; }
     .ddg-side { flex-basis: 100%; }
 }
+
+/* Otherworld: the places kept in the chat. */
+.ddg-sites { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.ddg-site { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; text-align: left; font: inherit; color: inherit; cursor: pointer; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.04); }
+.ddg-site:hover { background: rgba(255, 255, 255, 0.08); }
+.ddg-site.is-on { border-color: #ffd166; background: rgba(255, 209, 102, 0.12); }
+.ddg-site.is-closed { opacity: 0.45; }
+.ddg-site.is-cleared .ddg-site-icon { filter: saturate(0.4); }
+.ddg-site-icon { font-size: 22px; }
+.ddg-site-main { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.ddg-site-main small { opacity: 0.7; }
+.ddg-site-kind { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.6; }
+.ddg-block { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; margin: 4px 4px 4px 0; font-size: 12px; font-weight: 800; border-radius: 6px; background: rgba(255, 255, 255, 0.06); opacity: 0.5; }
+.ddg-block.is-open { opacity: 1; background: rgba(159, 184, 255, 0.25); }
+.ddg-block.is-cleared { background: rgba(110, 231, 168, 0.3); }
+.ddg-site-form { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: 10px; background: rgba(0, 0, 0, 0.2); }
+.ddg-site-form .dcb-text { flex: 1; min-width: 0; }
+.ddg-free { margin-top: 8px; }
+.ddg-free > summary { cursor: pointer; opacity: 0.75; margin-bottom: 6px; }
+.ddg-room.t-gate { background: rgba(159, 184, 255, 0.2); }

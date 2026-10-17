@@ -26,6 +26,7 @@ import { buildSocialPromptForGeneration, buildSocialContextSummary } from '../fe
 import { buildPersonaPromptForGeneration, buildPersonaContextSummary } from '../features/characterPersonas.js';
 import { buildConfidantPromptForGeneration, buildConfidantContextSummary } from '../features/characterConfidants.js';
 import { buildCalendarPromptForGeneration, buildCalendarContextSummary } from '../features/calendar.js';
+import { buildOtherworldPromptForGeneration, buildOtherworldContextSummary } from '../features/otherworld.js';
 import { buildChecksPromptForGeneration, buildChecksContextSummary } from '../features/characterChecks.js';
 // Registers the attribute-modifier provider the stats prompt uses.
 import '../features/characterModifiers.js';
@@ -356,6 +357,9 @@ export function generateTrackerInstructions(includeHtmlPrompt = true, includeCon
         // Calendar: date, time of day, events and deadlines.
         const calendarSection = buildCalendarPromptForGeneration({ compact });
         if (calendarSection) instructions += '\n\n' + calendarSection;
+        // The Otherworld: labyrinths and domains.
+        const otherworldSection = buildOtherworldPromptForGeneration({ compact });
+        if (otherworldSection) instructions += '\n\n' + otherworldSection;
         // Checks: when to ask for a roll, and the outcome of the last one.
         const checksSection = buildChecksPromptForGeneration({ compact });
         if (checksSection) instructions += '\n\n' + checksSection;
@@ -387,8 +391,9 @@ export function generateTrackerInstructions(includeHtmlPrompt = true, includeCon
         const personaSection = buildPersonaPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection });
         const confidantSection = buildConfidantPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection && !personaSection });
         const calendarSection = buildCalendarPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection && !personaSection && !confidantSection });
-        const checksSection = buildChecksPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection && !personaSection && !confidantSection && !calendarSection });
-        const all = [statsSection, memoriesSection, equipmentSection, conditionsSection, abilitiesSection, progressSection, moneySection, affinitySection, socialSection, personaSection, confidantSection, calendarSection, checksSection].filter(Boolean);
+        const otherworldSection = buildOtherworldPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection && !personaSection && !confidantSection && !calendarSection });
+        const checksSection = buildChecksPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection && !personaSection && !confidantSection && !calendarSection && !otherworldSection });
+        const all = [statsSection, memoriesSection, equipmentSection, conditionsSection, abilitiesSection, progressSection, moneySection, affinitySection, socialSection, personaSection, confidantSection, calendarSection, otherworldSection, checksSection].filter(Boolean);
         if (all.length) {
             instructions += '\n' + all.join('\n\n');
             if (includeContinuation) {
@@ -863,6 +868,8 @@ export function generateContextualSummary() {
         if (confidants) summary += confidants + '\n';
         const calendar = buildCalendarContextSummary();
         if (calendar) summary += calendar + '\n';
+        const otherworld = buildOtherworldContextSummary();
+        if (otherworld) summary += otherworld + '\n';
         const checks = buildChecksContextSummary();
         if (checks) summary += checks + '\n';
     } catch (e) {

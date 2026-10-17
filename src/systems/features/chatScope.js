@@ -21,6 +21,7 @@ import { saveSettings, saveChatData } from '../../core/persistence.js';
 
 /** The per-chat stores, and the extensionSettings key each used to live under. */
 export const CHAT_ROOTS = [
+    'otherworld',
     'calendar',
     'characterStatValues',
     'characterMemories',

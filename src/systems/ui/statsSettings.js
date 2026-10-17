@@ -82,6 +82,7 @@ function renderCompendiumSetting() {
 import { setCombatEnabled, setCombatNarration } from '../features/combat.js';
 import { setShuffleEnabled } from '../features/shuffleTime.js';
 import { setDungeonEnabled, setDungeonNarration } from '../features/dungeon.js';
+import { setOtherworldEnabled, setReaperOn } from '../features/otherworld.js';
 import { setChecksEnabled } from '../features/characterChecks.js';
 
 function sixDigit(color) {
@@ -176,6 +177,8 @@ export function initStatsSettings() {
     flag('rpg-shuffle-enabled', 'shuffleTimeEnabled');
     flag('rpg-combat-narration', 'combatNarration');
     flag('rpg-dungeon-enabled', 'dungeonEnabled');
+    flag('rpg-otherworld-enabled', 'otherworldEnabled');
+    flag('rpg-reaper-enabled', 'reaperEnabled');
     flag('rpg-dungeon-narration', 'dungeonNarration');
     const memRecent = document.getElementById('rpg-memories-recent');
     if (memRecent) memRecent.value = String(getRecentLimit());
@@ -220,6 +223,8 @@ export function initStatsSettings() {
         else if (el.id === 'rpg-shuffle-enabled') setShuffleEnabled(el.checked);
         else if (el.id === 'rpg-combat-narration') setCombatNarration(el.checked);
         else if (el.id === 'rpg-dungeon-enabled') setDungeonEnabled(el.checked);
+        else if (el.id === 'rpg-otherworld-enabled') setOtherworldEnabled(el.checked);
+        else if (el.id === 'rpg-reaper-enabled') setReaperOn(el.checked);
         else if (el.id === 'rpg-dungeon-narration') setDungeonNarration(el.checked);
         else if (el.id && el.id.startsWith('rpg-mana-')) { setManaTier(el.id.slice(9), el.value); renderXpSettings(); }
         else if (el.id === 'rpg-currency-name' || el.id === 'rpg-currency-symbol') {

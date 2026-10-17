@@ -46,6 +46,7 @@ import { applyAISocial } from '../features/characterSocial.js';
 import { applyAIPersonas } from '../features/characterPersonas.js';
 import { applyAIConfidants } from '../features/characterConfidants.js';
 import { applyAICalendar } from '../features/calendar.js';
+import { applyAIOtherworld } from '../features/otherworld.js';
 import { settleChecks, revertAIChecksForReplacedMessage } from '../features/characterChecks.js';
 // Expression classification
 import { classifyAllCharacterExpressions, classifyActiveUserExpression, isExpressionSpritesModeEnabled } from './expressionSync.js';
@@ -244,6 +245,10 @@ export async function onMessageReceived(data) {
             // Calendar: the date and time of day (from the Info Box or its key), events, weather.
             if ((parsedData.calendar || parsedData.infoBox) && isAwaitingNewMessage) {
                 try { applyAICalendar(parsedData.calendar, parsedData.infoBox, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Calendar: applying AI update failed', e); }
+            }
+            // Otherworld: new domains, labyrinth blocks opened, requests.
+            if (parsedData.otherworld && isAwaitingNewMessage) {
+                try { applyAIOtherworld(parsedData.otherworld, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Otherworld: applying AI update failed', e); }
             }
             // Confidants: bonds started and points earned.
             if (parsedData.confidants && isAwaitingNewMessage) {

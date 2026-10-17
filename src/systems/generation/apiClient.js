@@ -40,6 +40,7 @@ import { applyAISocial } from '../features/characterSocial.js';
 import { applyAIPersonas } from '../features/characterPersonas.js';
 import { applyAIConfidants } from '../features/characterConfidants.js';
 import { applyAICalendar } from '../features/calendar.js';
+import { applyAIOtherworld } from '../features/otherworld.js';
 import { isRpgModeActive } from '../features/rpgMode.js';
 import { settleChecks } from '../features/characterChecks.js';
 import { renderThoughts, updateChatThoughts } from '../rendering/thoughts.js';
@@ -387,6 +388,10 @@ export async function updateRPGData(renderInfoBox, renderThoughts) {
             // Calendar: the date and time of day (from the Info Box or its key), events, weather.
             if (parsedData.calendar || parsedData.infoBox) {
                 try { applyAICalendar(parsedData.calendar, parsedData.infoBox, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Calendar: applying AI update failed', e); }
+            }
+            // Otherworld: new domains, labyrinth blocks opened, requests.
+            if (parsedData.otherworld) {
+                try { applyAIOtherworld(parsedData.otherworld, chat.length - 1); } catch (e) { console.warn('[Dooms Tracker] Otherworld: applying AI update failed', e); }
             }
             // Confidants: bonds started and points earned.
             if (parsedData.confidants) {

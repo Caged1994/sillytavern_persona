@@ -23,6 +23,8 @@ export const SIZES = {
     large: { label: 'Large', rooms: 14, cols: 6, rows: 4 },
 };
 export const MAX_FLOORS = 3;
+/** Places of the Otherworld (sites) may go deeper in one run. */
+export const MAX_SITE_FLOORS = 6;
 
 export const ROOM_TYPES = {
     start: { icon: '🚪', label: 'Entrance' },
@@ -32,6 +34,7 @@ export const ROOM_TYPES = {
     treasure: { icon: '💰', label: 'Treasure' },
     rest: { icon: '🔥', label: 'Safe place' },
     stairs: { icon: '🪜', label: 'Stairs down' },
+    gate: { icon: '🌀', label: 'Way on' },
     boss: { icon: '💀', label: 'Boss' },
 };
 /** Rooms that must be dealt with before walking on (apart from going back). */
@@ -96,8 +99,14 @@ export function composeEncounter(s, { partySize = 1, target = 0.7, allowElite = 
 const ORDER = ['minion', 'normal', 'elite', 'boss'];
 const byDanger = (a, b) => ORDER.indexOf(b) - ORDER.indexOf(a);
 
-function enemySlots(tiers, levelDelta) {
-    return [...tiers].sort(byDanger).map(tier => ({ tier, levelDelta }));
+function enemySlots(tiers, levelDelta, level = null) {
+    return [...tiers].sort(byDanger).map(tier => ({ tier, levelDelta, ...(level ? { level } : {}) }));
+}
+
+/** The set level of a floor's enemies (sites), or null (they follow the party). */
+export function floorLevel(st, index = st.floor) {
+    const l = Array.isArray(st.levels) ? st.levels[index] : null;
+    return Number.isFinite(l) ? Math.max(1, Math.min(99, Math.round(l))) : null;
 }
 
 // ─── Building the dungeon ───────────────────────────────────────────────────
@@ -175,7 +184,7 @@ function generateFloor(st, index, total) {
     const exitId = pick(st, far.length ? far : ids.filter(id => id !== startId));
     const isLast = index === total - 1;
     rooms[startId].type = 'start';
-    rooms[exitId].type = isLast ? 'boss' : 'stairs';
+    rooms[exitId].type = isLast ? (st.lastIsBoss === false ? 'gate' : 'boss') : 'stairs';
 
     const free = ids.filter(id => id !== startId && id !== exitId);
     const take = (id) => free.splice(free.indexOf(id), 1);
@@ -208,18 +217,19 @@ function generateFloor(st, index, total) {
 
     // What each room holds.
     const levelBase = index;
+    const setLevel = floorLevel(st, index);
     for (const id of ids) {
         const room = rooms[id];
         const frac = room.depth / maxDepth;
         if (room.type === 'combat') {
             const target = clamp(0.55 + 0.35 * frac + 0.25 * index, 0.5, 1.3);
             const tiers = composeEncounter(st, { partySize: st.partySize, target, allowElite: target > 0.85 });
-            room.enemies = enemySlots(tiers, clamp(levelBase + (frac > 0.6 ? 1 : 0) - 1, -2, 3));
+            room.enemies = enemySlots(tiers, clamp(levelBase + (frac > 0.6 ? 1 : 0) - 1, -2, 3), setLevel ? setLevel + (frac > 0.6 ? 1 : 0) : null);
         } else if (room.type === 'boss') {
             const tiers = st.partySize >= 3
                 ? composeEncounter(st, { partySize: st.partySize, target: 1.2 + 0.1 * index, allowElite: true, mustInclude: ['boss'] })
                 : composeEncounter(st, { partySize: st.partySize, target: 1.3, allowElite: true, mustInclude: ['elite'] });
-            room.enemies = enemySlots(tiers, clamp(levelBase + 1, -2, 3));
+            room.enemies = enemySlots(tiers, clamp(levelBase + 1, -2, 3), setLevel ? setLevel + 2 : null);
         } else if (room.type === 'trap') {
             const diffs = ['easy', 'medium', 'hard', 'extreme'];
             const base = clamp(index + (frac > 0.5 ? 1 : 0), 0, 2);
@@ -252,7 +262,7 @@ function generateFloor(st, index, total) {
  * Builds a dungeon (not yet entered). The same seed gives the same dungeon.
  * @param {{seed?: number, floors?: number, size?: string, partySize?: number, partyLevel?: number, theme?: string}} o
  */
-export function generateDungeon({ seed = Date.now(), floors = 1, size = 'medium', partySize = 1, partyLevel = 1, theme = '' } = {}) {
+export function generateDungeon({ seed = Date.now(), floors = 1, size = 'medium', partySize = 1, partyLevel = 1, theme = '', levels = null, floorOffset = 0, lastIsBoss = true, maxFloors = MAX_FLOORS, reaper = null } = {}) {
     const s = (seed >>> 0) || 1;
     const st = {
         v: 1,
@@ -278,10 +288,19 @@ export function generateDungeon({ seed = Date.now(), floors = 1, size = 'medium'
         stats: { fights: 0, traps: 0, trapsFailed: 0, chests: 0, rests: 0, floors: 1, xp: 0, money: 0, items: [] },
         pendingFight: null,
         seq: 0,
+        // Sites: set enemy levels per floor, the number shown for floor 1, whether the
+        // last floor ends in a boss or a way on, a checkpoint, the Reaper.
+        levels: Array.isArray(levels) ? levels.map(l => Math.max(1, Math.min(99, Math.round(l) || 1))) : null,
+        floorOffset: Math.max(0, Math.round(floorOffset) || 0),
+        lastIsBoss: lastIsBoss !== false,
+        checkpoint: null,
+        floorSteps: 0,
+        reaper: reaper && typeof reaper === 'object' ? { name: clip(reaper.name || 'The Reaper', 40), after: Math.max(4, Math.round(reaper.after) || 0), met: 0 } : null,
     };
-    const total = clamp(Math.round(floors) || 1, 1, MAX_FLOORS);
+    const total = clamp(Math.round(floors) || 1, 1, Math.max(1, Math.min(MAX_SITE_FLOORS, maxFloors)));
     for (let i = 0; i < total; i++) st.floors.push(generateFloor(st, i, total));
     st.at = st.floors[0].start;
+    if (st.reaper && !st.reaper.after) st.reaper.after = Math.round(roomCount(st, 0) * 1.6);
     return st;
 }
 
@@ -355,6 +374,8 @@ export function move(st, toId) {
     st.at = toId;
     room.visited = true;
     st.steps++;
+    st.floorSteps = (st.floorSteps || 0) + 1;
+    if (room.type === 'rest') st.checkpoint = { floor: st.floor, room: room.id };
     log(st, `${first ? 'You enter' : 'You return to'} ${room.name || ROOM_TYPES[room.type].label}.`, 'move');
     return { ok: true, room, first };
 }
@@ -367,10 +388,47 @@ export function descend(st) {
     const f = floorOf(st);
     st.at = f.start;
     st.from = null;
+    st.floorSteps = 0;
     f.rooms[f.start].visited = true;
     st.stats.floors = Math.max(st.stats.floors, st.floor + 1);
-    log(st, `You go down to ${f.name || `floor ${st.floor + 1}`}.`, 'move');
+    log(st, `You go down to ${f.name || `floor ${displayFloor(st)}`}.`, 'move');
     return { ok: true, floor: st.floor };
+}
+
+/** The floor number shown (sites count from their first floor). */
+export function displayFloor(st, index = st.floor) {
+    return (st.floorOffset || 0) + index + 1;
+}
+
+// ─── The Reaper ─────────────────────────────────────────────────────────────
+
+/**
+ * Lingering on a floor of a site that has the Reaper: after `after` steps a
+ * warning, and from then on each step may bring it. Stairs reset the count.
+ * @returns {{ steps, after, warn: boolean, chance: number } | null}
+ */
+export function reaperState(st) {
+    if (!st.reaper) return null;
+    const steps = st.floorSteps || 0;
+    const after = st.reaper.after;
+    const over = steps - after;
+    return { steps, after, warn: steps >= after - 3, chance: over < 0 ? 0 : clamp(0.25 + 0.1 * over, 0, 0.6) };
+}
+
+/** Rolls for the Reaper after a step. */
+export function rollReaper(st) {
+    const r = reaperState(st);
+    return !!r && r.chance > 0 && nextRandom(st) < r.chance;
+}
+
+/** The Reaper's spec: far above the party, a boss. */
+export function reaperSpec(st) {
+    const top = Math.max(...(st.levels || [st.partyLevel || 1]), st.partyLevel || 1);
+    return {
+        name: st.reaper?.name || 'The Reaper', icon: '💀', tier: 'boss', level: Math.min(99, Math.max(top + 25, 60)),
+        description: 'It came because you stayed too long.', focus: 'ma',
+        attacks: [{ name: 'Megidolaon', power: 'heavy', stat: 'ma', target: 'enemies', element: 'almighty' }, { name: 'Gun Barrage', power: 'heavy', stat: 'st', target: 'enemies', element: 'gun' }],
+    };
 }
 
 // ─── Rooms ──────────────────────────────────────────────────────────────────
@@ -411,7 +469,8 @@ export function wanderingSpecs(st, tiers) {
         let name = pool.find(n => !taken.has(n)) || pick(st, pool);
         if (taken.has(name)) { let i = 2; while (taken.has(`${name} ${i}`)) i++; name = `${name} ${i}`; }
         taken.add(name);
-        return { name, icon: ENEMY_ICONS[tier] || '👹', description: 'Roaming the dark.', tier, levelDelta: delta, attacks: (ATTACKS[tier] || ATTACKS.normal).map(a => ({ ...a })) };
+        const lv = floorLevel(st);
+        return { name, icon: ENEMY_ICONS[tier] || '👹', description: 'Roaming the dark.', tier, levelDelta: delta, ...(lv ? { level: lv } : {}), attacks: (ATTACKS[tier] || ATTACKS.normal).map(a => ({ ...a })) };
     });
 }
 
@@ -517,7 +576,7 @@ export function applyDressing(st, d, normalizeSpecs = (x) => (Array.isArray(x) ?
                 const specs = normalizeSpecs(raw.enemies);
                 room.enemies = room.enemies.map((slot, i) => {
                     const spec = specs[i];
-                    return spec ? { ...spec, tier: slot.tier, levelDelta: slot.levelDelta } : slot;
+                    return spec ? { ...spec, tier: slot.tier, levelDelta: slot.levelDelta, ...(slot.level ? { level: slot.level } : {}) } : slot;
                 });
                 touched = true;
             }
@@ -553,6 +612,8 @@ export function summarizeForNarration(st) {
         result: st.result,
         floors: st.floors.length,
         floorsReached: st.stats.floors,
+        firstFloor: (st.floorOffset || 0) + 1,
+        reaperMet: st.reaper?.met || 0,
         rooms: `${seen}/${total}`,
         steps: st.steps,
         fights: st.stats.fights,

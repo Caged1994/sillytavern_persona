@@ -82,6 +82,56 @@ A Confidant who fights with you (a party member) unlocks abilities in battle as 
 
 A lorebook Confidant can move any of them with its unlock lines: `Rank 3 unlocks: Follow Up` sets Follow Up to rank 3. `Rank 10 unlocks: Captain Kidd evolves into Seiten Taisei` makes the Awakening turn the Persona into Seiten Taisei (taken from the Compendium, keeping the old skills where they fit, never above the teammate's level). Without a named evolution, the Persona loses its weaknesses and gains +2 to every stat. Confidants who are not party members get no battle abilities; their unlock texts stay story notes. The AI is told which abilities each teammate has. With Confidants off, nobody has them and Baton Pass is free, as before.
 
+## Otherworld (labyrinths and domains)
+
+The dungeon window keeps **places** in the chat (Settings → Combat → Otherworld). The card or the story names them and describes them; the program runs them. There are two kinds.
+
+**Labyrinth** — the great dungeon (Tartarus, Mementos…):
+- **Blocks:** floors come in blocks (5 floors each by default). The first block is open. Each other block opens in one of these ways:
+  - at the start;
+  - on a calendar date;
+  - after a domain is cleared;
+  - by hand;
+  - when the story says so.
+- **Floors:** new on every visit. Enemy levels follow the depth (a range from the card), not the party.
+- **Guardians and checkpoints:** a guardian waits at the end of each block. Once it is beaten, the next block's first floor is a checkpoint you can start from.
+- **Requests:** tasks given by the story, by hand or in the lorebook. They put a target on a floor; beating it fulfils the request.
+- **The Reaper** (can be switched off, globally or per place): linger on a floor and it starts coming, with a warning first. You can flee from it.
+
+**Domain** — someone's dungeon (a Palace, a personal dungeon):
+- **Map:** a fixed map of 2–4 areas at the domain's level, kept between visits. You come back at the last safe room you reached, or at the entrance.
+- **Ruler:** the domain's ruler is the final boss.
+- **Deadline:** an optional deadline goes on the calendar.
+  - Missed: the domain closes for good, and the AI is told so the story can feel it (no other penalty).
+  - Cleared in time: it stays open to revisit, without its ruler.
+
+**Every visit takes one time of day** on the calendar.
+
+Places come from lorebook entries titled `Dungeon:` (one field per line), from the story (`"otherworld": {"new": {...}, "unlock": "Name", "request": {...}}`), or by hand in the dungeon window:
+
+```
+Dungeon: Mementos
+Kind: labyrinth
+Theme: the subway of the collective heart
+Blocks: 4
+Floors per block: 5
+Levels: 3-60
+Block 2 opens: after Kamoshida's Castle
+Block 3 opens: on June 10, 2016
+Block 4 opens: story
+Reaper: The Reaper        (or: off)
+
+Dungeon: Kamoshida's Castle
+Kind: domain
+Ruler: Kamoshida
+Areas: 3
+Level: 8
+Deadline: May 2, 2016
+Appears: April 12, 2016   (hidden until then)
+```
+
+The one-off dungeon (not kept) is still there for quick expeditions.
+
 ## Shuffle Time
 
 As in Persona 3 and 4, a won fight can end with a card draw (Settings → Combat → Shuffle Time).

@@ -89,11 +89,11 @@ export function hasLiveDungeon() {
  * @param {{theme?: string, floors?: number, size?: string, useAI?: boolean, seed?: number, generate?: Function, depth?: number}} [o]
  * @returns {Promise<{ state, labelled: number, aiError?: string }>}
  */
-export async function createDungeon(party, { theme = '', floors = 1, size = 'medium', useAI = true, seed = Date.now(), generate = safeGenerateRaw, depth = 6 } = {}) {
+export async function createDungeon(party, { theme = '', floors = 1, size = 'medium', useAI = true, seed = Date.now(), generate = safeGenerateRaw, depth = 6, gen = {} } = {}) {
     const { members, toLabel, keyed } = collectLabelRequests(party);
     const levels = members.map(m => m.combatant.level);
     const partyLevel = levels.length ? Math.max(1, Math.round(levels.reduce((a, b) => a + b, 0) / levels.length)) : 1;
-    const state = D.generateDungeon({ seed, floors, size, partySize: party.length, partyLevel, theme });
+    const state = D.generateDungeon({ seed, floors, size, partySize: party.length, partyLevel, theme, ...gen });
     state.party = party.map(p => ({ name: p.name, isUser: !!p.isUser }));
     let labelled = 0;
     let aiError;
@@ -190,8 +190,25 @@ function giveXp(state, size, reason) {
 
 export function goTo(state, roomId) {
     const res = D.move(state, roomId);
-    if (res.ok) saveLiveDungeon(state);
+    if (res.ok) {
+        const r = D.reaperState(state);
+        if (r && r.warn && r.chance === 0 && r.steps === r.after - 3) D.addLog(state, 'A chill runs through the floor. Something is coming — move on.', 'highlight');
+        if (D.rollReaper(state) && !state.pendingFight) {
+            state.reaper.met++;
+            res.reaper = launchFight(state, [D.reaperSpec(state)], { kind: 'reaper', label: `${state.reaper.name} has come for you.` });
+        }
+        saveLiveDungeon(state);
+    }
     return res;
+}
+
+/** The way on at the end of a labyrinth run whose guardian is already beaten. */
+export function takeGate(state) {
+    const room = D.currentRoom(state);
+    if (!room || room.type !== 'gate' || state.pendingFight || state.phase !== 'active') return { ok: false };
+    D.addLog(state, 'You reach the way on — the next checkpoint.', 'highlight');
+    endDungeon(state, 'cleared');
+    return { ok: true };
 }
 
 export function goDown(state) {
@@ -275,8 +292,14 @@ export function resolveFight(state, last) {
     if (last.result === 'victory') {
         if (pending.kind === 'room' && room) {
             room.cleared = true;
+            if (room.request) {
+                state.requestsDone = [...new Set([...(state.requestsDone || []), room.request])];
+                D.addLog(state, `Request fulfilled: ${room.requestTitle || 'done'}.`, 'highlight');
+            }
             D.addLog(state, room.type === 'boss' ? 'The last enemy falls.' : 'The way is clear.', 'highlight');
             if (room.type === 'boss' && D.isLastFloor(state)) ended = 'cleared';
+        } else if (pending.kind === 'reaper') {
+            D.addLog(state, `${state.reaper?.name || 'The Reaper'} falls. Nobody will believe this.`, 'highlight');
         } else if (pending.kind === 'ambush') {
             healParty(state, D.REST.campHealth, D.REST.campMana);
             state.stats.rests++;
@@ -407,6 +430,12 @@ export function openChest(state, { method = 'open', actor = null, rng } = {}) {
 
 // ─── The end ────────────────────────────────────────────────────────────────
 
+let runEndHook = null;
+/** Called once when a run is closed (the Otherworld records its progress). */
+export function setRunEndHook(fn) {
+    runEndHook = typeof fn === 'function' ? fn : null;
+}
+
 /** Marks the expedition over (nothing else happens until it is finished). */
 export function endDungeon(state, result) {
     if (state.phase === 'ended') return;
@@ -445,9 +474,11 @@ export async function narrateDungeon(state, { generate = safeGenerateRaw, post =
 export async function finishDungeon(state, { narrate = isDungeonNarrationOn(), generate = safeGenerateRaw, post = true } = {}) {
     if (state.phase !== 'ended') endDungeon(state, 'left');
     let bonusXp = 0;
-    if (state.result === 'cleared' && !state.finished) bonusXp = giveXp(state, 'large', `cleared ${state.title || 'the dungeon'}`);
+    if (state.result === 'cleared' && !state.finished && state.lastIsBoss !== false) bonusXp = giveXp(state, 'large', `cleared ${state.title || 'the dungeon'}`);
     const first = !state.finished;
     state.finished = true;
+    // A place of the Otherworld keeps what the run did (otherworld.js).
+    if (first && runEndHook) { try { runEndHook(state); } catch (e) { console.warn('[Dooms Tracker] Otherworld: run end failed', e); } }
     const summary = D.summarizeForNarration(state);
     clearLiveDungeon();
     let narration = '';

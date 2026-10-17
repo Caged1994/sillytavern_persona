@@ -374,7 +374,8 @@ export function buildEnemy(spec, { partyLevel = 1, partySize = 1, id }) {
     const tierId = TIERS.includes(String(spec.tier).toLowerCase()) ? String(spec.tier).toLowerCase() : 'normal';
     const tier = TUNING.tiers[tierId];
     const delta = clamp(Math.round(Number(spec.levelDelta) || 0), -2, 3);
-    const level = Math.max(1, partyLevel + delta);
+    // A set level (a dungeon floor's) wins over the party-relative one.
+    const level = isNum(spec.level) && spec.level >= 1 ? clamp(Math.round(spec.level), 1, 99) : Math.max(1, partyLevel + delta);
     // Same growth as a character: ~10 at level 1, ~0.6 per level after.
     const base = (10 + (level - 1) * 0.6) * tier.attr;
     const attrs = {};
