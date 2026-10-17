@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Velvet Room: fuse a Wild Card's Personas — P5R Arcana chart (P4G / P3R for Aeon and Jester), same-Arcana, special (2–6 Personas) and treasure fusions, level limit, maxed-Confidant unlocks, Confidant bonus levels, skill inheritance by type with your own pick; list of every fusion the stock can make. Compendium entries now carry `Inherits:`.
 - Checks roll on the social stats (Knowledge, Guts, Proficiency, Kindness, Charm): d20 + 2 per rank above 1 (up to +8) + situational bonus (±5); a natural 1 always fails and the chance is capped at 95%, so nothing is ever certain. People other than the user count as rank 2; old requests naming battle stats are mapped to the closest social stat. Dungeon traps and locks use them too.
 - Confidants: lorebook format, ranks with requirements and unlocks, per-card mode (automatic / defined / mixed / sandbox), affinity gate, one per Arcana, optional Accept / Reject, AI points with swipe undo, tarot-card tab in the Stats panel.
 - A Persona can never be above its user's level (Levels on): adding or equipping one refused, the AI's stronger awakenings come in at the user's level, + capped.

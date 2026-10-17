@@ -30,6 +30,8 @@
  * that level.
  */
 
+import { parseFusionLines } from './fusionModel.js';
+
 export const STAT_IDS = ['st', 'ma', 'en', 'ag', 'lu'];
 export const STAT_LABELS = { st: 'St', ma: 'Ma', en: 'En', ag: 'Ag', lu: 'Lu' };
 export const MIN_STAT = 1;
@@ -95,6 +97,7 @@ export function normalizeArcana(a) {
     if (hit) return hit;
     if (nameKey(s) === 'judgment') return 'Judgement';
     if (nameKey(s) === 'highpriestess') return 'Priestess';
+    if (nameKey(s) === 'hanged') return 'Hanged Man';
     if (nameKey(s) === 'wheeloffortune') return 'Fortune';
     return s;
 }
@@ -347,6 +350,8 @@ export function parseCompendiumEntry(entry) {
     const p = normalizePersona({ name, arcana, level, stats, affinities, skills, learns, desc, source: 'compendium' });
     // An entry without stats gets the even spread of its level.
     if (Object.keys(stats).length < 3) p.stats = generateStats(level);
+    // How it is fused (the Velvet Room): kept on the Compendium record only.
+    p.fusion = parseFusionLines(lines);
     return p;
 }
 

@@ -228,6 +228,27 @@ export function removePersona(name, isUser, id) {
     return true;
 }
 
+/**
+ * Velvet Room: the parents leave, the result comes in (equipped if one of the
+ * parents was). Returns { persona } or { error }.
+ */
+export function replaceWithFusion(name, isUser, parentIds, persona) {
+    const key = statKey(name, isUser);
+    const rec = readKey(key);
+    const ids = new Set(parentIds);
+    if (!persona) return { error: 'No result.' };
+    if (ids.size < 2 || [...ids].some(id => !rec.list.some(p => p.id === id))) return { error: 'Those Personas are not in the stock.' };
+    if (rec.list.some(p => !ids.has(p.id) && P.nameKey(p.name) === P.nameKey(persona.name))) return { error: `Already has ${persona.name}.` };
+    const wasActive = ids.has(rec.active);
+    rec.list = rec.list.filter(p => !ids.has(p.id));
+    const fresh = P.normalizePersona({ ...persona, id: undefined });
+    rec.list.push(fresh);
+    if (wasActive || !rec.active || !rec.list.some(p => p.id === rec.active)) rec.active = fresh.id;
+    writeKey(key, rec);
+    changed(name, isUser);
+    return { persona: fresh };
+}
+
 export function setPersonaLevel(name, isUser, id, level) {
     const cap = personaLevelCap(name, isUser);
     const to = cap === null ? level : Math.min(level, cap);

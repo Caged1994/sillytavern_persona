@@ -145,6 +145,17 @@ def fusion_lines(fi, is_party=False):
     return lines
 
 
+# Skill inheritance types, in Persona 5 Royal's names (the Velvet Room uses its table).
+INHERIT_SAME = {'light': 'bless', 'dark': 'curse', 'lidark': 'almighty', 'all': 'almighty', 'recovery': 'healing',
+                'slash': 'phys', 'strike': 'phys', 'pierce': 'phys'}
+
+
+def inherit_type(raw):
+    t = re.sub(r'[A-Z]$', '', raw)
+    t = INHERIT_SAME.get(t, t)
+    return t.capitalize()
+
+
 def entry_text(name, d, config, game, is_party, fi=None):
     skills = sorted(d.get('skills', {}).items(), key=lambda x: x[1])
     start = [s for s, l in skills if l < 1]
@@ -166,6 +177,8 @@ def entry_text(name, d, config, game, is_party, fi=None):
     if later:
         desc.append(f'unlocked later (awakening / social link): {", ".join(later)}')
     lines.append('Description: ' + '; '.join(desc) + '.')
+    if not is_party and d.get('inherits'):
+        lines.append(f'Inherits: {inherit_type(d["inherits"])}')
     lines.extend(fusion_lines(fi or {}, is_party))
     return '\n'.join(lines)
 

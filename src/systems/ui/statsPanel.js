@@ -62,6 +62,7 @@ import {
     isPersonasEnabled, getPersonaRecord, getActivePersona, addPersona, equipPersona, removePersona, personaLevelCap,
     setPersonaLevel, setPersonaStat, cyclePersonaAffinity, addPersonaSkill, removePersonaSkill, setWildCard,
 } from '../features/characterPersonas.js';
+import { canFuse, previewFusion, listFusions, fuse, isVelvetEnabled } from '../features/velvetRoom.js';
 import { getCompendium, getCompendiumInfo, findInCompendium, refreshCompendium, COMPENDIUM_CHANGED_EVENT } from '../features/personaCompendium.js';
 import { ELEMENTS, AFFINITIES, ARCANA, STAT_IDS as P_STATS, STAT_LABELS as P_LABELS, MAX_SKILLS, MAX_STOCK } from '../../utils/personaModel.js';
 import { MAX_SOCIAL_POINTS } from '../../utils/socialModel.js';
@@ -118,6 +119,9 @@ const xpForm = { amount: '', reason: '' };
 const personaView = { id: null };
 const PERSONA_FORM = { name: '', arcana: '', focus: '', level: '', skill: '', error: '' };
 const personaForm = { ...PERSONA_FORM };
+// Velvet Room: which Personas are on the altar and which skills are passed on.
+const VELVET = { open: false, pick: ['', ''], ids: [], skills: null, error: '', done: '' };
+const velvet = { ...VELVET };
 // The Confidants tab: the card shown in detail and the "add" form.
 const confView = { name: null };
 const confForm = { name: '', arcana: '', error: '' };
@@ -340,6 +344,7 @@ function personaHtml() {
         <label class="dsp-check dsp-pr-wild" title="A Wild Card holds up to ${MAX_STOCK} Personas and switches between them; anyone else has one, and a new one replaces it.">
             <input type="checkbox" class="dsp-pr-wild-toggle"${rec.wildCard ? ' checked' : ''}> Wild Card${rec.wildCard ? ` <span class="dsp-scale">${rec.list.length}/${MAX_STOCK}</span>` : ''}</label>
         ${stock}
+        ${velvetHtml(rec)}
         ${viewed ? personaDetailHtml(viewed, rec) : `<div class="dsp-items-empty">${escapeHtml(selected.name)} has no Persona yet. The AI adds one when it awakens in the story — or add it here. Without one, the attributes are the character's own.</div>`}
         ${canAdd ? `<div class="dsp-pr-add">
             <div class="dsp-subhead"><i class="fa-solid fa-plus"></i> ${rec.wildCard || !rec.list.length ? 'Add a Persona' : 'Replace the Persona (evolution)'}</div>
@@ -361,6 +366,78 @@ function personaHtml() {
         <p class="dsp-section-hint">Compendium: ${info.at ? `${info.count} Persona${info.count === 1 ? '' : 's'} from ${info.books.length ? escapeHtml(info.books.join(', ')) : 'no active lorebook'}` : 'loading…'}
             <button type="button" class="dsp-text-btn dsp-pr-refresh" data-action="pr-refresh" title="Read the lorebooks again"><i class="fa-solid fa-rotate"></i></button></p>
     </section>`;
+}
+
+// ─── Velvet Room ────────────────────────────────────────────────────────────
+
+function velvetHtml(rec) {
+    if (!isVelvetEnabled() || !rec.wildCard || rec.list.length < 2) return '';
+    if (!velvet.open) {
+        return `<button type="button" class="dsp-text-btn dsp-vr-open" data-action="vr-open"><i class="fa-solid fa-key"></i> Velvet Room — fuse Personas</button>
+            ${velvet.done ? `<p class="dsp-vr-done">${escapeHtml(velvet.done)}</p>` : ''}`;
+    }
+    velvet.ids = velvet.ids.filter(id => rec.list.some(p => p.id === id));
+    velvet.pick = velvet.pick.map(id => (rec.list.some(p => p.id === id) ? id : ''));
+    const pick = (i) => `<select data-vr-parent="${i}" aria-label="Persona ${i + 1}">
+        <option value="">Persona ${i + 1}…</option>
+        ${rec.list.map(p => `<option value="${escapeHtml(p.id)}"${velvet.pick[i] === p.id ? ' selected' : ''}${velvet.pick[1 - i] === p.id ? ' disabled' : ''}>${escapeHtml(`${p.name} · ${p.arcana || '?'} ${p.level}`)}</option>`).join('')}
+    </select>`;
+    const list = listFusions(selected.name, selected.isUser);
+    const specials = list.filter(x => x.kind === 'special');
+    const pairs = list.filter(x => x.kind !== 'special');
+    const same = (ids) => ids.length === velvet.ids.length && ids.every(id => velvet.ids.includes(id));
+    const recipeBtn = (x) => `<button type="button" class="dsp-vr-recipe${same(x.ids) ? ' is-on' : ''}${x.blocks.length ? ' is-blocked' : ''}" data-vr-ids="${escapeHtml(x.ids.join(','))}" title="${escapeHtml(x.blocks.join(' ') || 'Choose this fusion')}">
+        <span class="dsp-vr-parts">${x.parents.map(p => escapeHtml(p.name)).join(' + ')}</span>
+        <span class="dsp-vr-arrow">→</span>
+        <span class="dsp-vr-res">${escapeHtml(x.def.name)} <small>${escapeHtml(x.def.arcana)} ${x.def.level}${x.kind === 'treasure' ? ' · treasure' : ''}</small></span>
+    </button>`;
+    let preview = '';
+    if (velvet.ids.length >= 2) {
+        const pv = previewFusion(selected.name, selected.isUser, velvet.ids);
+        if (pv.error) preview = `<p class="dsp-item-error">${escapeHtml(pv.error)}</p>`;
+        else {
+            const inh = pv.inherit;
+            if (!Array.isArray(velvet.skills)) velvet.skills = [...inh.picked];
+            velvet.skills = velvet.skills.filter(s => inh.pool.includes(s)).slice(0, inh.slots);
+            preview = `<div class="dsp-vr-result">
+                <div class="dsp-vr-res-head">
+                    <span class="dsp-vr-res-name">${escapeHtml(pv.def.name)}</span>
+                    <span class="dsp-pr-arc">${escapeHtml(pv.def.arcana)}</span>
+                    <span class="dsp-vr-res-lv">Lv ${pv.level}</span>
+                </div>
+                <p class="dsp-section-hint">${pv.kind === 'special' ? 'Special fusion' : pv.kind === 'treasure' ? 'Treasure fusion' : 'Normal fusion'} · base ${P_STATS.map(id => `${P_LABELS[id]} ${pv.def.stats[id]}`).join(' ')}${pv.level > pv.def.level ? `<br>Lv ${pv.def.level} + ${pv.level - pv.def.level} from the ${escapeHtml(pv.def.arcana)} Confidant` : ''}</p>
+                <div class="dsp-subhead"><i class="fa-solid fa-dna"></i> Inherited skills <span>${velvet.skills.length}/${inh.slots}</span></div>
+                <div class="dsp-pr-skills">${(pv.def.skills || []).map(sk => `<span class="dsp-pr-skill is-innate" title="Its own skill">${escapeHtml(sk)}</span>`).join('')}
+                    ${inh.pool.map(sk => `<button type="button" class="dsp-pr-skill dsp-vr-skill${velvet.skills.includes(sk) ? ' is-on' : ''}" data-vr-skill="${escapeHtml(sk)}" title="${velvet.skills.includes(sk) ? 'Passed on — click to drop' : 'Click to pass it on'}">${escapeHtml(sk)}</button>`).join('')}
+                    ${inh.blocked.map(sk => `<span class="dsp-pr-skill is-blocked" title="${escapeHtml(pv.def.name)} cannot inherit this kind of skill">${escapeHtml(sk)}</span>`).join('')}
+                </div>
+                ${pv.blocks.length ? `<p class="dsp-item-error">${pv.blocks.map(escapeHtml).join('<br>')}</p>` : ''}
+                <div class="dsp-item-form-row">
+                    <span class="dsp-item-error" role="alert">${escapeHtml(velvet.error)}</span>
+                    <button type="button" class="dsp-text-btn is-primary" data-action="vr-fuse"${pv.blocks.length ? ' disabled' : ''}><i class="fa-solid fa-wand-magic-sparkles"></i> Fuse</button>
+                </div>
+                <p class="dsp-section-hint">${pv.parents.map(p => escapeHtml(p.name)).join(' and ')} will be gone.</p>
+            </div>`;
+        }
+    }
+    return `<div class="dsp-vr">
+        <div class="dsp-vr-head"><span class="dsp-vr-title"><i class="fa-solid fa-key"></i> Velvet Room</span>
+            <button type="button" class="dsp-icon-btn" data-action="vr-close" title="Leave the Velvet Room"><i class="fa-solid fa-xmark"></i></button></div>
+        <div class="dsp-item-form-row">${pick(0)}<span class="dsp-vr-plus">+</span>${pick(1)}</div>
+        ${velvet.ids.length > 2 ? `<p class="dsp-section-hint">Special fusion of ${velvet.ids.length} Personas.</p>` : ''}
+        ${preview}
+        ${specials.length ? `<div class="dsp-subhead"><i class="fa-solid fa-star"></i> Special fusions you can make</div><div class="dsp-vr-list">${specials.map(recipeBtn).join('')}</div>` : ''}
+        ${pairs.length ? `<details class="dsp-vr-all"><summary>All fusions from your stock (${pairs.length})</summary><div class="dsp-vr-list">${pairs.map(recipeBtn).join('')}</div></details>` : ''}
+    </div>`;
+}
+
+function submitFusion() {
+    if (!selected) return;
+    const res = fuse(selected.name, selected.isUser, velvet.ids, { skills: velvet.skills });
+    if (res.error) { velvet.error = res.error; renderAll(); return; }
+    Object.assign(velvet, VELVET, { done: `${res.preview.parents.map(p => p.name).join(' + ')} → ${res.persona.name} (Lv ${res.persona.level})${res.inherited.length ? `, inheriting ${res.inherited.join(', ')}` : ''}.` });
+    personaView.id = res.persona.id;
+    renderAll();
 }
 
 /** Inline number edit for a Persona stat (any Persona, equipped or not). */
@@ -1492,6 +1569,7 @@ function bindRootListeners(root) {
             resetForm();
             personaView.id = null;
             Object.assign(personaForm, PERSONA_FORM);
+            Object.assign(velvet, VELVET);
             renderAll();
             return;
         }
@@ -1611,6 +1689,21 @@ function bindRootListeners(root) {
         if (action === 'item-add') { submitItemForm(); return; }
         if (action === 'xp-add') { submitXpForm(); return; }
         if (action === 'pr-add') { submitPersonaForm(); return; }
+        if (action === 'vr-open') { Object.assign(velvet, VELVET, { open: true }); renderAll(); return; }
+        if (action === 'vr-close') { Object.assign(velvet, VELVET); renderAll(); return; }
+        if (action === 'vr-fuse') { submitFusion(); return; }
+        const vrIds = e.target.closest('[data-vr-ids]')?.getAttribute('data-vr-ids');
+        if (vrIds) { velvet.ids = vrIds.split(','); velvet.pick = velvet.ids.length === 2 ? [...velvet.ids] : ['', '']; velvet.skills = null; velvet.error = ''; renderAll(); return; }
+        const vrSkill = e.target.closest('[data-vr-skill]')?.getAttribute('data-vr-skill');
+        if (vrSkill && selected) {
+            const pv = previewFusion(selected.name, selected.isUser, velvet.ids);
+            const on = Array.isArray(velvet.skills) ? velvet.skills : [];
+            if (on.includes(vrSkill)) velvet.skills = on.filter(x => x !== vrSkill);
+            else if (pv.inherit && on.length < pv.inherit.slots) velvet.skills = [...on, vrSkill];
+            else velvet.error = `Only ${pv.inherit?.slots ?? 0} skill${pv.inherit?.slots === 1 ? '' : 's'} can be passed on: drop one first.`;
+            renderAll();
+            return;
+        }
         if (action === 'conf-accept') { const r = acceptPending(e.target.closest('[data-name]').getAttribute('data-name')); if (r.error) { confForm.error = r.error; renderAll(); } return; }
         if (action === 'conf-reject') { rejectPending(e.target.closest('[data-name]').getAttribute('data-name')); return; }
         if (action === 'conf-add') {
@@ -1682,6 +1775,16 @@ function bindRootListeners(root) {
     root.addEventListener('input', (e) => {
         const cfField = e.target.getAttribute && e.target.getAttribute('data-cf-field');
         if (cfField) { confForm[cfField] = e.target.value; confForm.error = ''; return; }
+        const vrParent = e.target.getAttribute && e.target.getAttribute('data-vr-parent');
+        if (vrParent !== null && vrParent !== undefined) {
+            velvet.pick[Number(vrParent)] = e.target.value;
+            velvet.ids = velvet.pick.every(Boolean) ? [...velvet.pick] : [];
+            velvet.skills = null;
+            velvet.error = '';
+            try { e.target.blur(); } catch (err) { /* no focus */ }
+            renderAll();
+            return;
+        }
         const prField = e.target.getAttribute && e.target.getAttribute('data-pr-field');
         if (prField) {
             const wasKnown = !!findInCompendium(personaForm.name);

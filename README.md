@@ -36,11 +36,28 @@ Phys - · Gun - · Fire - · Ice Wk · Elec - · Wind - · Psy - · Nuke - · Bl
 Skills: Eiha, Cleave
 Learns: Lv2 Rakukaja, Lv4 Sukunda
 Description: The gentleman thief of the Fool Arcana.
+Inherits: Curse
+Fusion: normal fusion of two Personas (Arcana chart)
 ```
+
+`Inherits` and `Fusion` are for the Velvet Room and optional (no Fusion line = normal fusion; also `Fusion: special fusion of A + B`, `Fusion: cannot be fused`, `Unlocked by: Maxed Confidant: <Arcana> Rank 10`).
 
 A ready-made Compendium is in `compendium/Persona-Compendium.json`: the 242 Personas of Persona 5 Royal (fusable ones and the Phantom Thieves'), plus the 86 from Persona 3 (Reload, Episode Aigis, FES) and Persona 4 Golden that P5R does not have — 328 in all, no repeats. Import it in SillyTavern's World Info / Lore Library and pick it in Settings. For P3/P4 Personas, Slash/Strike/Pierce become Phys (the exact three are in the description when they differ), Light → Bless, Dark → Curse; Gun, Psy and Nuke stay normal since those games lack them. Skills unlocked by awakening or social links are listed in each entry's description. Each entry also says how the Persona is obtained: normal fusion (Arcana chart), the ingredients of a special fusion, "cannot be fused" with the requirement (treasure Personas, party members' Personas), and what unlocks it (story progress, a maxed Confidant / Social Link, DLC). It is built by `tools/build-compendium.py` from the data of [megaten-fusion-tool](https://github.com/aqiu384/megaten-fusion-tool) by aqiu384 (public domain).
 
 Affinities accept `Wk`/`Weak`, `Rs`/`Resist`, `Nu`/`Null`, `Dr`/`Drain`, `Rp`/`Repel` and `-` for normal. An entry without a stats line gets an even spread for its level. When a character obtains a Persona whose name is in the Compendium, a copy is made for that chat; levelling it up never changes the lorebook.
+
+## Velvet Room (fusion)
+
+A Wild Card with at least two Personas can fuse them from the Persona tab (Settings → Velvet Room switches it off). The rules are Persona 5 Royal's:
+
+- **Normal fusion** of two Personas: the Arcana chart gives the result's Arcana (P5R's; pairs with Aeon or Jester use P4 Golden's, then P3 Reload's). The result is the first Persona of that Arcana at level (level₁ + level₂) / 2 + 1 or above. Two of the same Arcana give the strongest one below that level that is neither parent; if there is none, the fusion fails. The base (Compendium) levels count, so training a Persona does not change what it fuses into. Only Personas marked "normal fusion" come out of one.
+- **Special fusion**: the exact set of a recipe (`Fusion: special fusion of A + B + …`, 2 to 6 Personas). The tab lists the ones your stock can make.
+- **Treasure fusion**: a treasure demon (Crystal Skull, Koh-i-Noor…) moves the other Persona up or down inside its Arcana.
+- **Limits**: the result cannot be above your level (Levels on); a Persona unlocked by a maxed Confidant (`Unlocked by: Maxed Confidant: Death Rank 10`) needs that Confidant at that rank (Confidants on). Story and DLC unlocks are left to the story. You cannot fuse into a Persona you already own.
+- **Bonus**: the Confidant of the result's Arcana adds rank ÷ 2 levels (rank 10 → +5), never past your level.
+- **Skills**: the result keeps its own skills and inherits from the parents' — 1 slot for 1 skill, 2 for up to 4, 3 for up to 8, 4 beyond — limited by its inheritance type (`Inherits: Fire`: a Fire Persona cannot take Ice, Phys or Gun skills, as in P5R). You pick which ones; the parents are gone afterwards.
+
+The ready-made Compendium mixes P3/P4 Personas into the same Arcana rows, so some results differ from pure P5R; disable those entries in the lorebook for P5R's exact results. The tables are built by `tools/build-fusion.py` from megaten-fusion-tool's data.
 
 ## Confidants in a lorebook
 
