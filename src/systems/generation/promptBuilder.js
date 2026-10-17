@@ -25,7 +25,9 @@ import { buildAffinityPromptForGeneration, buildAffinityContextSummary } from '.
 import { buildSocialPromptForGeneration, buildSocialContextSummary } from '../features/characterSocial.js';
 import { buildPersonaPromptForGeneration, buildPersonaContextSummary } from '../features/characterPersonas.js';
 import { buildConfidantPromptForGeneration, buildConfidantContextSummary } from '../features/characterConfidants.js';
-import { buildCalendarPromptForGeneration, buildCalendarContextSummary } from '../features/calendar.js';
+import { buildCalendarPromptForGeneration, buildCalendarContextSummary, isCalendarEnabled, getNow, infoBoxCarriesScene } from '../features/calendar.js';
+import { isRpgModeActive } from '../features/rpgMode.js';
+import { formatLong } from '../../utils/calendarModel.js';
 import { buildOtherworldPromptForGeneration, buildOtherworldContextSummary } from '../features/otherworld.js';
 import { buildChecksPromptForGeneration, buildChecksContextSummary } from '../features/characterChecks.js';
 // Registers the attribute-modifier provider the stats prompt uses.
@@ -160,7 +162,11 @@ export function generateTrackerExample() {
     // them in the previous reply's JSON matters: small models copy that
     // structure and leave out any key it doesn't contain. Equipment and
     // memories are change-only, so they appear empty ("nothing changed").
-    if (parts.length > 0) {
+    // With the Info Box, Present Characters and Quests all off, RPG mode
+    // still sends a JSON block (stats, Personas, calendar…). The previous
+    // reply's block is what keeps the AI writing it, so show it too.
+    const rpgOnly = parts.length === 0 && isRpgModeActive();
+    if (parts.length > 0 || rpgOnly) {
         try {
             const stats = getStatsExampleObject();
             if (stats) parts.push(`  "stats": ${JSON.stringify(stats)}`);
@@ -168,7 +174,12 @@ export function generateTrackerExample() {
             if (isMemoriesEnabled()) parts.push('  "memories": {}');
             if (isConditionsEnabled()) parts.push('  "conditions": {}');
             if (isAbilitiesEnabled()) parts.push('  "abilities": {}');
+            // The calendar carries the date when the Info Box doesn't.
+            const now = isCalendarEnabled() && !infoBoxCarriesScene() ? getNow() : null;
+            if (now?.date) parts.push(`  "calendar": ${JSON.stringify({ date: formatLong(now.date).replace(/^\w+, /, ''), slot: now.slot })}`);
         } catch (e) { /* the example is best-effort */ }
+        // Only the change-only keys, nothing with values: no example.
+        if (rpgOnly && !parts.some(p => /"(stats|calendar)"/.test(p))) parts.length = 0;
     }
     // If we have JSON parts, wrap them in unified structure
     if (parts.length > 0) {
@@ -395,7 +406,10 @@ export function generateTrackerInstructions(includeHtmlPrompt = true, includeCon
         const checksSection = buildChecksPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection && !personaSection && !confidantSection && !calendarSection && !otherworldSection });
         const all = [statsSection, memoriesSection, equipmentSection, conditionsSection, abilitiesSection, progressSection, moneySection, affinitySection, socialSection, personaSection, confidantSection, calendarSection, otherworldSection, checksSection].filter(Boolean);
         if (all.length) {
-            instructions += '\n' + all.join('\n\n');
+            // The same opening the tracker block has: without the Info Box,
+            // Present Characters and Quests nothing else says it up front.
+            instructions += '\nStart every reply with ONE ```json code block holding the keys described below (one object; leave out keys with nothing to report), then the story.\n\n';
+            instructions += all.join('\n\n');
             if (includeContinuation) {
                 instructions += '\n\nThen continue the story directly from the last message, letting the stats shape what the characters can do and how they feel.\n\n';
             }

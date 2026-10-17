@@ -1,5 +1,5 @@
 {
-    "version": "0.2.3",
+    "version": "0.2.4",
     "title": "Persona Stats 0.2",
     "items": [
         {
@@ -12,7 +12,7 @@
         },
         {
             "title": "Together mode with format-heavy cards",
-            "body": "The tracker block now has the last word on the reply's format, and a reply that still comes back without it gets its trackers from a separate call (Rescue missing trackers, on by default)."
+            "body": "Without the Info Box, Present Characters and Quests, the JSON block is asked for up front again and the last one is shown to the AI; the tracker block has the last word on the reply's format; a reply that still comes back without it gets its trackers from a separate call (Rescue missing trackers, on by default)."
         }
     ]
 }

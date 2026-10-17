@@ -171,6 +171,7 @@ function buildDiagnosticHeader() {
         lines.push('--- Settings snapshot ---');
         lines.push(`enabled: ${s.enabled}`);
         lines.push(`generationMode: ${s.generationMode || '(unset)'}`);
+        lines.push(`trackers: infoBox ${s.showInfoBox !== false}, presentCharacters ${s.showCharacterThoughts !== false}, quests ${s.showQuests !== false}, compactPrompts ${s.compactPrompts !== false}, togetherFallback ${s.togetherFallback !== false}`);
         lines.push(`autoUpdate: ${s.autoUpdate}`);
         lines.push(`updateDepth: ${s.updateDepth}`);
         lines.push(`syncExpressionsToPresentCharacters: ${s.syncExpressionsToPresentCharacters}`);

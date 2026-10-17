@@ -219,6 +219,14 @@ Cal.revertAICalendarForReplacedMessage(chat.length - 1);
 check('a swipe undoes weather and place too', Cal.getPlace() !== 'Leblanc attic' && Cal.getNow().slot === 'evening');
 Cal.setPlace('Shibuya');
 check('the place by hand', Cal.getPlace() === 'Shibuya');
+// All three trackers off (the calendar carries the scene): together mode still opens with the block and shows the last one.
+const keepTrackers = [extensionSettings.showCharacterThoughts, extensionSettings.showQuests];
+extensionSettings.showCharacterThoughts = false; extensionSettings.showQuests = false;
+const soloInstr = pb.generateTrackerInstructions(false, true);
+check('trackers off: the instructions open with the JSON block', /^\s*Start every reply with ONE ```json code block/.test(soloInstr), soloInstr.slice(0, 200));
+const soloEx = pb.generateTrackerExample();
+check('...and the last block is shown, calendar included', /"calendar": \{"date":"May 8, 2016","slot":"evening"\}/.test(soloEx), soloEx);
+[extensionSettings.showCharacterThoughts, extensionSettings.showQuests] = keepTrackers;
 extensionSettings.showInfoBox = true;
 lastGeneratedData.infoBox = box('Sunday, May 8, 2016', '7:30 PM', '☁️ Cloudy');
 chat.push({ is_user: true, mes: 'x' }, { is_user: false, mes: 'reply' });
