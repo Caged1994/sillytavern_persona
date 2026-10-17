@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- A Persona added by hand without a level comes in at its user's level (like an awakening) instead of being refused when the Compendium's level is higher; a level typed above the user's is still refused.
 - Fix: lorebooks bound to the character card or the chat (not only the globally active ones) are now read for the Persona Compendium, Confidants, Calendar and Otherworld entries; adding a Persona by name re-reads the Compendium first when the name is not found.
 - Otherworld: places kept in the chat. Labyrinths (blocks that open at the start / on a date / after a domain / by hand / from the story, fresh floors each visit, depth-based levels, block guardians and checkpoints, requests, the Reaper) and domains (fixed map of 2-4 areas kept between visits, safe-room checkpoints, ruler, deadline on the calendar: missed it closes with a story notice, cleared it stays open to revisit). Every visit takes a time of day. From `Dungeon:` lorebook entries, the story's `otherworld` key (swipe undo) or by hand.
 - Shuffle Time (P3/P4) after won fights: chance with bonuses, four cards shown then shuffled face down, Persona cards (from the fight or near your level, base level, never above yours) and the Minor Arcana (Cups heal, Coins money, Wands XP, Swords a weapon); the fight's story mentions the card.

@@ -179,7 +179,9 @@ function addTo(rec, persona) {
 
 /** Adds a Persona by name (Compendium) or description. Returns { persona } or { error }. */
 export function addPersona(name, isUser, desc) {
-    const persona = makePersonaFor(name, isUser, { source: 'user', ...(typeof desc === 'string' ? { name: desc } : desc) });
+    const d = { source: 'user', ...(typeof desc === 'string' ? { name: desc } : desc) };
+    // Without a level typed in, it comes in at its user's level (as an awakening does).
+    const persona = makePersonaFor(name, isUser, d, { atUserLevel: !d.level });
     if (!persona) return { error: 'Give the Persona a name.' };
     if (!canUsePersona(name, isUser, persona)) {
         return { error: `${persona.name} is level ${persona.level}: ${name} must reach level ${persona.level} first (now ${personaLevelCap(name, isUser)}).` };
