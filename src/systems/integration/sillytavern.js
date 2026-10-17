@@ -375,7 +375,19 @@ export async function onMessageReceived(data) {
             }
             // Save to chat metadata (immediate: generation-end commit point)
             saveChatData({ immediate: true });
-
+            // The reply came back without its tracker block (a card with a
+            // format of its own can make the AI skip it): ask for the
+            // trackers with a separate call, for this reply only.
+            if (parsedData.parsingFailed && isAwaitingNewMessage && extensionSettings.togetherFallback !== false) {
+                console.log('[Dooms Tracker] Together mode: the reply has no trackers — asking for them with a separate call');
+                setTimeout(async () => {
+                    await updateRPGData(renderInfoBox, renderThoughts, { rescue: true });
+                    updateChatSceneHeaders();
+                    updatePortraitBar();
+                    updateWeatherEffect();
+                    updateChatThoughts();
+                }, 500);
+            }
         }
     } else if (extensionSettings.generationMode === 'separate' || extensionSettings.generationMode === 'external') {
         // In separate/external mode, no additional rendering needed for the main message

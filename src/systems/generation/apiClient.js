@@ -263,14 +263,15 @@ export function getAvailableConnectionProfiles() {
  * @param {Function} renderInfoBox - UI function to render info box
  * @param {Function} renderThoughts - UI function to render character thoughts
  */
-export async function updateRPGData(renderInfoBox, renderThoughts) {
+export async function updateRPGData(renderInfoBox, renderThoughts, { rescue = false } = {}) {
     if (isGenerating) {
         return;
     }
     if (!extensionSettings.enabled) {
         return;
     }
-    if (extensionSettings.generationMode !== 'separate' && extensionSettings.generationMode !== 'external') {
+    // rescue: together mode, the reply came back without its tracker block.
+    if (!rescue && extensionSettings.generationMode !== 'separate' && extensionSettings.generationMode !== 'external') {
         return;
     }
     // Nothing to update when every tracker section is hidden — the separate
@@ -282,7 +283,7 @@ export async function updateRPGData(renderInfoBox, renderThoughts) {
     if (!extensionSettings.showInfoBox && !extensionSettings.showCharacterThoughts && !extensionSettings.showQuests && !isRpgModeActive()) {
         return;
     }
-    const isExternalMode = extensionSettings.generationMode === 'external';
+    const isExternalMode = !rescue && extensionSettings.generationMode === 'external';
     let originalProfileName = null;
     let originalPresetName = null;
     let profileSwitched = false;
@@ -295,7 +296,7 @@ export async function updateRPGData(renderInfoBox, renderThoughts) {
         $updateBtn.html(`<i class="fa-solid fa-spinner fa-spin"></i> ${updatingText}`).prop('disabled', true);
         $stripRefreshBtn.html('<i class="fa-solid fa-spinner fa-spin"></i>').prop('disabled', true);
         // Switch connection profile if configured (separate mode only, not external)
-        if (!isExternalMode && extensionSettings.connectionProfile) {
+        if (!rescue && !isExternalMode && extensionSettings.connectionProfile) {
             if (isConnectionProfileAvailable(extensionSettings.connectionProfile)) {
                 originalProfileName = await getCurrentProfileName() || '<None>';
                 if (originalProfileName !== extensionSettings.connectionProfile) {

@@ -11,6 +11,7 @@ export let extensionSettings = {
     autoUpdate: false,
     updateDepth: 4, // How many messages to include in the context
     generationMode: 'together', // 'together', 'separate', or 'external'
+    togetherFallback: true, // Together mode: a reply without trackers gets a separate tracker call
     // Per-prompt injection depth & role settings (configured in Customize Prompts editor)
     promptInjection: {
         html: { depth: 0, role: '' },

@@ -1,5 +1,5 @@
 {
-    "version": "0.2.2",
+    "version": "0.2.3",
     "title": "Persona Stats 0.2",
     "items": [
         {
@@ -9,6 +9,10 @@
         {
             "title": "Confidants, Calendar and the Otherworld",
             "body": "Confidants with battle abilities, a calendar with times of day and deadlines, labyrinths and domains kept in the chat."
+        },
+        {
+            "title": "Together mode with format-heavy cards",
+            "body": "The tracker block now has the last word on the reply's format, and a reply that still comes back without it gets its trackers from a separate call (Rescue missing trackers, on by default)."
         }
     ]
 }

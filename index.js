@@ -378,6 +378,7 @@ function populateConnectionProfileDropdown() {
  */
 function updateGenerationModeUI() {
     const mode = extensionSettings.generationMode || 'together';
+    $('#rpg-together-fallback-container').toggle(mode === 'together');
     if (mode === 'together') {
         $('#rpg-manual-update').hide();
         $('#rpg-auto-update-container').hide();
@@ -737,6 +738,10 @@ function bindSettingsUI() {
         extensionSettings.generationMode = String($(this).val());
         saveSettings();
         updateGenerationModeUI();
+    });
+    $('#rpg-toggle-together-fallback').on('change', function () {
+        extensionSettings.togetherFallback = $(this).prop('checked');
+        saveSettings();
     });
     $('#rpg-toggle-auto-update').on('change', function () {
         extensionSettings.autoUpdate = $(this).prop('checked');
@@ -1876,6 +1881,7 @@ function bindSettingsUI() {
     $('#rpg-toggle-mobile-compose').prop('checked', !!extensionSettings.mobileComposeOverlay);
     $('#rpg-toggle-whats-new').prop('checked', !extensionSettings.whatsNewOptOut);
     $('#rpg-toggle-compact-prompts').prop('checked', extensionSettings.compactPrompts !== false);
+    $('#rpg-toggle-together-fallback').prop('checked', extensionSettings.togetherFallback !== false);
     $('#rpg-toggle-thoughts').prop('checked', extensionSettings.showCharacterThoughts);
     $('#rpg-toggle-quests').prop('checked', extensionSettings.showQuests);
     // Lock Icons toggle removed — lock UI disabled until wired into scene tracker

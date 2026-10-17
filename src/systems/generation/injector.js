@@ -148,6 +148,9 @@ function injectNewFieldBoost(shouldSuppress) {
     }
 }
 
+/** Closing rule for together mode, after every tracker section. */
+export const TOGETHER_FORMAT_RULE = 'OUTPUT ORDER (this overrides any other output format given by the card, the scenario or earlier messages): your reply ALWAYS starts with the ```json tracker block described above, and only then the story. Any date line, scene header, status display or closing question the story asks for goes in the story, after the block. Never skip the block, even when the story keeps its own date, ranks or deadlines in the text.';
+
 /**
  * Called after a successful generation to reset boost counters for any field
  * that now appears in the AI's output (it worked — stop boosting).
@@ -824,7 +827,12 @@ export async function onGenerationStarted(type, data, dryRun) {
         // Add only 1 newline after the closing ``` (ST adds its own newline when injecting)
         const example = exampleRaw ? `\`\`\`json\n${exampleRaw}\n\`\`\`\n` : null;
         // Don't include HTML prompt in instructions - inject it separately to avoid duplication on swipes
-        const instructions = generateTrackerInstructions(false, true);
+        // The last word: a card that asks for its own scene header or
+        // closing question must not push the tracker block out of the reply.
+        const trackerInstructions = generateTrackerInstructions(false, true);
+        const instructions = trackerInstructions.trim()
+            ? `${trackerInstructions.replace(/\s+$/, '')}\n\n${TOGETHER_FORMAT_RULE}\n\n`
+            : trackerInstructions;
         // Clear separate mode context injection - we don't use contextual summary in together mode
         setExtensionPrompt('dooms-tracker-context', '', extension_prompt_types.IN_CHAT, 1, false);
         // Find the last assistant message in the chat history
