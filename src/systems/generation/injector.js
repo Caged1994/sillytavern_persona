@@ -43,6 +43,8 @@ import {
 import { DEFAULT_NEW_FIELDS_BOOST_PROMPT } from './defaultPrompts.js';
 // Track suppression state for event handler
 let currentSuppressionState = false;
+// Warn once per session when the prompt is too small for the instructions.
+let contextWarned = false;
 // Cache of the last GENERATION_STARTED args (type/data/dryRun) so the
 // GENERATION_AFTER_COMMANDS handler can re-evaluate suppression with the same
 // inputs. Needed because GG's `/inject` slash command writes to
@@ -621,7 +623,17 @@ function logTrackerPlacement(messages) {
         const at = messages.findIndex(m => text(m).includes(marker));
         const n = messages.length;
         if (at < 0) {
-            console.log(`[Dooms Tracker] Final prompt: ${n} messages — the tracker instructions are NOT in it`);
+            // SillyTavern fills the chat history newest-first while it fits in
+            // the Context Size; the instructions sit at the newest end, so when
+            // they don't fit, the history behind them is dropped too.
+            const chat = getContext().chat || [];
+            const lastUser = [...chat].reverse().find(m => m?.is_user && !m.is_system)?.mes?.trim().slice(0, 80);
+            const hasUser = !lastUser || messages.some(m => text(m).includes(lastUser));
+            console.log(`[Dooms Tracker] Final prompt: ${n} messages — the tracker instructions are NOT in it${hasUser ? '' : ', and neither is your last message (the chat history did not fit)'}`);
+            if (!hasUser && !contextWarned) {
+                contextWarned = true;
+                toastr.warning('The tracker instructions and the chat did not fit in the prompt. Raise Context Size in the API preset (DeepSeek takes far more), or switch the tracker mode to Separate.', 'Context too small', { timeOut: 15000 });
+            }
             return;
         }
         const after = messages.slice(at + 1).map(m => `${m.role} (${text(m).length} chars: ${text(m).replace(/\s+/g, ' ').slice(0, 60)}…)`);

@@ -1,5 +1,5 @@
 {
-    "version": "0.2.5",
+    "version": "0.2.6",
     "title": "Persona Stats 0.2",
     "items": [
         {
@@ -13,6 +13,10 @@
         {
             "title": "Together mode with format-heavy cards",
             "body": "Without the Info Box, Present Characters and Quests, the JSON block is asked for up front again and the last one is shown to the AI; the tracker block has the last word on the reply's format; a reply that still comes back without it gets its trackers from a separate call (Rescue missing trackers, on by default)."
+        },
+        {
+            "title": "Context too small",
+            "body": "A warning when the tracker instructions and the chat do not fit in the API preset's Context Size."
         }
     ]
 }
