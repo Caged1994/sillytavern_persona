@@ -67,6 +67,7 @@ import {
     isCalendarEnabled, getNow as getCalNow, getEvents as getCalEvents, getDay as getCalDay, getMonthView, getUpcoming,
     setNow as setCalNow, advance as calAdvance, addEvent as calAddEvent, removeEvent as calRemoveEvent, setEventDone as calSetDone,
     setWeather as calSetWeather, CALENDAR_CHANGED_EVENT, getPlace as getCalPlace, setPlace as setCalPlace,
+    readDateFromChat, infoBoxCarriesScene,
 } from '../features/calendar.js';
 import * as CK from '../../utils/calendarModel.js';
 import { canFuse, previewFusion, listFusions, fuse, isVelvetEnabled } from '../features/velvetRoom.js';
@@ -418,7 +419,9 @@ function calendarHtml() {
                 <button type="button" class="dsp-text-btn" data-action="cal-next" title="Next time of day"><i class="fa-solid fa-forward-step"></i> ${escapeHtml(CK.slotName(CK.nextSlot(now).slot))}</button>
                 <button type="button" class="dsp-text-btn" data-action="cal-day" title="Next morning"><i class="fa-solid fa-forward"></i> Next day</button>
             </div>
-        </div>` : '<div class="dsp-items-empty">No date yet. The AI sets one in its next reply (from the Info Box), or set it here.</div>'}
+        </div>` : `<div class="dsp-items-empty">No date yet. It is set by the next reply: from the Info Box date${infoBoxCarriesScene() ? '' : ' (off here: from the calendar key)'}, or from a date header the story writes (month, day and weekday together, e.g. "APRIL 1 — TUESDAY"). For a chat that was already going, read it from the messages — or set it by hand below.
+            <div class="dsp-item-form-row"><button type="button" class="dsp-text-btn is-primary" data-action="cal-read">Read the date from the chat</button></div>
+            ${calForm.error ? `<span class="dsp-item-error" role="alert">${escapeHtml(calForm.error)}</span>` : ''}</div>`}
         ${late.length ? `<div class="dsp-cal-late">⏳ Missed: ${late.map(e => escapeHtml(e.title)).join(', ')}</div>` : ''}
         <div class="dsp-cal-month">
             <div class="dsp-cal-mhead">
@@ -1836,6 +1839,12 @@ function bindRootListeners(root) {
             if (r.error) { calForm.error = r.error; renderAll(); return; }
             Object.assign(calForm, { title: '', error: '' });
             renderAll();
+            return;
+        }
+        if (action === 'cal-read') {
+            const r = readDateFromChat();
+            if (r.error) { calForm.error = r.error; renderAll(); return; }
+            calForm.error = '';
             return;
         }
         if (action === 'cal-place') { setCalPlace(calForm.place ?? getCalPlace()); calForm.place = null; renderAll(); return; }

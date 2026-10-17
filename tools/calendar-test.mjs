@@ -146,6 +146,12 @@ const fromProse = Cal.getNow();
 check('no Info Box date: the story\'s own date header starts the calendar, weekday-true', fromProse?.slot === 'morning' && fromProse.date.slice(5) === '04-01' && K.WEEKDAYS[K.weekday(fromProse.date)] === 'Tuesday', JSON.stringify(fromProse));
 Cal.revertAICalendarForReplacedMessage(chat.length - 1);
 chat.pop();
+chat.push({ is_user: false, mes: 'Narrator\nAPRIL 1 — TUESDAY\nEVENING\nText.' }, { is_user: true, mes: 'ok' }, { is_user: false, mes: 'nothing dated here' });
+const read = Cal.readDateFromChat();
+check('an ongoing chat: the date is read back from its messages', read.now?.slot === 'evening' && K.WEEKDAYS[K.weekday(read.now.date)] === 'Tuesday');
+chat.splice(chat.length - 3, 3);
+// back to no date for the checks below
+{ const st = (await import(`${SANDBOX}/script.js`)).chat_metadata.dooms_tracker?.betterStats?.calendar; if (st) st.now = null; }
 check('no date yet', Cal.getNow() === null && /no date yet/.test(Cal.buildCalendarPromptForGeneration()));
 Cal.applyAICalendar(null, box('Tuesday, April 12, 2016', '8:10 AM'), chat.length - 1);
 check('the first Info Box date sets the calendar', JSON.stringify(Cal.getNow()) === '{"date":"2016-04-12","slot":"morning"}');

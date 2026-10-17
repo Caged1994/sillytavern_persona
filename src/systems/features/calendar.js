@@ -337,6 +337,30 @@ export function syncInfoBox({ render = true } = {}) {
     return any;
 }
 
+/**
+ * Looks back through the chat (newest first) for the last date the story
+ * gave — in an Info Box saved with a reply, or a header in the text such as
+ * "APRIL 1 — TUESDAY" — and sets the calendar to it. For chats that were
+ * already going before the calendar was on. Returns { now } or { error }.
+ */
+export function readDateFromChat({ lookBack = 40 } = {}) {
+    const msgs = Array.isArray(chat) ? chat : [];
+    for (let i = msgs.length - 1; i >= 0 && i >= msgs.length - lookBack; i--) {
+        const m = msgs[i];
+        if (!m || m.is_user || m.is_system) continue;
+        const swipe = m.extra?.dooms_tracker_swipes?.[m.swipe_id ?? 0];
+        const box = swipe?.infoBox ? readInfoBox(swipe.infoBox) : null;
+        let date = box?.date || null;
+        let slot = box?.slot || null;
+        if (!date) {
+            date = K.findDateInText(m.mes);
+            slot = date ? K.findSlotInText(m.mes) : null;
+        }
+        if (date) return setNow(date, slot || 'morning');
+    }
+    return { error: 'No date found in the recent messages: set it by hand.' };
+}
+
 /** The user changed the Info Box date or time by hand: the calendar follows (it may go back). */
 export function followInfoBoxEdit(raw) {
     if (!isCalendarEnabled()) return false;
