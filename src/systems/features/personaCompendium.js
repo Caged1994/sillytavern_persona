@@ -48,6 +48,7 @@ export function refreshCompendium({ force = false } = {}) {
         }
         const list = parseCompendium(entries);
         cache = { list, books, at: Date.now() };
+        console.log(`[Dooms Tracker] Persona Compendium: ${list.length} Persona(s) from ${books.length ? books.join(', ') : 'no lorebook'} (${entries.length} entries read)`);
         try { window.dispatchEvent(new CustomEvent(COMPENDIUM_CHANGED_EVENT, { detail: { count: list.length } })); } catch (e) { /* no window */ }
         return list;
     })().finally(() => { loading = null; });

@@ -183,6 +183,7 @@ export function addPersona(name, isUser, desc) {
     // Without a level typed in, it comes in at its user's level (as an awakening does).
     const persona = makePersonaFor(name, isUser, d, { atUserLevel: !d.level });
     if (!persona) return { error: 'Give the Persona a name.' };
+    console.log(`[Dooms Tracker] Personas: adding ${persona.name} to ${name} — ${findInCompendium(d.name) ? 'from the Compendium' : 'not in the Compendium (made from its level)'}, Lv ${persona.level}`);
     if (!canUsePersona(name, isUser, persona)) {
         return { error: `${persona.name} is level ${persona.level}: ${name} must reach level ${persona.level} first (now ${personaLevelCap(name, isUser)}).` };
     }
