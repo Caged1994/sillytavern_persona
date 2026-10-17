@@ -18,7 +18,7 @@ import { saveSettings, saveChatData } from '../../core/persistence.js';
 import { isRpgModeActive } from './rpgMode.js';
 import { chatStore, saveChatScope, CHAT_SCOPE } from './chatScope.js';
 import { notifyStatsChanged } from './characterStats.js';
-import { getActiveWorldNames, loadWorldData } from '../lorebook/lorebookAPI.js';
+import { getReadableWorldNames, loadWorldData } from '../lorebook/lorebookAPI.js';
 import { repairJSON } from '../../utils/jsonRepair.js';
 import * as K from '../../utils/calendarModel.js';
 
@@ -86,7 +86,7 @@ let loading = null;
 export function refreshCalendarBook({ force = false } = {}) {
     if (loading) return loading;
     loading = (async () => {
-        const books = [...getActiveWorldNames()];
+        const books = [...getReadableWorldNames()];
         const entries = [];
         for (const b of books) {
             try {
@@ -103,7 +103,7 @@ export function refreshCalendarBook({ force = false } = {}) {
 
 function bookEvents() {
     let books = [];
-    try { books = [...getActiveWorldNames()]; } catch (e) { books = []; }
+    try { books = [...getReadableWorldNames()]; } catch (e) { books = []; }
     const same = books.length === book.books.length && books.every((b, i) => b === book.books[i]);
     if (!same || Date.now() - book.at > 60000) refreshCalendarBook().catch(() => {});
     return book.list;
@@ -112,7 +112,7 @@ function bookEvents() {
 /** For tests: use this list as the lorebook events. */
 export function setBookEventsForTests(list) {
     let books = [];
-    try { books = [...getActiveWorldNames()]; } catch (e) { books = []; }
+    try { books = [...getReadableWorldNames()]; } catch (e) { books = []; }
     book = { list: list || [], books, at: Date.now() };
 }
 

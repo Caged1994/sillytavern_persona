@@ -30,7 +30,7 @@ import { getAffinity, isAffinityEnabled } from './characterAffinity.js';
 import { getSocialView, isSocialEnabled } from './characterSocial.js';
 import { getProgress, isProgressEnabled, isPartyMember } from './characterProgress.js';
 import { unlockedIds, abilityName } from '../../utils/bondModel.js';
-import { getActiveWorldNames, loadWorldData } from '../lorebook/lorebookAPI.js';
+import { getReadableWorldNames, loadWorldData } from '../lorebook/lorebookAPI.js';
 import { nameKey } from '../../utils/personaModel.js';
 import * as C from '../../utils/confidantModel.js';
 
@@ -99,7 +99,7 @@ let loading = null;
 export function refreshConfidantBook({ force = false } = {}) {
     if (loading) return loading;
     loading = (async () => {
-        const books = [...getActiveWorldNames()];
+        const books = [...getReadableWorldNames()];
         const entries = [];
         for (const b of books) {
             try {
@@ -116,7 +116,7 @@ export function refreshConfidantBook({ force = false } = {}) {
 
 /** The Confidants the active lorebooks describe (cached, refreshed in the background). */
 export function getDefinitions() {
-    const books = [...getActiveWorldNames()];
+    const books = [...getReadableWorldNames()];
     const same = books.length === book.books.length && books.every((b, i) => b === book.books[i]);
     if (!same || Date.now() - book.at > 60000) refreshConfidantBook().catch(() => {});
     return book.list;
@@ -129,7 +129,7 @@ export function findDefinition(name) {
 
 /** For tests: use this list as the lorebook definitions. */
 export function setDefinitionsForTests(list) {
-    book = { list: list || [], books: [...getActiveWorldNames()], at: Date.now() };
+    book = { list: list || [], books: [...getReadableWorldNames()], at: Date.now() };
 }
 
 // ─── Storage ────────────────────────────────────────────────────────────────

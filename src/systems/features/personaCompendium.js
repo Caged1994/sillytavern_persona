@@ -13,7 +13,7 @@
  * the background, so prompt building can read it synchronously.
  */
 import { extensionSettings } from '../../core/state.js';
-import { getActiveWorldNames, getAllWorldNames, loadWorldData } from '../lorebook/lorebookAPI.js';
+import { getReadableWorldNames, getAllWorldNames, loadWorldData } from '../lorebook/lorebookAPI.js';
 import { parseCompendium, nameKey } from '../../utils/personaModel.js';
 
 export const COMPENDIUM_CHANGED_EVENT = 'dooms:persona-compendium';
@@ -26,7 +26,7 @@ let loading = null;
 export function compendiumBooks() {
     const chosen = extensionSettings.personaCompendiumBook;
     if (typeof chosen === 'string' && chosen && getAllWorldNames().includes(chosen)) return [chosen];
-    return [...getActiveWorldNames()];
+    return [...getReadableWorldNames()];
 }
 
 /**

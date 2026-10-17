@@ -17,7 +17,7 @@ import { saveSettings, saveChatData } from '../../core/persistence.js';
 import { chatStore, saveChatScope, CHAT_SCOPE } from './chatScope.js';
 import { notifyStatsChanged, getPersonaName } from './characterStats.js';
 import { getProgress, isProgressEnabled } from './characterProgress.js';
-import { getActiveWorldNames, loadWorldData } from '../lorebook/lorebookAPI.js';
+import { getReadableWorldNames, loadWorldData } from '../lorebook/lorebookAPI.js';
 import { isDungeonEnabled, createDungeon, setRunEndHook } from './dungeon.js';
 import * as Cal from './calendar.js';
 import * as K from '../../utils/siteModel.js';
@@ -88,7 +88,7 @@ let loading = null;
 export function refreshSiteBook({ force = false } = {}) {
     if (loading) return loading;
     loading = (async () => {
-        const books = [...getActiveWorldNames()];
+        const books = [...getReadableWorldNames()];
         const entries = [];
         for (const b of books) {
             try {
@@ -105,7 +105,7 @@ export function refreshSiteBook({ force = false } = {}) {
 
 function bookSites() {
     let books = [];
-    try { books = [...getActiveWorldNames()]; } catch (e) { books = []; }
+    try { books = [...getReadableWorldNames()]; } catch (e) { books = []; }
     const same = books.length === book.books.length && books.every((b, i) => b === book.books[i]);
     if (!same || Date.now() - book.at > 60000) refreshSiteBook().catch(() => {});
     return book.list;
@@ -114,7 +114,7 @@ function bookSites() {
 /** For tests: use this list as the lorebook's sites. */
 export function setBookSitesForTests(list) {
     let books = [];
-    try { books = [...getActiveWorldNames()]; } catch (e) { books = []; }
+    try { books = [...getReadableWorldNames()]; } catch (e) { books = []; }
     book = { list: list || [], books, at: Date.now() };
 }
 

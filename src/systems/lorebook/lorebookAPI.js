@@ -34,7 +34,7 @@ import {
     updateWorldInfoSettings,
 } from '../../../../../../../scripts/world-info.js';
 
-import { saveSettingsDebounced, getRequestHeaders } from '../../../../../../../script.js';
+import { saveSettingsDebounced, getRequestHeaders, characters, this_chid, chat_metadata } from '../../../../../../../script.js';
 import { download } from '../../../../../../../scripts/utils.js';
 
 // ─── Cache ──────────────────────────────────────────────────────────────────
@@ -72,6 +72,30 @@ export function getAllWorldNames() {
  */
 export function getActiveWorldNames() {
     return selected_world_info || [];
+}
+
+/**
+ * Every lorebook that is in play for the open chat: the global ones, the
+ * chat's own lorebook, the character card's lorebook and its extra books.
+ * SillyTavern keeps these in different places; only the first are in
+ * selected_world_info, so the card's own lorebook was missed before.
+ * @returns {string[]}
+ */
+export function getReadableWorldNames() {
+    const out = [...(selected_world_info || [])];
+    const add = (n) => { if (typeof n === 'string' && n && !out.includes(n)) out.push(n); };
+    try { add(chat_metadata?.world_info); } catch (e) { /* no chat */ }
+    try {
+        const ch = (typeof this_chid !== 'undefined' && this_chid !== null && characters) ? characters[this_chid] : null;
+        if (ch) {
+            add(ch.data?.extensions?.world);
+            const file = String(ch.avatar || '').replace(/\.[^.]+$/, '');
+            const extra = (world_info?.charLore || []).find(e => e.name === file)?.extraBooks || [];
+            for (const n of extra) add(n);
+        }
+    } catch (e) { /* no character */ }
+    const known = new Set(world_names || []);
+    return out.filter(n => !known.size || known.has(n));
 }
 
 /**

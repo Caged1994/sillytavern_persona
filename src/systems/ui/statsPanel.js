@@ -574,10 +574,12 @@ function startPersonaStatEdit(button) {
     input.addEventListener('blur', () => finish(true));
 }
 
-function submitPersonaForm() {
+async function submitPersonaForm() {
     if (!selected) return;
     const name = personaForm.name.trim();
     if (!name) { personaForm.error = 'Give it a name.'; renderAll(); return; }
+    // Not in the Compendium yet: it may still be loading (or a lorebook was just added) — read it again first.
+    if (!findInCompendium(name)) { try { await refreshCompendium({ force: true }); } catch (e) { /* use what there is */ } }
     const res = addPersona(selected.name, selected.isUser, {
         name, arcana: personaForm.arcana, focus: personaForm.focus, level: personaForm.level ? Number(personaForm.level) : undefined,
     });

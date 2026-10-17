@@ -25,7 +25,7 @@ Persona Stats is a modified version of [Better Stats](https://github.com/Caged19
 
 ## Persona Compendium (lorebook)
 
-The catalogue of Personas is a lorebook: any entry whose title (or first line) starts with `Persona:` is read as one. Choose the lorebook in Settings → RPG & Stats → Persona Compendium, or leave "Active lorebooks". One field per line, in any order:
+The catalogue of Personas is a lorebook: any entry whose title (or first line) starts with `Persona:` is read as one. Choose the lorebook in Settings → RPG & Stats → Persona Compendium, or leave "Active lorebooks" (the global ones, the chat's lorebook and the character card's, with its extra books — the same goes for Confidant, Calendar and Dungeon entries). One field per line, in any order:
 
 ```
 Persona: Arsène
