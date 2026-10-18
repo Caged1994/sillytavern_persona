@@ -364,7 +364,7 @@ function personaHtml() {
             <div class="dsp-subhead"><i class="fa-solid fa-plus"></i> ${rec.wildCard || !rec.list.length ? 'Add a Persona' : 'Replace the Persona (evolution)'}</div>
             <div class="dsp-item-form-row">
                 <input type="text" class="dsp-pr-in-name" data-pr-field="name" list="dsp-pr-compendium" value="${escapeHtml(personaForm.name)}" placeholder="Name${comp.length ? ' (from the Compendium or new)' : ''}" maxlength="40" aria-label="Persona name">
-                <datalist id="dsp-pr-compendium">${comp.map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(`${p.arcana} · Lv ${p.level}`)}</option>`).join('')}</datalist>
+                <datalist id="dsp-pr-compendium">${comp.map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(`${p.name} — ${p.arcana} · Lv ${p.level}`)}</option>`).join('')}</datalist>
                 <input type="number" class="dsp-pr-in-level" data-pr-field="level" value="${escapeHtml(personaForm.level)}" placeholder="Lv" min="1" max="${capNow ?? 99}" aria-label="Level" title="Level (empty: the Compendium's, or the character's)">
             </div>
             ${personaForm.name.trim() && !known ? `<div class="dsp-item-form-row">
