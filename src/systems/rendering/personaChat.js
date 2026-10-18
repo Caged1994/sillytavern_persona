@@ -119,6 +119,14 @@ function placeBannerHTML(cur) {
 
 function notesHTML(ev) {
     const out = [];
+    const a = ev.activity;
+    if (a) {
+        out.push(a.kind === 'hangout'
+            ? `<div class="des-pl-note is-free"><span class="des-pl-note-tag">${esc(K.slotName(a.slot || 'afternoon'))}</span>
+                <span>Time with ${esc(a.name)}${a.arcana ? ` · ${esc(a.arcana)}` : ''}</span><span class="des-pl-note-up">+${esc(a.points)}${a.match ? ' — a stronger bond' : ''}</span></div>`
+            : `<div class="des-pl-note is-free"><span class="des-pl-note-tag">${esc(K.slotName(a.slot || 'afternoon'))}</span>
+                <span>${esc(a.name)}</span>${a.desc ? `<span class="des-pl-note-up">${esc(a.desc)}</span>` : ''}</div>`);
+    }
     for (const s of ev.social || []) {
         out.push(`<div class="des-pl-note"><span class="des-pl-note-tag">${esc(s.name)}</span>
             <span class="des-pl-note-up">▲ +${esc(s.add)}${s.rankUp ? ` — rank ${esc(s.rank)}: ${esc(s.title)}` : ''}</span></div>`);
@@ -146,7 +154,16 @@ export function renderPersonaChat() {
         const $mes = $(this);
         const id = parseInt($mes.attr('mesid'), 10);
         const message = Number.isFinite(id) ? chat[id] : null;
-        if (!message || message.is_user || message.is_system) return;
+        if (!message || message.is_system) return;
+        if (message.is_user) {
+            // Free time: what the picked activity gave, under the line that spent it.
+            const notes = notesHTML(getMessageEvents(message));
+            if (notes) {
+                const $text = $mes.find('.mes_text').first();
+                if ($text.length) $text.after(notes); else $mes.append(notes);
+            }
+            return;
+        }
         const cur = whenOf(message);
         if (cur) {
             const dayChanged = cur.date && prev?.date && cur.date !== prev.date;

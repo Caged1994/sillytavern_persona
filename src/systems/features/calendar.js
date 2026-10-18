@@ -220,6 +220,22 @@ export function setNow(date, slot = 'morning') {
     return { now: m };
 }
 
+// ─── Worn out (Persona 5) ───────────────────────────────────────────────────
+
+/** After an Otherworld visit: the time of day it ends in is lost (only rest). */
+export function markTired() {
+    const s = store(true);
+    if (!s?.now) return;
+    s.tired = { ...s.now };
+    changed({ sync: false });
+}
+
+/** Whether the character is worn out right now (the slot after a dungeon). */
+export function isTired() {
+    const s = store();
+    return !!(s?.now && s.tired && s.tired.date === s.now.date && s.tired.slot === s.now.slot);
+}
+
 /** Moves on by one slot or to the next morning. */
 export function advance(step = 'slot') {
     const now = getNow();

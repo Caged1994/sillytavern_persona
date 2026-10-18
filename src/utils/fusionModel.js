@@ -25,6 +25,7 @@
  * its Arcana, and inherits skills from its parents: how many depends on how
  * many they know together, which ones on the result's inheritance type.
  */
+import { xpNeededAt } from './xpModel.js';
 import { ARCANA_CHART, TREASURES, INHERIT } from '../data/fusionData.js';
 import { findSkill } from './skillModel.js';
 import { nameKey, normalizeArcana, MAX_SKILLS, MAX_LEVEL } from './personaModel.js';
@@ -267,6 +268,15 @@ export function inheritance(parents, resultDef) {
 export function confidantBonus(rank) {
     const r = Math.max(0, Math.min(10, Math.round(Number(rank) || 0)));
     return Math.floor(r / 2);
+}
+
+/**
+ * The Confidant's bonus as XP for the new Persona (as in the games): 30% of
+ * a level at its base level per rank, so rank 10 is about three levels.
+ */
+export function confidantBonusXp(rank, baseLevel, perLevel = 100) {
+    const r = Math.max(0, Math.min(10, Math.round(Number(rank) || 0)));
+    return Math.round(r * 0.3 * xpNeededAt(baseLevel, perLevel));
 }
 
 /**

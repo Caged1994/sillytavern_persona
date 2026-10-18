@@ -22,6 +22,7 @@
  *   Rank 10 unlocks: Captain Kidd evolves into Seiten Taisei
  *   Description: Loud, loyal, former track star.
  */
+import { parseWhen } from './activityModel.js';
 import { ARCANA, normalizeArcana, nameKey } from './personaModel.js';
 import { SOCIAL_STATS, findSocialStat } from './socialModel.js';
 
@@ -137,6 +138,8 @@ export function parseConfidantEntry(entry) {
     let desc = '';
     const requires = [];
     const unlocks = [];
+    let when = null;
+    let where = '';
     for (const l of lines) {
         let m;
         if ((m = l.match(/^arcana\s*[:=]\s*(.+)$/i))) arcana = normalizeArcana(m[1]);
@@ -151,10 +154,14 @@ export function parseConfidantEntry(entry) {
             }
         } else if ((m = l.match(/^rank\s*(\d+)\s*unlocks?\s*[:=]\s*(.+)$/i))) {
             unlocks.push({ rank: clampInt(m[1], 1, MAX_RANK), text: clip(m[2], 120) });
+        } else if ((m = l.match(/^(?:when|available|schedule)\s*[:=]\s*(.+)$/i))) {
+            when = parseWhen(m[1]);
+        } else if ((m = l.match(/^(?:where|location|place)\s*[:=]\s*(.+)$/i))) {
+            where = clip(m[1], 60);
         }
     }
     if (!arcana) return null;
-    return { name, arcana, desc, requires, unlocks: unlocks.sort((a, b) => a.rank - b.rank) };
+    return { name, arcana, desc, requires, unlocks: unlocks.sort((a, b) => a.rank - b.rank), ...(when ? { when } : {}), ...(where ? { where } : {}) };
 }
 
 export function parseConfidantBook(entries) {

@@ -765,3 +765,11 @@ body.des-plook .dooms-stats .dsp-vr-result { border-radius: 0; background: rgba(
 body.des-plook .dooms-stats .dsp-vr-res { border: 2px solid #ffe48a; box-shadow: 0 0 22px rgba(255, 228, 138, 0.35); }
 body.des-plook .dooms-stats .dsp-vr-skill.is-on { color: #04082a; background: var(--vr-ink); }
 body.des-plook .dooms-stats .dsp-vr-open { color: #cfe0ff; background: #0b1a5c; border-color: #6fa8ff; }
+body.des-plook .des-pl-note.is-free { border-left-color: #fff; }
+body.des-plook .des-pl-note.is-free .des-pl-note-tag { color: #000; background: #fff; }
+body.des-plook .dooms-stats .dsp-ft-act { border-radius: 0; border: 0; border-left: 4px solid #333; background: var(--pl-card); }
+body.des-plook .dooms-stats .dsp-ft-act:hover,
+body.des-plook .dooms-stats .dsp-ft-act.is-on { border-left-color: var(--pl-acc); background: #1d1c10; box-shadow: none; }
+body.des-plook .dooms-stats .dsp-ft-name { font-style: italic; font-weight: 900; text-transform: uppercase; }
+body.des-plook .dooms-stats .dsp-ft-act.is-person .dsp-ft-fx { color: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-ft-pending { border-radius: 0; background: #000; border-left: 4px solid var(--pl-acc); }

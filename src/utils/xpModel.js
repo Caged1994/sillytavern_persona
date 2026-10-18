@@ -77,6 +77,15 @@ export function xpNeededAt(level, perLevel = DEFAULT_XP_PER_LEVEL) {
     return Math.max(1, Math.round(fights * enemyXpAt(l) * perLevel / 100));
 }
 
+/** Adds `xp` to someone at `level` with `into` XP already: { level, into } after the level-ups. */
+export function levelWithXp(level, into, xp, perLevel = DEFAULT_XP_PER_LEVEL) {
+    let l = clampLevel(level);
+    let x = Math.max(0, Math.round((into || 0) + (xp || 0)));
+    while (l < 99 && x >= xpNeededAt(l, perLevel)) { x -= xpNeededAt(l, perLevel); l++; }
+    if (l >= 99) x = 0;
+    return { level: l, into: x };
+}
+
 /** A story award of `size` for someone at `level`: a share of that level. */
 export function storyXp(size, level, tiers = DEFAULT_XP_TIERS, perLevel = DEFAULT_XP_PER_LEVEL) {
     const pct = tiers[size] ?? DEFAULT_XP_TIERS[size] ?? 0;

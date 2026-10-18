@@ -1,7 +1,15 @@
 {
-    "version": "0.4.0",
-    "title": "Persona Stats 0.4",
+    "version": "0.5.0",
+    "title": "Persona Stats 0.5",
     "items": [
+        {
+            "title": "Free time",
+            "body": "Spend each time of day on an activity or a Confidant from the Calendar tab: the line goes in the chat box, the effects apply when you send it. A Persona of the Confidant's Arcana gives a stronger bond; after a dungeon you only rest."
+        },
+        {
+            "title": "Fusion bonus as XP",
+            "body": "The Confidant of the Arcana now gives the fused Persona XP (about three levels at rank 10)."
+        },
         {
             "title": "Experience, Persona-style",
             "body": "A level every ~5 fights against enemies of your level (the first ones faster); enemies give XP by their own level; story awards are a share of your level."
@@ -13,10 +21,6 @@
         {
             "title": "Change Persona in battle",
             "body": "A Wild Card can switch Persona on their turn — free, once a turn."
-        },
-        {
-            "title": "Persona look",
-            "body": "Persona 4 style for the stats panel, fights, Shuffle Time, dungeons and the chat, in yellow, blue, red or your own colours."
         }
     ]
 }

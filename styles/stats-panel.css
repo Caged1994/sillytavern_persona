@@ -1890,3 +1890,19 @@ input.dsp-xp-big { width: 3em; font-size: 20px; text-align: center; }
 .dsp-pr-xp { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 8px; }
 .dsp-pr-xp .dsp-xpbar { height: 5px; }
 .dsp-pr-xp-nums { font-size: 11px; color: var(--dsp-muted); }
+
+/* Free time (Calendar tab) */
+.dsp-ft { margin: 4px 0 12px; }
+.dsp-ft-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; margin-top: 6px; }
+.dsp-ft-act {
+    display: grid; grid-template-columns: auto 1fr; grid-template-areas: "icon name" "icon fx";
+    align-items: center; column-gap: 8px; padding: 6px 8px; text-align: left; font: inherit; cursor: pointer;
+    color: var(--dsp-text); background: var(--dsp-card); border: 1px solid var(--dsp-border); border-radius: 9px;
+}
+.dsp-ft-act:hover { background: var(--dsp-card-hover); border-color: var(--dsp-accent); }
+.dsp-ft-act.is-on { border-color: var(--dsp-accent); box-shadow: 0 0 0 1px var(--dsp-accent) inset; }
+.dsp-ft-icon { grid-area: icon; font-size: 18px; }
+.dsp-ft-name { grid-area: name; font-weight: 700; font-size: 12.5px; }
+.dsp-ft-fx { grid-area: fx; font-size: 11px; color: var(--dsp-muted); }
+.dsp-ft-pending { display: flex; align-items: center; gap: 8px; margin: 6px 0; padding: 6px 8px; font-size: 12px; border-radius: 8px; background: color-mix(in srgb, var(--dsp-accent) 14%, transparent); }
+.dsp-ft-pending span { flex: 1; }

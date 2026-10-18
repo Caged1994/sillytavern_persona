@@ -94,6 +94,7 @@ S.setCurrentStatValue('Mastera', true, 'satiety', 80);
 for (const id of ['satiety', 'energy', 'hygiene', 'morale']) S.setStatEnabled(id, true);
 
 const PM = await import(`${DES}/src/utils/personaModel.js`);
+const XM = await import(`${DES}/src/utils/xpModel.js`);
 const F = await import(`${DES}/src/utils/fusionModel.js`);
 const Pe = await import(`${DES}/src/systems/features/characterPersonas.js`);
 const Comp = await import(`${DES}/src/systems/features/personaCompendium.js`);
@@ -177,9 +178,10 @@ check('...and the Fuse refuses', !!V.fuse('Mastera', true, ids('Belial', 'Nebiro
 Cf.startConfidant('Mister D', 'Death');
 Cf.setConfidantRank('Mister D', 10);
 pv = V.previewFusion('Mastera', true, ids('Belial', 'Nebiros'));
-check('with the Confidant maxed it goes, with bonus levels', !pv.blocks.length && pv.level === g('Alice').level + 5 && pv.bonus === 5, JSON.stringify(pv.blocks));
+const aliceGrown = XM.levelWithXp(g('Alice').level, 0, F.confidantBonusXp(10, g('Alice').level));
+check('with the Confidant maxed it goes, with bonus XP (about three levels at rank 10)', !pv.blocks.length && pv.bonusXp === F.confidantBonusXp(10, g('Alice').level) && pv.level === aliceGrown.level && pv.level >= g('Alice').level + 2, JSON.stringify({ blocks: pv.blocks, level: pv.level, xp: pv.bonusXp }));
 f = V.fuse('Mastera', true, ids('Belial', 'Nebiros'));
-check('Alice joins the stock', f.persona?.name === 'Alice' && f.persona.level === g('Alice').level + 5);
+check('Alice joins the stock, with the XP left over', f.persona?.name === 'Alice' && f.persona.level === aliceGrown.level && f.persona.xp === aliceGrown.into);
 P.setLevel('Mastera', true, 84);
 check('the bonus can take it past your level', F.resultLevel(g('Alice'), { bonus: 5 }) === g('Alice').level + 5);
 extensionSettings.velvetRoomEnabled = false;

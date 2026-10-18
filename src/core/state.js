@@ -12,7 +12,8 @@ export let extensionSettings = {
     updateDepth: 4, // How many messages to include in the context
     generationMode: 'together', // 'together', 'separate', or 'external'
     personaLook: { enabled: true, preset: 'p4', accent: '', hp: '', sp: '' }, // Persona 4 style (src/systems/ui/personaLook.js)
-    togetherFallback: true, // Together mode: a reply without trackers gets a separate tracker call
+    togetherFallback: true,
+    freeTimeEnabled: true, // Free time menu in the Calendar tab (src/systems/features/freeTime.js) // Together mode: a reply without trackers gets a separate tracker call
     // Per-prompt injection depth & role settings (configured in Customize Prompts editor)
     promptInjection: {
         html: { depth: 0, role: '' },

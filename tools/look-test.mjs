@@ -79,7 +79,7 @@ chat.push({ is_user: true, mes: 'hi' }, { is_user: false, mes: 'reply', swipe_id
 const idx = chat.length - 1;
 E.recordMessageEvent(idx, 'social', [{ name: 'Guts', add: 2 }]);
 E.recordMessageEvent(idx - 1, 'social', [{ name: 'x' }]);
-check('recorded on the reply, not on the user message', E.getMessageEvents(chat[idx]).social?.[0]?.name === 'Guts' && !chat[idx - 1].extra);
+check('recorded on the message it belongs to', E.getMessageEvents(chat[idx]).social?.[0]?.name === 'Guts' && E.getMessageEvents(chat[idx - 1]).social?.[0]?.name === 'x');
 chat[idx].swipe_id = 1;
 check('another swipe has its own', !E.getMessageEvents(chat[idx]).social);
 E.recordMessageEvent(idx, 'when', { date: '2016-04-15', slot: 'morning' });

@@ -376,7 +376,8 @@ export function recordRun(state) {
     }
     s.sites[i] = K.normalizeSite(site);
     // A run takes a time of day.
-    try { if (Cal.isCalendarEnabled() && Cal.getNow()) Cal.advance('slot'); } catch (e) { /* calendar off */ }
+    // A visit takes its time of day, and the next one is spent recovering (as in P5).
+    try { if (Cal.isCalendarEnabled() && Cal.getNow()) { Cal.advance('slot'); Cal.markTired(); } } catch (e) { /* calendar off */ }
     changed();
     tick();
     return { site: s.sites[i], notes };

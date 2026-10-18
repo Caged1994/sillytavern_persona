@@ -85,6 +85,8 @@ import { findSkill, skillCostLabel } from '../../utils/skillModel.js';
 import { MAX_RANK as SOCIAL_MAX_RANK } from '../../utils/socialModel.js';
 import { growthShare as P_GROWTH } from '../../utils/personaModel.js';
 import { applyPersonaLook, onLookChange } from './personaLook.js';
+import { freeTimeNow, getPendingFreeTime, pickActivity, pickHangout, cancelFreeTime } from '../features/freeTime.js';
+import * as FT from '../../utils/activityModel.js';
 
 const PANEL_ID = 'dooms-stats-panel';
 const POPOUT_NAME = 'dooms-stats-popout';
@@ -394,6 +396,27 @@ const CAL_FORM = { title: '', kind: 'event', slot: '', setDate: '', setSlot: 'mo
 const calForm = { ...CAL_FORM };
 const firstEmoji = (s) => (String(s || '').match(/\p{Extended_Pictographic}️?/u) || [''])[0];
 
+// Free time: what the current time of day can be spent on.
+let ftError = '';
+function freeTimeHtml() {
+    const ft = freeTimeNow();
+    if (!ft) return '';
+    const pend = getPendingFreeTime();
+    const slot = CK.slotName(ft.now.slot).toLowerCase();
+    const act = (a) => `<button type="button" class="dsp-ft-act${pend?.id === a.id ? ' is-on' : ''}" data-ft-act="${escapeHtml(a.id)}" title="${escapeHtml(`${a.name}${a.where ? ` — ${a.where}` : ''}: ${FT.describeEffects(a.now) || 'no effect'}${FT.isRainy(ft.now.weather) && a.rain && FT.describeEffects(a.rain) ? ' (rain bonus included)' : ''}`)}">
+        <span class="dsp-ft-icon">${escapeHtml(a.icon)}</span><span class="dsp-ft-name">${escapeHtml(a.name)}</span><span class="dsp-ft-fx">${escapeHtml(FT.describeEffects(a.now))}</span></button>`;
+    const who = (p) => `<button type="button" class="dsp-ft-act is-person${pend?.id === p.name ? ' is-on' : ''}" data-ft-hang="${escapeHtml(p.name)}" title="${escapeHtml(`${p.name} — ${p.arcana}, rank ${p.rank}${p.where ? `, at ${p.where}` : ''}: +${p.points} bond points${p.match ? ` (a Persona of the ${p.arcana} Arcana is with you)` : ''}`)}">
+        <span class="dsp-ft-icon">🃏</span><span class="dsp-ft-name">${escapeHtml(p.name)}</span><span class="dsp-ft-fx">${escapeHtml(p.arcana)} ${p.rank} · +${p.points}${p.match ? ' ✦' : ''}</span></button>`;
+    return `<div class="dsp-ft">
+        <div class="dsp-subhead"><i class="fa-solid fa-hourglass-half"></i> Free time <span>this ${escapeHtml(slot)}</span></div>
+        ${ft.tired ? '<p class="dsp-section-hint">Worn out after the Otherworld: only rest now.</p>' : ''}
+        ${pend ? `<div class="dsp-ft-pending"><span>In the chat box: send it to spend the ${escapeHtml(slot)} (edit it as you like).</span><button type="button" class="dsp-text-btn" data-action="ft-cancel"><i class="fa-solid fa-xmark"></i> Cancel</button></div>` : ''}
+        ${ftError ? `<span class="dsp-item-error" role="alert">${escapeHtml(ftError)}</span>` : ''}
+        <div class="dsp-ft-grid">${ft.activities.map(act).join('')}</div>
+        ${ft.people.length ? `<div class="dsp-ft-grid">${ft.people.map(who).join('')}</div>` : ''}
+    </div>`;
+}
+
 function calendarHtml() {
     const now = getCalNow();
     // Open on today's month, and follow the story when the date moves.
@@ -433,6 +456,7 @@ function calendarHtml() {
             <div class="dsp-item-form-row"><button type="button" class="dsp-text-btn is-primary" data-action="cal-read">Read the date from the chat</button></div>
             ${calForm.error ? `<span class="dsp-item-error" role="alert">${escapeHtml(calForm.error)}</span>` : ''}</div>`}
         ${late.length ? `<div class="dsp-cal-late">⏳ Missed: ${late.map(e => escapeHtml(e.title)).join(', ')}</div>` : ''}
+        ${freeTimeHtml()}
         <div class="dsp-cal-month">
             <div class="dsp-cal-mhead">
                 <button type="button" class="dsp-icon-btn" data-cal-month="-1" title="Previous month"><i class="fa-solid fa-chevron-left"></i></button>
@@ -517,7 +541,7 @@ function velvetHtml(rec) {
                     <span class="dsp-pr-arc">${escapeHtml(pv.def.arcana)}</span>
                     <span class="dsp-vr-res-lv">Lv ${pv.level}</span>
                 </div>
-                <p class="dsp-section-hint">${pv.kind === 'special' ? 'Special fusion' : pv.kind === 'treasure' ? 'Treasure fusion' : 'Normal fusion'} · base ${P_STATS.map(id => `${P_LABELS[id]} ${pv.def.stats[id]}`).join(' ')}${pv.level > pv.def.level ? `<br>Lv ${pv.def.level} + ${pv.level - pv.def.level} from the ${escapeHtml(pv.def.arcana)} Confidant` : ''}</p>
+                <p class="dsp-section-hint">${pv.kind === 'special' ? 'Special fusion' : pv.kind === 'treasure' ? 'Treasure fusion' : 'Normal fusion'} · base ${P_STATS.map(id => `${P_LABELS[id]} ${pv.def.stats[id]}`).join(' ')}${pv.bonusXp ? `<br>+${pv.bonusXp} XP from the ${escapeHtml(pv.def.arcana)} Confidant (rank ${pv.rank})${pv.level > pv.def.level ? `: Lv ${pv.def.level} → ${pv.level}` : ''}` : ''}</p>
                 <div class="dsp-subhead"><i class="fa-solid fa-dna"></i> Inherited skills <span>${velvet.skills.length}/${inh.slots}</span></div>
                 <div class="dsp-pr-skills">${(pv.def.skills || []).map(sk => `<span class="dsp-pr-skill is-innate" title="Its own skill">${escapeHtml(sk)}</span>`).join('')}
                     ${inh.pool.map(sk => `<button type="button" class="dsp-pr-skill dsp-vr-skill${velvet.skills.includes(sk) ? ' is-on' : ''}" data-vr-skill="${escapeHtml(sk)}" title="${velvet.skills.includes(sk) ? 'Passed on — click to drop' : 'Click to pass it on'}">${escapeHtml(sk)}</button>`).join('')}
@@ -1829,6 +1853,11 @@ function bindRootListeners(root) {
         if (action === 'item-add') { submitItemForm(); return; }
         if (action === 'xp-add') { submitXpForm(); return; }
         if (action === 'pr-add') { submitPersonaForm(); return; }
+        const ftAct = e.target.closest('[data-ft-act]')?.getAttribute('data-ft-act');
+        if (ftAct) { const r = pickActivity(ftAct); ftError = r.error || ''; renderAll(); return; }
+        const ftHang = e.target.closest('[data-ft-hang]')?.getAttribute('data-ft-hang');
+        if (ftHang) { const r = pickHangout(ftHang); ftError = r.error || ''; renderAll(); return; }
+        if (action === 'ft-cancel') { cancelFreeTime(); ftError = ''; renderAll(); return; }
         const calMonth = e.target.closest('[data-cal-month]')?.getAttribute('data-cal-month');
         if (calMonth) {
             let m = calView.m + Number(calMonth);

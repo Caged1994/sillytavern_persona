@@ -7,6 +7,8 @@
  * from). The user's level and the Confidants (when those features are on)
  * limit what can be made and add bonus levels, as in the games.
  */
+import { getXpSettings } from './characterProgress.js';
+import { levelWithXp } from '../../utils/xpModel.js';
 import { extensionSettings } from '../../core/state.js';
 import { saveSettings } from '../../core/persistence.js';
 import { isRpgModeActive } from './rpgMode.js';
@@ -58,12 +60,16 @@ export function previewFusion(name, isUser, ids) {
     if (r.error) return r;
     const ctx = context(name, isUser);
     const rank = confidantRank(r.def.arcana);
-    const bonus = rank ? F.confidantBonus(rank) : 0;
-    const level = F.resultLevel(r.def, { bonus });
+    // The Confidant of its Arcana gives it XP: it may start above its base level.
+    const pace = getXpSettings().perLevel;
+    const bonusXp = rank ? F.confidantBonusXp(rank, r.def.level, pace) : 0;
+    const grown = levelWithXp(r.def.level, 0, bonusXp, pace);
+    const level = grown.level;
+    const bonus = level - r.def.level;
     const already = rec.list.some(p => !ids.includes(p.id) && P.nameKey(p.name) === P.nameKey(r.def.name));
     const blocks = F.fusionBlocks(r.def, ctx);
     if (already) blocks.push(`${name} already has ${r.def.name}.`);
-    return { ...r, parents, level, bonus, rank, blocks, already, inherit: F.inheritance(parents, r.def) };
+    return { ...r, parents, level, bonus, bonusXp, into: grown.into, rank, blocks, already, inherit: F.inheritance(parents, r.def) };
 }
 
 /** Every pair and special recipe this character's stock can make. */
@@ -99,6 +105,7 @@ export function fuse(name, isUser, ids, { skills = null } = {}) {
         .filter((s, i, a) => a.findIndex(x => P.nameKey(x) === P.nameKey(s)) === i)
         .slice(0, pv.inherit.slots);
     let persona = P.personaFromCompendium(pv.def, { level: pv.level });
+    persona.xp = pv.into || 0;
     for (const s of chosen) {
         if (persona.skills.length >= P.MAX_SKILLS) break;
         if (!persona.skills.some(x => P.nameKey(x) === P.nameKey(s))) persona.skills.push(s);
