@@ -1,7 +1,11 @@
 {
-    "version": "0.5.1",
-    "title": "Persona Stats 0.5.1",
+    "version": "0.5.2",
+    "title": "Persona Stats 0.5.2",
     "items": [
+        {
+            "title": "Traits are not attacks",
+            "body": "Descriptive abilities (like Wild Card) no longer show up as physical attacks in a fight; only skills that sound like an attack do, or ones the AI labels."
+        },
         {
             "title": "Locked base values",
             "body": "Base stats, Persona stats and affinities can no longer be changed by accident: press the lock to edit them by hand. HP/SP and spending level points work as before."

@@ -292,8 +292,13 @@ export function guessProfile(kind, name, desc = '', { cost = null, effects = nul
     // A skill that only gives always-on bonuses ("En +2") is passive, not an attack.
     if (kind === 'ability' && effects && Object.keys(effects).length) return normalizeProfile({ type: 'none' });
     if (kind === 'spell') return normalizeProfile({ type: 'damage', stat: 'ma', target: 'enemy', power: cost && POWERS.includes(cost) ? cost : 'medium' });
+    // A skill with nothing that sounds like an attack is a trait ("Wild Card",
+    // "Analysis"), not a blow: it stays out of the fight unless labelled.
+    if (!ATTACK_WORDS.test(text)) return normalizeProfile({ type: 'none' });
     return normalizeProfile({ type: 'damage', stat: 'st', target: 'enemy', power: 'medium' });
 }
+
+const ATTACK_WORDS = /\b(attack|strike|slash|slice|cut|stab|pierce|thrust|hit|punch|kick|bash|smash|crush|blow|swing|shot|shoot|fire[sd]?|throw|hurl|bite|claw|rend|tear|rush|charge|assault|barrage|volley|combo|chop|cleave|impale|blast|damage|hurt|wound|slam|pound|beat|sweep|lunge|fist|blade|sword|dagger|spear|arrow|bullet|gun|whip|club|axe)\w*/i;
 
 /** Whether an item can be used during a fight (consumed or thrown). */
 export function isUsableItemProfile(p) {
