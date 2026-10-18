@@ -134,6 +134,12 @@ function resetForm() { Object.assign(itemForm, FORM_DEFAULTS); }
 const xpForm = { amount: '', reason: '' };
 // The Persona tab: which Persona is shown, and the "add" form.
 const personaView = { id: null };
+// Base stats and affinities are locked: a button unlocks them (until the panel closes).
+let baseUnlocked = false;
+
+function lockBtnHtml(what) {
+    return `<button type="button" class="dsp-text-btn dsp-lock-btn${baseUnlocked ? ' is-open' : ''}" data-action="toggle-lock" title="${baseUnlocked ? 'Lock the base values again' : `Unlock to edit ${what} by hand`}"><i class="fa-solid ${baseUnlocked ? 'fa-lock-open' : 'fa-lock'}"></i> ${baseUnlocked ? 'Editing' : 'Locked'}</button>`;
+}
 const PERSONA_FORM = { name: '', arcana: '', focus: '', level: '', skill: '', error: '' };
 const personaForm = { ...PERSONA_FORM };
 // Velvet Room: which Personas are on the altar and which skills are passed on.
@@ -169,6 +175,7 @@ export async function openStatsPanel(name, isUser = false) {
 export function closeStatsPanel() {
     const panel = document.getElementById(PANEL_ID);
     if (panel) panel.hidden = true;
+    baseUnlocked = false;
 }
 
 // ─── Data for a render ──────────────────────────────────────────────────────
@@ -254,7 +261,7 @@ function barRowHtml(stat, { value, base = value, mod = null, prog = null, index 
         <div class="dsp-p-row${isState ? ' is-state' : ''}${res ? ' is-points' : ''}${low}${full ? ' is-max' : ''}${label.length > 3 ? ' is-long' : ''}" data-stat="${escapeHtml(stat.id)}"
             style="--dsp-i:${index};--dsp-n:${count}${color ? `;--dsp-fill:${escapeHtml(color)}` : ''}" title="${escapeHtml(tip)}">
             <span class="dsp-p-abbr">${escapeHtml(label)}</span>
-            <span class="dsp-p-valcell"><button type="button" class="dsp-value dsp-p-value" data-stat="${escapeHtml(stat.id)}" title="${total ? `Base ${base} — click to edit the base value` : 'Click to edit'}">${res ? res.cur : (isState ? Math.round(value) : value)}</button>${res ? `<span class="dsp-p-max-of">/${res.max}</span>` : ''}</span>
+            <span class="dsp-p-valcell"><button type="button" class="dsp-value dsp-p-value" data-stat="${escapeHtml(stat.id)}" title="${isState ? 'Click to edit' : baseUnlocked ? (total ? `Base ${base} — click to edit the base value` : 'Click to edit') : 'Locked — unlock below to edit the base value'}">${res ? res.cur : (isState ? Math.round(value) : value)}</button>${res ? `<span class="dsp-p-max-of">/${res.max}</span>` : ''}</span>
             <span class="dsp-p-barcell">
                 <span class="dsp-p-bar"><span class="dsp-p-fill" style="width:${pct.toFixed(1)}%"></span></span>
                 ${full ? '<span class="dsp-p-max" aria-hidden="true">MAX</span>' : ''}
@@ -279,6 +286,7 @@ function statBlockHtml(states, attrs, cur, eff, prog) {
     return `<div class="dsp-pstats">
         ${stateRows.length ? `<div class="dsp-p-group is-states">${stateRows.join('')}</div>` : ''}
         ${attrRows.length ? `<div class="dsp-p-group is-attrs">${attrRows.join('')}</div>` : ''}
+        ${attrRows.length ? `<div class="dsp-lock-row">${lockBtnHtml('the base stats')}</div>` : ''}
     </div>`;
 }
 
@@ -297,7 +305,7 @@ function personaBannerHtml(p) {
 function affinityGridHtml(p) {
     return `<div class="dsp-pr-aff" role="group" aria-label="Affinities">${ELEMENTS.map(e => {
         const a = AFFINITIES[p.affinities[e.id] || ''];
-        return `<button type="button" class="dsp-pr-aff-cell is-${a.id || 'none'}" data-pr-aff="${e.id}" title="${escapeHtml(`${e.name}: ${a.name} — click to change`)}">
+        return `<button type="button" class="dsp-pr-aff-cell is-${a.id || 'none'}" data-pr-aff="${e.id}" title="${escapeHtml(`${e.name}: ${a.name} ${baseUnlocked ? ' — click to change' : ''}`)}">
             <span class="dsp-pr-aff-icon">${e.icon}</span><span class="dsp-pr-aff-el">${e.name}</span><span class="dsp-pr-aff-val">${a.label}</span></button>`;
     }).join('')}</div>`;
 }
@@ -331,9 +339,9 @@ function personaDetailHtml(p, rec) {
             <button type="button" class="dsp-text-btn" data-action="pr-remove" title="Remove this Persona"><i class="fa-solid fa-trash"></i> Remove</button>
         </div>
         <div class="dsp-pr-stats">${P_STATS.map(id => `
-            <div class="dsp-pr-stat"><span>${P_LABELS[id]}</span><button type="button" class="dsp-pr-stat-val" data-pr-stat="${id}" title="Click to edit">${p.stats[id]}</button></div>`).join('')}
+            <div class="dsp-pr-stat"><span>${P_LABELS[id]}</span><button type="button" class="dsp-pr-stat-val" data-pr-stat="${id}" title="${baseUnlocked ? 'Click to edit' : 'Locked'}">${p.stats[id]}</button></div>`).join('')}
         </div>
-        <div class="dsp-subhead"><i class="fa-solid fa-shield-halved"></i> Affinities <span>click to change</span></div>
+        <div class="dsp-subhead"><i class="fa-solid fa-shield-halved"></i> Affinities <span>${baseUnlocked ? 'click to change' : ''}</span> ${lockBtnHtml('stats and affinities')}</div>
         ${affinityGridHtml(p)}
         <div class="dsp-subhead"><i class="fa-solid fa-wand-sparkles"></i> Skills <span>${p.skills.length}/${MAX_SKILLS}</span></div>
         <div class="dsp-pr-skills">
@@ -1822,9 +1830,9 @@ function bindRootListeners(root) {
         const prCard = e.target.closest('.dsp-pr-card');
         if (prCard) { personaView.id = prCard.getAttribute('data-persona'); renderAll(); return; }
         const prStat = e.target.closest('button.dsp-pr-stat-val');
-        if (prStat) { startPersonaStatEdit(prStat); return; }
+        if (prStat) { if (baseUnlocked) startPersonaStatEdit(prStat); return; }
         const prAff = e.target.closest('[data-pr-aff]');
-        if (prAff && selected && personaView.id) { cyclePersonaAffinity(selected.name, selected.isUser, personaView.id, prAff.getAttribute('data-pr-aff')); return; }
+        if (prAff && selected && personaView.id) { if (!baseUnlocked) return; cyclePersonaAffinity(selected.name, selected.isUser, personaView.id, prAff.getAttribute('data-pr-aff')); return; }
         const prLvl = e.target.closest('[data-pr-level]');
         if (prLvl && selected && personaView.id) {
             const p = getPersonaRecord(selected.name, selected.isUser).list.find(x => x.id === personaView.id);
@@ -1838,7 +1846,12 @@ function bindRootListeners(root) {
         const progEdit = e.target.closest('button.dsp-value[data-edit], button.dsp-chip[data-edit]');
         if (progEdit) { startProgressEdit(progEdit); return; }
         const value = e.target.closest('button.dsp-value');
-        if (value) { startEdit(value); return; }
+        if (value) {
+            const st = getStatSheet(selected?.name, selected?.isUser).find(x => x.id === value.getAttribute('data-stat'));
+            if (st && st.kind !== 'state' && !baseUnlocked) return;
+            startEdit(value);
+            return;
+        }
         const action = e.target.closest('[data-action]')?.getAttribute('data-action');
         if (action === 'item-open') {
             const kind = e.target.closest('[data-kind]')?.getAttribute('data-kind') || 'item';
@@ -1939,6 +1952,7 @@ function bindRootListeners(root) {
             return;
         }
         if (action === 'pr-refresh') { refreshCompendium({ force: true }).then(() => renderAll()).catch(() => {}); return; }
+        if (action === 'toggle-lock') { baseUnlocked = !baseUnlocked; renderAll(); return; }
         if (action === 'pr-equip' && selected && personaView.id) {
             const r = equipPersona(selected.name, selected.isUser, personaView.id);
             if (r && r.error) { personaForm.error = r.error; renderAll(); }

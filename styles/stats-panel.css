@@ -1906,3 +1906,9 @@ input.dsp-xp-big { width: 3em; font-size: 20px; text-align: center; }
 .dsp-ft-fx { grid-area: fx; font-size: 11px; color: var(--dsp-muted); }
 .dsp-ft-pending { display: flex; align-items: center; gap: 8px; margin: 6px 0; padding: 6px 8px; font-size: 12px; border-radius: 8px; background: color-mix(in srgb, var(--dsp-accent) 14%, transparent); }
 .dsp-ft-pending span { flex: 1; }
+
+/* Base stats and affinities are locked until the lock is opened. */
+.dsp-lock-row { display: flex; justify-content: flex-end; margin-top: 4px; }
+.dsp-lock-btn { font-size: 0.8em; opacity: 0.75; margin-left: auto; }
+.dsp-lock-btn.is-open { opacity: 1; color: var(--pl-acc, #e8b400); }
+.dsp-subhead .dsp-lock-btn { float: right; }

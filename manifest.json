@@ -7,7 +7,7 @@
     "css": "style.css",
     "author": "Doom, Caged1994",
     "license": "AGPL-3.0-or-later",
-    "version": "0.5.0",
+    "version": "0.5.1",
     "homePage": "https://github.com/Caged1994/sillytavern_persona",
     "description": "Persona-themed RPG stats and tracking for SillyTavern, forked from Better Stats."
 }

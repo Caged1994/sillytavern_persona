@@ -1,7 +1,11 @@
 {
-    "version": "0.5.0",
-    "title": "Persona Stats 0.5",
+    "version": "0.5.1",
+    "title": "Persona Stats 0.5.1",
     "items": [
+        {
+            "title": "Locked base values",
+            "body": "Base stats, Persona stats and affinities can no longer be changed by accident: press the lock to edit them by hand. HP/SP and spending level points work as before."
+        },
         {
             "title": "Free time",
             "body": "Spend each time of day on an activity or a Confidant from the Calendar tab: the line goes in the chat box, the effects apply when you send it. A Persona of the Confidant's Arcana gives a stronger bond; after a dungeon you only rest."
