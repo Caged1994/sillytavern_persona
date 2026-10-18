@@ -60,6 +60,14 @@ export function skillCost(rec, level = 1) {
     return { sp: Math.max(0.01, Math.round((rec.c * 10000) / spPointsAt(level)) / 100), hp: 0 };
 }
 
+/** The game's price as shown to the player: "4 SP", "8% SP", "10% HP", or '' for none. */
+export function skillCostLabel(rec) {
+    if (!rec || !rec.c) return '';
+    if (rec.k === 'hp') return `${rec.c}% HP`;
+    if (rec.k === 'spp') return `${rec.c}% SP`;
+    return `${rec.c} SP`;
+}
+
 /** Whether the combat can use it (passives and field skills cannot). */
 export function isCombatSkill(rec) {
     return !!rec && !!rec.fx && rec.fx.k !== 'aff';

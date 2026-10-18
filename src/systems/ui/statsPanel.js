@@ -81,6 +81,7 @@ import {
 import { DIFFICULTIES, resolveDifficulty, degreeLabel, rollText, MAX_BONUS } from '../../utils/checkModel.js';
 import { STATUSES as COMBAT_STATUSES, STATUS_IDS as COMBAT_STATUS_IDS, ATTRIBUTE_IDS as COMBAT_ATTRS } from '../../utils/combatModel.js';
 import { affinityTier } from '../../utils/affinityModel.js';
+import { findSkill, skillCostLabel } from '../../utils/skillModel.js';
 
 const PANEL_ID = 'dooms-stats-panel';
 const POPOUT_NAME = 'dooms-stats-popout';
@@ -325,7 +326,7 @@ function personaDetailHtml(p, rec) {
         ${affinityGridHtml(p)}
         <div class="dsp-subhead"><i class="fa-solid fa-wand-sparkles"></i> Skills <span>${p.skills.length}/${MAX_SKILLS}</span></div>
         <div class="dsp-pr-skills">
-            ${p.skills.map(sk => `<span class="dsp-pr-skill">${escapeHtml(sk)}<button type="button" class="dsp-pr-skill-del" data-pr-skill-del="${escapeHtml(sk)}" title="Forget ${escapeHtml(sk)}">×</button></span>`).join('')}
+            ${p.skills.map(sk => `<span class="dsp-pr-skill">${escapeHtml(sk)}${skillCostLabel(findSkill(sk)) ? `<small class="dsp-pr-skill-cost">${escapeHtml(skillCostLabel(findSkill(sk)))}</small>` : ''}<button type="button" class="dsp-pr-skill-del" data-pr-skill-del="${escapeHtml(sk)}" title="Forget ${escapeHtml(sk)}">×</button></span>`).join('')}
             ${p.skills.length < MAX_SKILLS ? `<input type="text" class="dsp-pr-skill-in" data-pr-field="skill" value="${escapeHtml(personaForm.skill)}" placeholder="+ skill" maxlength="40" aria-label="New skill">` : ''}
         </div>
         ${next.length ? `<p class="dsp-section-hint">Next: ${next.map(l => `Lv ${l.level} ${escapeHtml(l.name)}`).join(' · ')}</p>` : ''}
@@ -1251,7 +1252,8 @@ function formHtml(kind) {
                 ${isAbility ? `<select class="dsp-item-in-type" aria-label="Type">
                     <option value="spell"${f.type === 'spell' ? ' selected' : ''}>Spell</option>
                     <option value="ability"${f.type !== 'spell' ? ' selected' : ''}>Ability</option></select>` : ''}
-                ${isAbility && f.type === 'spell' && mana ? `<select class="dsp-item-in-cost" aria-label="SP cost" title="SP cost">
+                ${isAbility && findSkill(f.name) ? `<span class="dsp-mana-cost" title="Persona skill: the game's cost">${escapeHtml(skillCostLabel(findSkill(f.name)) || 'No cost')}</span>` : ''}
+                ${isAbility && f.type === 'spell' && mana && !findSkill(f.name) ? `<select class="dsp-item-in-cost" aria-label="SP cost" title="SP cost">
                     <option value=""${!f.cost ? ' selected' : ''}>Free</option>
                     ${['light', 'medium', 'heavy'].map(t => `<option value="${t}"${f.cost === t ? ' selected' : ''}>${t[0].toUpperCase() + t.slice(1)} · ${mana[t]} SP</option>`).join('')}
                     </select>` : ''}
@@ -1351,9 +1353,12 @@ function conditionsHtml() {
 function abilityRowHtml(a) {
     const locked = a.aiCanRemove === false;
     const eff = effectText(a.effects);
+    // A Persona skill costs what it costs in the games; other spells use the SP tiers.
+    const known = findSkill(a.name);
     const mana = activeManaTiers();
-    const cost = mana && a.type === 'spell' && a.cost ? mana[a.cost] : null;
-    const tip = [a.name, a.desc, cost !== null && `${cost} SP (${a.cost})`, eff && `${eff} (passive)`].filter(Boolean).join(' — ');
+    const tierCost = !known && mana && a.type === 'spell' && a.cost ? mana[a.cost] : null;
+    const costLabel = known ? skillCostLabel(known) : tierCost !== null ? `${tierCost} SP` : '';
+    const tip = [a.name, a.desc, costLabel && (known ? costLabel : `${costLabel} (${a.cost})`), eff && `${eff} (passive)`].filter(Boolean).join(' — ');
     return `
         <div class="dsp-item dsp-ability${locked ? ' is-locked' : ''}" data-id="${escapeHtml(a.id)}" data-tip="${escapeHtml(tip)}">
             <span class="dsp-item-icon" tabindex="0" aria-label="${escapeHtml(tip)}">${escapeHtml(a.icon)}</span>
@@ -1362,7 +1367,7 @@ function abilityRowHtml(a) {
                 ${eff ? `<span class="dsp-item-eff">${escapeHtml(eff)}</span>` : ''}
                 ${combatChip(a.type === 'spell' ? 'spell' : 'ability', a)}
             </span>
-            ${cost !== null ? `<span class="dsp-mana-cost" title="${cost} SP (${escapeHtml(a.cost)})">💧${cost}</span>` : ''}
+            ${costLabel ? `<span class="dsp-mana-cost" title="${escapeHtml(known ? `${costLabel} — the game's cost` : `${costLabel} (${a.cost})`)}">${escapeHtml(costLabel)}</span>` : ''}
             <button type="button" class="dsp-item-edit" title="Edit"><i class="fa-solid fa-pen"></i></button>
             <button type="button" class="dsp-item-lock" aria-pressed="${locked}"
                 title="${locked ? 'Locked: the AI cannot remove it. Click to let the AI remove it' : 'The AI can remove it. Click to lock it'}">

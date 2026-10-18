@@ -1,5 +1,5 @@
 {
-    "version": "0.2.6",
+    "version": "0.2.7",
     "title": "Persona Stats 0.2",
     "items": [
         {
@@ -17,6 +17,10 @@
         {
             "title": "Context too small",
             "body": "A warning when the tracker instructions and the chat do not fit in the API preset's Context Size."
+        },
+        {
+            "title": "Persona skill costs",
+            "body": "The stats panel shows each Persona skill's cost from the games (4 SP, 6% HP…) instead of the old Light/Medium/Heavy tiers."
         }
     ]
 }
