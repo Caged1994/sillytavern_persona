@@ -406,32 +406,32 @@
 /* Shuffle Time (P3/P4): cards dealt face up, turned and shuffled, then one is taken. */
 .dcb-shuffle { margin: 10px 0 14px; padding: 12px; border-radius: 12px; background: radial-gradient(circle at 50% 0%, rgba(255, 209, 102, 0.18), rgba(0, 0, 0, 0.25) 70%); border: 1px solid rgba(255, 209, 102, 0.35); text-align: center; }
 .dcb-shuffle-title { margin: 0 0 4px; font-size: 20px; font-weight: 900; font-style: italic; letter-spacing: 0.08em; color: #ffd166; text-shadow: 2px 2px 0 #000; }
-.dcb-cards { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 10px 0; }
-.dcb-card {
+.dcb-tcards { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin: 10px 0; }
+.dcb-tcard {
     position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
     width: 92px; min-height: 132px; padding: 8px 6px; border-radius: 10px; font: inherit; color: #1a1406;
     border: 2px solid #ffd166; background: linear-gradient(165deg, #fff6dc, #f0d58a); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.45);
 }
-.dcb-card.is-persona { background: linear-gradient(165deg, #e8f0ff, #9fb8ff); border-color: #8aa4ff; }
-.dcb-card.is-cups { background: linear-gradient(165deg, #ffe8ee, #ff9fb2); border-color: #ff7a93; }
-.dcb-card.is-coins { background: linear-gradient(165deg, #fff6dc, #f0d58a); }
-.dcb-card.is-wands { background: linear-gradient(165deg, #e9ffe9, #9fe0a8); border-color: #6ee7a8; }
-.dcb-card.is-swords { background: linear-gradient(165deg, #f0f0f0, #c4c8d0); border-color: #aeb4c0; }
-.dcb-card-icon { font-size: 28px; line-height: 1; }
-.dcb-card-title { font-size: 13px; font-weight: 800; line-height: 1.15; }
-.dcb-card-line { font-size: 11px; line-height: 1.2; opacity: 0.8; }
-.dcb-card-tag { position: absolute; top: 4px; right: 4px; font-size: 9px; font-weight: 700; padding: 1px 4px; border-radius: 4px; color: #fff; background: #3b4a9e; }
-.dcb-card.is-down { cursor: pointer; background: repeating-linear-gradient(45deg, #2a1a4a 0 8px, #3a2468 8px 16px); border-color: #ffd166; color: #ffd166; }
-.dcb-card.is-down:hover { transform: translateY(-4px); box-shadow: 0 8px 16px rgba(255, 209, 102, 0.35); }
-.dcb-card-back { font-size: 34px; }
-.dcb-cards.is-shuffling .dcb-card { animation: dcb-shuffle 0.7s ease-in-out calc(var(--i) * 0.08s) 2; }
+.dcb-tcard.is-persona { background: linear-gradient(165deg, #e8f0ff, #9fb8ff); border-color: #8aa4ff; }
+.dcb-tcard.is-cups { background: linear-gradient(165deg, #ffe8ee, #ff9fb2); border-color: #ff7a93; }
+.dcb-tcard.is-coins { background: linear-gradient(165deg, #fff6dc, #f0d58a); }
+.dcb-tcard.is-wands { background: linear-gradient(165deg, #e9ffe9, #9fe0a8); border-color: #6ee7a8; }
+.dcb-tcard.is-swords { background: linear-gradient(165deg, #f0f0f0, #c4c8d0); border-color: #aeb4c0; }
+.dcb-tcard-icon { font-size: 28px; line-height: 1; }
+.dcb-tcard-title { font-size: 13px; font-weight: 800; line-height: 1.15; }
+.dcb-tcard-line { font-size: 11px; line-height: 1.2; opacity: 0.8; }
+.dcb-tcard-tag { position: absolute; top: 4px; right: 4px; font-size: 9px; font-weight: 700; padding: 1px 4px; border-radius: 4px; color: #fff; background: #3b4a9e; }
+.dcb-tcard.is-down { cursor: pointer; background: repeating-linear-gradient(45deg, #2a1a4a 0 8px, #3a2468 8px 16px); border-color: #ffd166; color: #ffd166; }
+.dcb-tcard.is-down:hover { transform: translateY(-4px); box-shadow: 0 8px 16px rgba(255, 209, 102, 0.35); }
+.dcb-tcard-back { font-size: 34px; }
+.dcb-tcards.is-shuffling .dcb-tcard { animation: dcb-shuffle 0.7s ease-in-out calc(var(--i) * 0.08s) 2; }
 @keyframes dcb-shuffle {
     0%, 100% { transform: translate(0, 0) rotate(0); }
     30% { transform: translate(calc((var(--i) - 1.5) * -22px), -10px) rotate(-6deg); }
     60% { transform: translate(calc((var(--i) - 1.5) * 18px), 6px) rotate(5deg); }
 }
-.dcb-card.is-picked { transform: translateY(-6px) scale(1.05); box-shadow: 0 0 0 3px #ffd166, 0 10px 20px rgba(0, 0, 0, 0.5); }
-.dcb-card.is-dim { opacity: 0.4; filter: grayscale(0.6); }
+.dcb-tcard.is-picked { transform: translateY(-6px) scale(1.05); box-shadow: 0 0 0 3px #ffd166, 0 10px 20px rgba(0, 0, 0, 0.5); }
+.dcb-tcard.is-dim { opacity: 0.4; filter: grayscale(0.6); }
 .dcb-shuffle-actions { display: flex; justify-content: center; gap: 8px; }
 .dcb-shuffle-result { margin: 4px 0 0; font-weight: 700; color: #ffd166; }
-@media (prefers-reduced-motion: reduce) { .dcb-cards.is-shuffling .dcb-card { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .dcb-tcards.is-shuffling .dcb-tcard { animation: none; } }

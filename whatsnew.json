@@ -1,26 +1,18 @@
 {
-    "version": "0.2.7",
-    "title": "Persona Stats 0.2",
+    "version": "0.3.0",
+    "title": "Persona Stats 0.3",
     "items": [
         {
-            "title": "Personas, Velvet Room and Shuffle Time",
-            "body": "Persona Compendium from a lorebook (card, chat or global), fusion in the Velvet Room, Shuffle Time cards after won fights."
+            "title": "Persona look",
+            "body": "Persona 4 style for the stats panel, fights, Shuffle Time and dungeons. Yellow, blue or red, or your own accent, HP and SP colours (Settings → Theme)."
         },
         {
-            "title": "Confidants, Calendar and the Otherworld",
-            "body": "Confidants with battle abilities, a calendar with times of day and deadlines, labyrinths and domains kept in the chat."
+            "title": "The chat, Persona style",
+            "body": "A date strip on the last reply, a card when the day changes, a banner for a new place, and what each reply raised: social stats and bonds."
         },
         {
-            "title": "Together mode with format-heavy cards",
-            "body": "Without the Info Box, Present Characters and Quests, the JSON block is asked for up front again and the last one is shown to the AI; the tracker block has the last word on the reply's format; a reply that still comes back without it gets its trackers from a separate call (Rescue missing trackers, on by default)."
-        },
-        {
-            "title": "Context too small",
-            "body": "A warning when the tracker instructions and the chat do not fit in the API preset's Context Size."
-        },
-        {
-            "title": "Persona skill costs",
-            "body": "The stats panel shows each Persona skill's cost from the games (4 SP, 6% HP…) instead of the old Light/Medium/Heavy tiers."
+            "title": "Together mode",
+            "body": "The tracker block has the last word on the reply's format; a reply that comes back without it gets a separate call; a warning when the context is too small."
         }
     ]
 }

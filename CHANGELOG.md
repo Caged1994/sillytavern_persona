@@ -1,6 +1,11 @@
 # Changelog
 
 ## Unreleased
+- Persona look (on by default, Settings → Theme): Persona 4 style for the Stats panel, fights, Shuffle Time, dungeons and the chat — black, one accent, heavy slanted italics, TV-static title bars. Presets Yellow (P4) / Blue (P3) / Red (P5) plus your own accent, HP and SP colours; the pop-out follows. The Velvet Room stays blue.
+- Chat with the Persona look: the scene header becomes a date strip (4/14 Th · time of day · weather · place) on the last reply; a card when the day changes and a banner when the place changes; under a reply, the social stats it raised and the bonds it formed or ranked up (kept on the message, per swipe).
+- Social stats with the Persona look: the list with rank pips and titles replaces the P5 circles.
+- Fix: Shuffle Time's cards shared a class with the fighters' cards, turning the fighters cream-coloured and narrow in the fight window.
+- The Stats panel shows each Persona skill's cost from the games instead of the old Light/Medium/Heavy tiers.
 - A Persona added by hand is never refused for its level: one above the character comes in at the character's level. The add logs its outcome (added / refused and why), and says so when the chat has nothing to save into.
 - A Persona added by hand without a level comes in at its user's level (like an awakening) instead of being refused when the Compendium's level is higher; a level typed above the user's is still refused.
 - Fix: lorebooks bound to the character card or the chat (not only the globally active ones) are now read for the Persona Compendium, Confidants, Calendar and Otherworld entries; adding a Persona by name re-reads the Compendium first when the name is not found.

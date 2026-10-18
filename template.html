@@ -281,6 +281,38 @@
                 </div>
                 <div class="rpg-accordion-body">
                     <div class="rpg-setting-row">
+                        <div class="rpg-setting-label-group">
+                            <span class="rpg-setting-label">Persona look</span>
+                            <span class="rpg-setting-hint">Persona 4 style for the stats panel, fights, Shuffle Time, dungeons and the chat's scene headers.</span>
+                        </div>
+                        <label class="rpg-toggle-switch">
+                            <input type="checkbox" id="rpg-toggle-persona-look" />
+                            <span class="rpg-toggle-slider"></span>
+                        </label>
+                    </div>
+                    <div id="rpg-persona-look-options">
+                        <div class="rpg-setting-row">
+                            <span class="rpg-setting-label">Colors</span>
+                            <select id="rpg-persona-look-preset" class="rpg-accordion-select">
+                                <option value="p4">Yellow (Persona 4)</option>
+                                <option value="p3">Blue (Persona 3)</option>
+                                <option value="p5">Red (Persona 5)</option>
+                            </select>
+                        </div>
+                        <div class="rpg-setting-row">
+                            <div class="rpg-setting-label-group">
+                                <span class="rpg-setting-label">Accent · HP · SP</span>
+                                <span class="rpg-setting-hint">Change any of them; Reset goes back to the preset's.</span>
+                            </div>
+                            <span style="display:flex;gap:6px;align-items:center">
+                                <input type="color" id="rpg-persona-look-accent" title="Accent" />
+                                <input type="color" id="rpg-persona-look-hp" title="HP bar" />
+                                <input type="color" id="rpg-persona-look-sp" title="SP bar" />
+                                <button type="button" id="rpg-persona-look-reset" class="menu_button" title="Back to the preset's colors"><i class="fa-solid fa-rotate-left"></i></button>
+                            </span>
+                        </div>
+                    </div>
+                    <div class="rpg-setting-row">
                         <span class="rpg-setting-label">Theme</span>
                         <select id="rpg-theme-select" class="rpg-accordion-select">
                             <option value="default">Default</option>

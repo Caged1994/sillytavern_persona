@@ -20,6 +20,7 @@
  * undoes what the replaced reply changed.
  */
 import { chat, chat_metadata } from '../../../../../../../script.js';
+import { recordMessageEvent } from './messageEvents.js';
 import { extensionSettings } from '../../core/state.js';
 import { saveSettings, saveChatData } from '../../core/persistence.js';
 import { isRpgModeActive, currentCardKey } from './rpgMode.js';
@@ -355,6 +356,7 @@ export function applyAIConfidants(raw, messageIndex) {
     const before = snapshot();
     const mode = getConfidantMode();
     let n = 0;
+    const events = [];
     for (const ch of changes) {
         let target = null;
         try { target = resolveTarget(ch.name); } catch (e) { target = null; }
@@ -377,6 +379,7 @@ export function applyAIConfidants(raw, messageIndex) {
             } else {
                 const r = startConfidant(name, arcana, { source: def ? 'lorebook' : 'ai' });
                 if (r.ok) {
+                    events.push({ name, arcana: r.arcana, rank: 1, kind: 'new' });
                     toast('success', `I am thou, thou art I… ${name} — ${r.arcana} Arcana, rank 1.`, 'New Confidant');
                     n++;
                     bond = getBond(name);
@@ -387,11 +390,13 @@ export function applyAIConfidants(raw, messageIndex) {
             const r = C.addPoints(bond, ch.add, def, { social: socialRanks(), level: playerLevel() });
             writeBond(bond.name, r.rec);
             n++;
+            if (r.ranksGained) events.push({ name: bond.name, arcana: bond.arcana, rank: r.rec.rank, kind: 'up' });
             if (r.ranksGained) toast('success', `${bond.name} (${bond.arcana}) — rank ${r.rec.rank}${r.rec.rank >= C.MAX_RANK ? ' MAX!' : ''}`, 'Rank up!');
             else if (r.blocked && !bond.progress?.maxed) toast('warning', `${bond.name} could rank up, but ${r.blocked}.`);
         }
     }
     if (!n) return 0;
+    if (events.length) recordMessageEvent(messageIndex, 'bonds', events);
     try {
         if (chat_metadata) {
             if (!chat_metadata.dooms_tracker) chat_metadata.dooms_tracker = {};

@@ -1882,3 +1882,6 @@ input.dsp-xp-big { width: 3em; font-size: 20px; text-align: center; }
 
 /* The game's cost of a Persona skill, next to its name. */
 .dsp-pr-skill-cost { margin-left: 5px; font-size: 0.8em; opacity: 0.7; font-weight: 600; }
+
+/* Rank pips in the social stats list: the Persona look shows them. */
+.dsp-soc-row-lv { display: none; }

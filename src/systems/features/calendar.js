@@ -13,6 +13,7 @@
  * "Calendar: …" add events too. A swipe undoes what the replaced reply did.
  */
 import { chat, chat_metadata } from '../../../../../../../script.js';
+import { recordMessageEvent } from './messageEvents.js';
 import { extensionSettings, lastGeneratedData, committedTrackerData } from '../../core/state.js';
 import { saveSettings, saveChatData } from '../../core/persistence.js';
 import { isRpgModeActive } from './rpgMode.js';
@@ -486,6 +487,10 @@ export function applyAICalendar(rawKey, rawInfoBox, messageIndex) {
     }
     trimDays(s);
     if (JSON.stringify(snapshot()) === JSON.stringify(before)) { syncInfoBox(); return false; }
+    // Where and when the story is after this reply (the chat's day and place cards).
+    if (s.now && (moved !== null || placeNow || weatherNow)) {
+        recordMessageEvent(messageIndex, 'when', { date: s.now.date, slot: s.now.slot, place: s.place || '', weather: s.days[s.now.date]?.weather || '' });
+    }
     if (moved && moved > 0) {
         const due = K.upcoming(getEvents(), s.now.date, 0);
         toast('info', `${K.formatShort(s.now.date)} · ${K.slotName(s.now.slot)}${due.length ? ` — today: ${due.map(e => e.title).join(', ')}` : ''}`);

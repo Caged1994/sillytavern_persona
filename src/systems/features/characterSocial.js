@@ -11,6 +11,7 @@
  * The pure logic is in src/utils/socialModel.js.
  */
 import { chat, chat_metadata } from '../../../../../../../script.js';
+import { recordMessageEvent } from './messageEvents.js';
 import { extensionSettings } from '../../core/state.js';
 import { saveSettings, saveChatData } from '../../core/persistence.js';
 import { isRpgModeActive } from './rpgMode.js';
@@ -147,6 +148,11 @@ export function applyAISocial(raw, messageIndex) {
         }
     } catch (e) { /* undo is best-effort */ }
     announceRankUps(before, after);
+    recordMessageEvent(messageIndex, 'social', SOCIAL_STATS.filter(st => after[st.id] !== before[st.id]).map(st => {
+        const a = rankInfo(st, before[st.id]);
+        const b = rankInfo(st, after[st.id]);
+        return { name: st.name, add: after[st.id] - before[st.id], rank: b.rank, title: b.title, rankUp: b.rank > a.rank };
+    }));
     console.log(`[Dooms Tracker] Social: ${changed} stat(s) raised`);
     saveChatScope();
     notifyStatsChanged({ source: 'ai' });

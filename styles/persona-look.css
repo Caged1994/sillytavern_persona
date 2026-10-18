@@ -1,0 +1,767 @@
+/* ============================================
+   PERSONA LOOK (src/systems/ui/personaLook.js)
+   Persona 4 style: black, one bold accent, heavy slanted italics.
+   Every rule hangs off body.des-plook; the colours are variables on :root
+   (--pl-acc, --pl-acc2, --pl-on-acc, --pl-hp, --pl-sp) so the presets and
+   the user's own colours change everything at once.
+   ============================================ */
+
+body.des-plook {
+    --pl-font: "Segoe UI Black", "Arial Black", "Inter", Impact, "Helvetica Neue", sans-serif;
+    --pl-ink: #050505;
+    --pl-card: #151515;
+    --pl-card-2: #1e1e1e;
+    --pl-static:
+        repeating-linear-gradient(90deg, rgba(255,255,255,0.08) 0 2px, transparent 2px 5px, rgba(255,255,255,0.18) 5px 6px, transparent 6px 11px),
+        repeating-linear-gradient(0deg, rgba(255,255,255,0.06) 0 1px, transparent 1px 3px),
+        #222;
+    --pl-hazard: repeating-linear-gradient(-45deg, var(--pl-acc) 0 10px, #000 10px 20px);
+}
+
+/* ══ Stats panel ══════════════════════════════════════════════════════ */
+
+body.des-plook .dooms-stats {
+    --dsp-bg: #0b0b0b;
+    --dsp-bg-2: #0b0b0b;
+    --dsp-card: var(--pl-card);
+    --dsp-card-hover: var(--pl-card-2);
+    --dsp-border: #2a2a2a;
+    --dsp-text: #f2f2f2;
+    --dsp-muted: #9a9a9a;
+    --dsp-accent: var(--pl-acc);
+    --dsp-radius: 0px;
+    background: #0b0b0b;
+}
+body.des-plook #dooms-stats-panel {
+    border: 3px solid var(--pl-acc);
+    border-radius: 0;
+    box-shadow: 0 0 0 3px #000, 9px 9px 0 var(--pl-acc), 0 18px 50px rgba(0, 0, 0, 0.6);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+body.des-plook.dooms-stats-popout-body { background: #000; }
+
+/* Title bar: the accent, with a strip of TV static above it. */
+body.des-plook .dooms-stats .dsp-head {
+    position: relative;
+    padding: 16px 10px 10px 14px;
+    color: var(--pl-on-acc);
+    background: var(--pl-acc);
+    border-bottom: 0;
+    clip-path: polygon(0 0, 100% 0, 100% 78%, 95% 100%, 0 100%);
+}
+body.des-plook .dooms-stats .dsp-head::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto 0;
+    height: 7px;
+    background: var(--pl-static);
+}
+body.des-plook .dooms-stats .dsp-title {
+    font-family: var(--pl-font);
+    font-size: 22px;
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: -0.02em;
+    transform: skewX(-8deg);
+}
+body.des-plook .dooms-stats .dsp-title i { color: inherit; }
+body.des-plook .dooms-stats .dsp-head .dsp-icon-btn { color: var(--pl-on-acc); border-radius: 0; }
+body.des-plook .dooms-stats .dsp-head .dsp-icon-btn:hover { background: rgba(0, 0, 0, 0.15); }
+body.des-plook .dooms-stats .dsp-head .dsp-icon-btn.is-on {
+    color: var(--pl-acc);
+    background: #000;
+    transform: skewX(-10deg);
+}
+body.des-plook .dooms-stats .dsp-campaign { color: var(--pl-on-acc); border-color: currentColor; border-radius: 0; }
+
+/* Character tabs */
+body.des-plook .dooms-stats .dsp-tabs { background: #000; border-bottom: 0; }
+body.des-plook .dooms-stats .dsp-tab { border-radius: 0; transform: skewX(-10deg); background: var(--pl-card); }
+body.des-plook .dooms-stats .dsp-tab.is-active,
+body.des-plook .dooms-stats .dsp-tab[aria-selected="true"] { color: var(--pl-on-acc); background: var(--pl-acc); border-color: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-tab-name { font-weight: 800; font-style: italic; text-transform: uppercase; }
+
+/* Hero: name card with an accent edge */
+body.des-plook .dooms-stats .dsp-hero {
+    border-radius: 0;
+    border: 0;
+    border-left: 6px solid var(--pl-acc);
+    background: var(--pl-card);
+}
+body.des-plook .dooms-stats .dsp-hero-avatar {
+    border-radius: 0;
+    box-shadow: 0 0 0 2px var(--pl-acc);
+    transform: skewX(-5deg);
+}
+body.des-plook .dooms-stats .dsp-hero-name {
+    font-family: var(--pl-font);
+    font-size: 19px;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    letter-spacing: -0.02em;
+}
+body.des-plook .dooms-stats .dsp-hero-sub { text-transform: uppercase; letter-spacing: 0.12em; font-size: 10.5px; font-weight: 700; color: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-hero-level,
+body.des-plook .dooms-stats .dsp-lv {
+    color: var(--pl-on-acc);
+    background: var(--pl-acc);
+    border-color: var(--pl-acc);
+    border-radius: 0;
+    font-style: italic;
+    font-weight: 900;
+    transform: skewX(-10deg);
+}
+body.des-plook .dooms-stats .dsp-chip { border-radius: 0; }
+body.des-plook .dooms-stats .dsp-cal-chip {
+    color: var(--pl-acc);
+    background: #000;
+    border-color: #000;
+    font-style: italic;
+    font-weight: 900;
+    text-transform: uppercase;
+    transform: skewX(-10deg);
+}
+
+/* Section tabs: slanted, the open one in the accent */
+body.des-plook .dooms-stats .dsp-sections { background: #000; border-color: #000; gap: 3px; }
+body.des-plook .dooms-stats .dsp-sec {
+    border-radius: 0;
+    transform: skewX(-12deg);
+    background: var(--pl-card);
+    border: 0;
+    font-weight: 800;
+    font-style: italic;
+    text-transform: uppercase;
+}
+body.des-plook .dooms-stats .dsp-sec.is-active { color: var(--pl-on-acc); background: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-sec.is-active .dsp-sec-count { color: var(--pl-acc); background: #000; }
+body.des-plook .dooms-stats .dsp-sec-count { border-radius: 0; }
+
+/* Section titles and sub-heads: an accent tag cut on the right */
+body.des-plook .dooms-stats .dsp-subhead {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: auto;
+    padding: 2px 16px 2px 8px;
+    color: var(--pl-on-acc);
+    background: var(--pl-acc);
+    clip-path: polygon(0 0, 100% 0, 90% 100%, 0 100%);
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+body.des-plook .dooms-stats .dsp-subhead span,
+body.des-plook .dooms-stats .dsp-subhead i { color: inherit; opacity: 0.8; }
+
+/* Cards, rows and buttons lose their rounding */
+body.des-plook .dooms-stats .dsp-item,
+body.des-plook .dooms-stats .dsp-conditions,
+body.des-plook .dooms-stats .dsp-pr-card,
+body.des-plook .dooms-stats .dsp-pr-detail,
+body.des-plook .dooms-stats .dsp-conf-detail,
+body.des-plook .dooms-stats .dsp-cal-ev,
+body.des-plook .dooms-stats .dsp-xplog-row,
+body.des-plook .dooms-stats .dsp-mem,
+body.des-plook .dooms-stats .dsp-check-form,
+body.des-plook .dooms-stats .dsp-vr,
+body.des-plook .dooms-stats .dsp-levelup,
+body.des-plook .dooms-stats .dsp-pending,
+body.des-plook .dooms-stats .dsp-text-btn,
+body.des-plook .dooms-stats .dsp-icon-btn,
+body.des-plook .dooms-stats .dsp-pr-skill,
+body.des-plook .dooms-stats .dsp-cond,
+body.des-plook .dooms-stats .dsp-mana-cost,
+body.des-plook .dooms-stats input,
+body.des-plook .dooms-stats select { border-radius: 0; }
+body.des-plook .dooms-stats .dsp-item { border-left: 4px solid #333; }
+body.des-plook .dooms-stats .dsp-item:hover { border-left-color: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-item-name { font-weight: 800; text-transform: uppercase; letter-spacing: 0.01em; }
+body.des-plook .dooms-stats .dsp-mana-cost {
+    color: var(--pl-on-acc);
+    background: var(--pl-acc);
+    border: 0;
+    font-weight: 900;
+    font-style: italic;
+    transform: skewX(-10deg);
+}
+body.des-plook .dooms-stats .dsp-text-btn:hover { color: var(--pl-on-acc); background: var(--pl-acc); border-color: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-foot { color: #777; }
+
+/* ── HP / SP and the five stats: black sheet, accent numbers ── */
+body.des-plook .dooms-stats .dsp-pstats {
+    --p5-blue: #101010;
+    --p5-blue-2: #050505;
+    --p5-cyan: var(--pl-acc);
+    --p5-track: #2b2b2b;
+    --p5-yellow: var(--pl-acc);
+    --p5-ink: #000;
+    border-left: 6px solid var(--pl-acc);
+    clip-path: none;
+    border-radius: 0;
+    background:
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.025) 0 1px, transparent 1px 3px),
+        linear-gradient(160deg, #141414, #070707);
+    font-family: var(--pl-font);
+}
+body.des-plook .dooms-stats .dsp-p-row[data-stat="health"]:not(.is-low) { --dsp-fill: var(--pl-hp) !important; }
+body.des-plook .dooms-stats .dsp-p-row[data-stat="mana"]:not(.is-low) { --dsp-fill: var(--pl-sp) !important; }
+body.des-plook .dooms-stats .dsp-p-bar { transform: skewX(-24deg); border-width: 2px; box-shadow: none; }
+body.des-plook .dooms-stats .dsp-p-fill { background: var(--dsp-fill); }
+body.des-plook .dooms-stats .dsp-p-row { margin-left: 0; }
+body.des-plook .dooms-stats .dsp-p-abbr { -webkit-text-stroke: 3px #000; }
+body.des-plook .dooms-stats .dsp-p-max { -webkit-text-stroke: 0; color: var(--pl-on-acc); background: var(--pl-acc); padding: 1px 5px; font-size: 11px; top: -12px; transform: skewX(-10deg); }
+
+/* Equipped Persona banner */
+body.des-plook .dooms-stats .dsp-pr-banner {
+    background: linear-gradient(100deg, #000 0 74%, var(--pl-acc) 74% 100%);
+    clip-path: polygon(0 0, 100% 0, 97% 100%, 0 100%);
+}
+body.des-plook .dooms-stats .dsp-pr-banner-label { color: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-pr-banner-name { font-family: var(--pl-font); text-transform: uppercase; }
+body.des-plook .dooms-stats .dsp-pr-banner-lv { color: var(--pl-on-acc); font-family: var(--pl-font); }
+
+/* ── Persona tab ── */
+body.des-plook .dooms-stats .dsp-pr-card { background: var(--pl-card); border: 0; border-left: 4px solid #333; }
+body.des-plook .dooms-stats .dsp-pr-card.is-eq,
+body.des-plook .dooms-stats .dsp-pr-card.is-active { border-left-color: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-pr-card-name,
+body.des-plook .dooms-stats .dsp-pr-name { font-family: var(--pl-font); text-transform: uppercase; }
+body.des-plook .dooms-stats .dsp-pr-eq { color: var(--pl-on-acc); background: var(--pl-acc); border-radius: 0; transform: skewX(-10deg); }
+body.des-plook .dooms-stats .dsp-pr-detail { background: var(--pl-card); border: 0; border-top: 3px solid var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-pr-stat { background: #000; border-radius: 0; border: 2px solid #262626; }
+body.des-plook .dooms-stats .dsp-pr-stat-val,
+body.des-plook .dooms-stats .dsp-pr-level b { color: var(--pl-acc); font-family: var(--pl-font); font-style: italic; }
+body.des-plook .dooms-stats .dsp-pr-aff-cell { border-radius: 0; background: #000; }
+body.des-plook .dooms-stats .dsp-pr-skill { background: #000; border: 1px solid #333; font-weight: 700; }
+body.des-plook .dooms-stats .dsp-pr-skill-cost { color: var(--pl-acc); opacity: 1; }
+body.des-plook .dooms-stats .dsp-vr-open { border-radius: 0; }
+
+/* ── Social stats: the Persona 4 list (rank pips + title), no circles ── */
+body.des-plook .dooms-stats .dsp-soc-board { display: none; }
+body.des-plook .dooms-stats .dsp-soc-list { display: flex; flex-direction: column; gap: 4px; }
+body.des-plook .dooms-stats .dsp-soc-row {
+    display: grid;
+    grid-template-columns: 104px auto 1fr;
+    grid-template-areas: "name lv lv" "bar bar pts";
+    align-items: center;
+    gap: 3px 8px;
+    padding: 6px 8px;
+    background: var(--pl-card);
+    border-left: 4px solid var(--pl-acc);
+}
+body.des-plook .dooms-stats .dsp-soc-row-name {
+    grid-area: name;
+    color: #fff !important;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    font-size: 12.5px;
+}
+body.des-plook .dooms-stats .dsp-soc-row-lv {
+    grid-area: lv;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 0;
+    font: inherit;
+    color: #bbb;
+    background: none;
+    border: 0;
+    cursor: pointer;
+}
+body.des-plook .dooms-stats .dsp-soc-row-lv i { width: 10px; height: 13px; background: #333; transform: skewX(-15deg); }
+body.des-plook .dooms-stats .dsp-soc-row-lv i.on { background: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-soc-row-lv b { margin-left: 8px; font-size: 11px; font-style: italic; font-weight: 800; text-transform: uppercase; }
+body.des-plook .dooms-stats .dsp-soc-row-bar { grid-area: bar; height: 4px; border-radius: 0; background: #2a2a2a; }
+body.des-plook .dooms-stats .dsp-soc-row-bar span { background: var(--pl-acc) !important; border-radius: 0; }
+body.des-plook .dooms-stats .dsp-soc-row-pts { grid-area: pts; font-size: 10.5px; color: #888; }
+
+/* ── Confidants: arcana cards in the accent ── */
+body.des-plook .dooms-stats .dsp-conf {
+    border-color: #fff;
+    border-radius: 4px;
+    background:
+        linear-gradient(180deg, var(--pl-acc) 0 22%, transparent 22%),
+        repeating-linear-gradient(0deg, rgba(255,255,255,0.03) 0 1px, transparent 1px 3px),
+        #0b0b0b;
+}
+body.des-plook .dooms-stats .dsp-conf-num { color: var(--pl-on-acc); font-family: var(--pl-font); font-style: italic; }
+body.des-plook .dooms-stats .dsp-conf-arcana { color: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-conf-rank { color: var(--pl-acc); font-family: var(--pl-font); }
+body.des-plook .dooms-stats .dsp-conf.is-viewed { outline-color: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-conf.is-max { border-color: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-conf-pips i { border-radius: 0; width: 5px; height: 9px; transform: skewX(-15deg); }
+body.des-plook .dooms-stats .dsp-conf-pips i.is-on,
+body.des-plook .dooms-stats .dsp-conf-pips i.on { background: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-conf-detail { background: var(--pl-card); border: 0; border-top: 3px solid var(--pl-acc); }
+
+/* ── Calendar: the date corner of Persona 4 ── */
+body.des-plook .dooms-stats .dsp-cal-now {
+    border-radius: 0;
+    color: var(--pl-on-acc);
+    background: var(--pl-acc);
+    clip-path: polygon(0 0, 100% 0, 100% 82%, 92% 100%, 0 100%);
+}
+body.des-plook .dooms-stats .dsp-cal-md { font-family: var(--pl-font); text-shadow: none; font-size: 38px; letter-spacing: -2px; }
+body.des-plook .dooms-stats .dsp-cal-wd { color: var(--pl-acc); background: #000; }
+body.des-plook .dooms-stats .dsp-cal-slot-name {
+    align-self: flex-start;
+    color: var(--pl-acc);
+    background: #000;
+    padding: 1px 10px;
+    font-style: italic;
+    font-weight: 900;
+    transform: skewX(-12deg);
+}
+body.des-plook .dooms-stats .dsp-cal-long { color: inherit; opacity: 0.8; }
+body.des-plook .dooms-stats .dsp-cal-pips i { border-radius: 0; background: rgba(0, 0, 0, 0.25); }
+body.des-plook .dooms-stats .dsp-cal-pips i.is-on { background: #000; }
+body.des-plook .dooms-stats .dsp-cal-adv .dsp-text-btn { color: var(--pl-on-acc); border-color: currentColor; }
+body.des-plook .dooms-stats .dsp-cal-adv .dsp-text-btn:hover { color: var(--pl-acc); background: #000; border-color: #000; }
+body.des-plook .dooms-stats .dsp-cal-month { border-radius: 0; background: transparent; }
+body.des-plook .dooms-stats .dsp-cal-day { border-radius: 0; background: var(--pl-card); }
+body.des-plook .dooms-stats .dsp-cal-dn { font-style: italic; font-weight: 900; }
+body.des-plook .dooms-stats .dsp-cal-day.is-today { background: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-cal-day.is-today .dsp-cal-dn { color: var(--pl-on-acc); }
+body.des-plook .dooms-stats .dsp-cal-day.is-sel { border-color: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-cal-wh { color: var(--pl-acc); font-weight: 900; font-style: italic; }
+body.des-plook .dooms-stats .dsp-cal-ev { background: var(--pl-card); border-radius: 0; }
+body.des-plook .dooms-stats .dsp-cal-late { border-radius: 0; }
+
+/* ── Level & XP ── */
+body.des-plook .dooms-stats .dsp-xp-big { color: var(--pl-acc); font-family: var(--pl-font); font-style: italic; }
+body.des-plook .dooms-stats .dsp-xpbar { border-radius: 0; }
+body.des-plook .dooms-stats .dsp-xpbar > span,
+body.des-plook .dooms-stats .dsp-xp-progress > span { background: var(--pl-acc); border-radius: 0; }
+
+/* The hazard stripe under the panel body */
+body.des-plook .dooms-stats .dsp-body { border-bottom: 8px solid transparent; border-image: var(--pl-hazard) 8; }
+
+/* ══ Chat ═════════════════════════════════════════════════════════════ */
+
+/* Scene strip at the top of the last reply */
+body.des-plook .des-pl-scene {
+    display: flex;
+    align-items: stretch;
+    flex-wrap: wrap;
+    gap: 0;
+    margin: 4px 0 8px;
+    padding: 0;
+    background: none;
+    border: 0;
+    font-family: var(--pl-font);
+    line-height: 1;
+}
+body.des-plook .des-pl-date {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 5px;
+    padding: 6px 18px 6px 10px;
+    color: var(--pl-on-acc);
+    background: var(--pl-acc);
+    clip-path: polygon(0 0, 100% 0, 88% 100%, 0 100%);
+}
+body.des-plook .des-pl-date b { font-size: 24px; font-weight: 900; font-style: italic; letter-spacing: -0.04em; }
+body.des-plook .des-pl-date i { font-size: 12px; font-weight: 900; }
+body.des-plook .des-pl-slot {
+    display: inline-flex;
+    align-items: center;
+    margin-left: -10px;
+    padding: 0 18px 0 20px;
+    color: var(--pl-acc);
+    background: #000;
+    font-size: 12px;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    clip-path: polygon(10% 0, 100% 0, 88% 100%, 0 100%);
+}
+body.des-plook .des-pl-wx { display: inline-flex; align-items: center; padding: 0 10px; font-size: 18px; }
+body.des-plook .des-pl-loc {
+    align-self: center;
+    margin-left: auto;
+    padding: 4px 12px;
+    color: #000;
+    background: #fff;
+    border-left: 5px solid var(--pl-acc);
+    font-size: 12px;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    transform: skewX(-12deg);
+    max-width: 55%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* A new day: the old date struck out, the new one big */
+body.des-plook .des-pl-day {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+    margin: 10px 0 14px;
+    padding: 10px 18px;
+    min-height: 92px;
+    overflow: hidden;
+    background:
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 3px),
+        #000;
+    border-top: 3px solid var(--pl-acc);
+    border-bottom: 3px solid var(--pl-acc);
+    font-family: var(--pl-font);
+    animation: des-pl-in 0.45s ease-out both;
+}
+body.des-plook .des-pl-day-old {
+    font-size: 34px;
+    font-weight: 900;
+    font-style: italic;
+    color: #444;
+    letter-spacing: -0.04em;
+    text-decoration: line-through;
+    text-decoration-color: var(--pl-acc);
+    text-decoration-thickness: 4px;
+}
+body.des-plook .des-pl-day-new {
+    font-size: 60px;
+    font-weight: 900;
+    font-style: italic;
+    line-height: 0.9;
+    letter-spacing: -0.05em;
+    color: var(--pl-acc);
+}
+body.des-plook .des-pl-day-new small { margin-left: 8px; font-size: 22px; letter-spacing: 0; color: #fff; }
+body.des-plook .des-pl-day-wx { font-size: 30px; }
+body.des-plook .des-pl-day-tags { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; margin-left: auto; }
+body.des-plook .des-pl-tag {
+    display: inline-block;
+    padding: 2px 12px;
+    color: var(--pl-on-acc);
+    background: var(--pl-acc);
+    font-size: 12px;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    transform: skewX(-12deg);
+}
+body.des-plook .des-pl-tag.is-light { color: #000; background: #fff; }
+
+/* A new place */
+body.des-plook .des-pl-place {
+    display: flex;
+    align-items: center;
+    margin: 8px 0 12px;
+    animation: des-pl-in 0.35s ease-out both;
+}
+body.des-plook .des-pl-place-line {
+    flex: 1;
+    height: 4px;
+    background: repeating-linear-gradient(90deg, var(--pl-acc) 0 16px, transparent 16px 24px);
+}
+body.des-plook .des-pl-place-name {
+    margin: 0 10px;
+    padding: 4px 20px;
+    color: var(--pl-on-acc);
+    background: var(--pl-acc);
+    font-family: var(--pl-font);
+    font-size: 18px;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    transform: skewX(-14deg);
+    box-shadow: 5px 5px 0 #000, 5px 5px 0 2px #fff;
+}
+
+/* What the reply changed */
+body.des-plook .des-pl-notes { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 2px; }
+body.des-plook .des-pl-note {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 10px;
+    background: #0b0b0b;
+    border-left: 5px solid var(--pl-acc);
+    font-size: 12.5px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+body.des-plook .des-pl-note-tag {
+    padding: 1px 8px;
+    color: var(--pl-on-acc);
+    background: var(--pl-acc);
+    font-style: italic;
+    font-weight: 900;
+    transform: skewX(-12deg);
+}
+body.des-plook .des-pl-note-up { color: var(--pl-acc); font-style: italic; }
+body.des-plook .des-pl-bond {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 14px;
+    background: #000;
+    border: 2px solid var(--pl-acc);
+    animation: des-pl-in 0.45s ease-out both;
+}
+body.des-plook .des-pl-card {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 46px;
+    height: 68px;
+    color: var(--pl-on-acc);
+    background: var(--pl-acc);
+    border: 3px solid #fff;
+    transform: rotate(-6deg);
+    font-family: var(--pl-font);
+    font-style: italic;
+}
+body.des-plook .des-pl-card small { font-size: 7.5px; font-weight: 900; letter-spacing: 0.04em; text-transform: uppercase; }
+body.des-plook .des-pl-card b { font-size: 20px; }
+body.des-plook .des-pl-bond-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+body.des-plook .des-pl-bond-text i { font-size: 12px; color: #aaa; }
+body.des-plook .des-pl-bond-text b {
+    font-family: var(--pl-font);
+    font-size: 18px;
+    font-style: italic;
+    text-transform: uppercase;
+    color: #fff;
+}
+body.des-plook .des-pl-bond-text em { color: var(--pl-acc); font-style: italic; }
+body.des-plook .des-pl-pips { display: flex; gap: 2px; }
+body.des-plook .des-pl-pips i { width: 7px; height: 18px; background: #333; transform: skewX(-12deg); }
+body.des-plook .des-pl-pips i.on { background: var(--pl-acc); }
+
+@keyframes des-pl-in {
+    from { opacity: 0; transform: translateX(-24px); }
+    to { opacity: 1; transform: none; }
+}
+@media (max-width: 600px) {
+    body.des-plook .des-pl-day-new { font-size: 44px; }
+    body.des-plook .des-pl-day-tags { align-items: flex-start; margin-left: 0; }
+    body.des-plook .des-pl-pips { display: none; }
+}
+
+/* ══ Fight, Shuffle Time, dungeon (.dcb windows) ══════════════════════ */
+
+body.des-plook .dcb {
+    --dcb-bg: #0b0b0b;
+    --dcb-bg-2: #0b0b0b;
+    --dcb-card: #151515;
+    --dcb-card-hover: #1e1e1e;
+    --dcb-border: #2a2a2a;
+    --dcb-accent: var(--pl-acc);
+    --dcb-hp: var(--pl-hp);
+    --dcb-mana: var(--pl-sp);
+    background: rgba(0, 0, 0, 0.78);
+}
+body.des-plook .dcb-window {
+    border: 3px solid var(--pl-acc);
+    border-radius: 0;
+    box-shadow: 0 0 0 3px #000, 12px 12px 0 var(--pl-acc), 0 24px 70px rgba(0, 0, 0, 0.6);
+    background:
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.02) 0 1px, transparent 1px 3px),
+        #0b0b0b;
+}
+body.des-plook .dcb-head {
+    position: relative;
+    padding-top: 16px;
+    color: var(--pl-on-acc);
+    background: var(--pl-acc);
+    border-bottom: 0;
+    clip-path: polygon(0 0, 100% 0, 100% 75%, 96% 100%, 0 100%);
+}
+body.des-plook .dcb-head::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 6px; background: var(--pl-static); }
+body.des-plook .dcb-title {
+    color: inherit;
+    font-family: var(--pl-font);
+    font-size: 20px;
+    font-weight: 900;
+    font-style: italic;
+    letter-spacing: -0.01em;
+    transform: skewX(-8deg);
+}
+body.des-plook .dcb-sub { color: inherit; opacity: 0.75; font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: 0.06em; }
+body.des-plook .dcb-head .dcb-icon-btn { color: inherit; border-radius: 0; }
+
+/* Whose turn: an accent tag */
+body.des-plook .dcb-turn {
+    border: 0;
+    padding: 0;
+    margin: 4px 0;
+}
+body.des-plook .dcb-turn > * , body.des-plook .dcb-turn {
+    font-family: var(--pl-font);
+    font-style: italic;
+    font-weight: 900;
+    font-size: 14px;
+    color: var(--pl-acc);
+}
+
+/* Fighters */
+body.des-plook .dcb-card {
+    border-radius: 0;
+    border: 0;
+    background: #151515;
+    transition: transform 0.2s, background 0.15s, opacity 0.2s;
+}
+body.des-plook .dcb-card.is-party { border-top: 4px solid #444; }
+body.des-plook .dcb-card.is-enemy { border-top: 4px solid #e5484d; border-left: 0; }
+body.des-plook .dcb-card.is-active {
+    border-top-color: var(--pl-acc);
+    background: #1d1c10;
+    box-shadow: none;
+    transform: translateY(-6px);
+}
+body.des-plook .dcb-card.is-targetable { border-top-color: var(--pl-acc); background: #24220f; }
+body.des-plook .dcb-avatar { border-radius: 0; border: 2px solid var(--pl-acc); transform: skewX(-6deg); }
+body.des-plook .dcb-card.is-enemy .dcb-avatar { border-color: #e5484d; }
+body.des-plook .dcb-card-name > span {
+    font-family: var(--pl-font);
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    letter-spacing: -0.01em;
+}
+body.des-plook .dcb-lv { font-style: italic; font-weight: 800; }
+body.des-plook .dcb-persona { color: var(--pl-on-acc); background: var(--pl-acc); border-radius: 0; transform: skewX(-10deg); }
+body.des-plook .dcb-tier { border-radius: 0; }
+body.des-plook .dcb-bar { border-radius: 0; transform: skewX(-20deg); background: #000; border: 1px solid #333; }
+body.des-plook .dcb-bar > em { transform: skewX(20deg); font-style: italic; font-weight: 900; }
+body.des-plook .dcb-bar.is-mana > span { background: var(--pl-sp); }
+body.des-plook .dcb-card.is-party .dcb-bar.is-hp:not(.is-low) > span { background: var(--pl-hp); }
+body.des-plook .dcb-bar > em { color: #000; text-shadow: none; }
+body.des-plook .dcb-knocked { border-radius: 0; color: #000; background: var(--pl-acc); font-style: italic; font-weight: 900; }
+
+/* Commands: the slanted Persona menu */
+body.des-plook .dcb-act,
+body.des-plook .dcb-btn {
+    border-radius: 0;
+    border: 0;
+    background: #151515;
+    font-family: var(--pl-font);
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    letter-spacing: -0.01em;
+    transform: skewX(-10deg);
+}
+body.des-plook .dcb-act:hover:not(:disabled),
+body.des-plook .dcb-btn:hover:not(:disabled) { color: var(--pl-on-acc); background: var(--pl-acc); box-shadow: 5px 0 0 #fff; }
+body.des-plook .dcb-btn.is-primary { color: var(--pl-on-acc); background: var(--pl-acc); }
+body.des-plook .dcb-btn.is-allout { color: #fff; background: #e5001c; }
+body.des-plook .dcb-btn.is-baton { color: #000; background: #fff; }
+body.des-plook .dcb-chip { border-radius: 0; }
+body.des-plook .dcb-chip.is-mana { color: #000; background: var(--pl-sp); }
+body.des-plook .dcb-onemore-tag {
+    font-family: var(--pl-font);
+    color: var(--pl-on-acc);
+    background: var(--pl-acc);
+    padding: 0 10px;
+    -webkit-text-stroke: 0;
+    transform: rotate(-4deg) skewX(-10deg);
+    box-shadow: 3px 3px 0 #fff;
+}
+body.des-plook .dcb-turn .dcb-onemore-tag { -webkit-text-stroke: 0; }
+
+/* Log and info panels */
+body.des-plook .dcb-log,
+body.des-plook .dcb-inspect,
+body.des-plook .dcb-rewards,
+body.des-plook .dcb-outcome,
+body.des-plook .dcb-note,
+body.des-plook .dcb-text,
+body.des-plook .dcb-input,
+body.des-plook .dcb select,
+body.des-plook .dcb-pick,
+body.des-plook .dcb-enemy-row,
+body.des-plook .dcb-aff,
+body.des-plook .dcb-status { border-radius: 0; }
+body.des-plook .dcb-log { background: #000; border: 0; border-left: 4px solid var(--pl-acc); }
+body.des-plook .dcb-log li.is-knock,
+body.des-plook .dcb-log li.is-onemore,
+body.des-plook .dcb-log li.is-allout,
+body.des-plook .dcb-log li.is-baton { color: var(--pl-acc); }
+body.des-plook .dcb-pick.is-on { border-color: var(--pl-acc); background: #24220f; }
+body.des-plook .dcb-body h2,
+body.des-plook .dcb-body h3 { font-family: var(--pl-font); font-style: italic; text-transform: uppercase; }
+
+/* Shuffle Time */
+body.des-plook .dcb-shuffle {
+    border-radius: 0;
+    background:
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 3px),
+        #000;
+    border: 2px solid var(--pl-acc);
+}
+body.des-plook .dcb-shuffle-title {
+    font-family: var(--pl-font);
+    font-size: 28px;
+    font-weight: 900;
+    font-style: italic;
+    text-transform: uppercase;
+    letter-spacing: -0.03em;
+    color: var(--pl-acc);
+    transform: skewX(-8deg);
+}
+body.des-plook .dcb-tcard {
+    border-radius: 6px;
+    border: 3px solid #fff;
+    color: #fff;
+    background: linear-gradient(160deg, #2b2b2b, #0e0e0e);
+    font-style: italic;
+    text-transform: uppercase;
+}
+body.des-plook .dcb-tcard.is-persona { color: var(--pl-on-acc); background: linear-gradient(160deg, var(--pl-acc), var(--pl-acc2)); border-color: #fff; }
+body.des-plook .dcb-tcard-title { font-family: var(--pl-font); font-weight: 900; }
+body.des-plook .dcb-tcard-tag { border-radius: 0; color: var(--pl-on-acc); background: var(--pl-acc); }
+body.des-plook .dcb-tcard.is-down {
+    color: var(--pl-acc);
+    border-color: var(--pl-acc);
+    background:
+        repeating-linear-gradient(45deg, #000 0 8px, #161616 8px 16px);
+}
+body.des-plook .dcb-tcard.is-picked { box-shadow: 0 0 0 4px var(--pl-acc), 0 0 28px var(--pl-acc); }
+
+/* Dungeon */
+body.des-plook .ddg-room-card,
+body.des-plook .ddg-site,
+body.des-plook .ddg-member,
+body.des-plook .ddg-notice,
+body.des-plook .ddg-log,
+body.des-plook .ddg-map { border-radius: 0; }
+body.des-plook .ddg-site-kind { color: var(--pl-acc); font-style: italic; font-weight: 900; text-transform: uppercase; }
+body.des-plook .ddg-member-name { font-family: var(--pl-font); font-style: italic; text-transform: uppercase; }
+
+/* ══ Velvet Room: always blue ═════════════════════════════════════════ */
+
+body.des-plook .dooms-stats .dsp-vr {
+    --vr-ink: #cfe0ff;
+    color: #eaf1ff;
+    border: 2px solid #6fa8ff;
+    border-radius: 0;
+    background:
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.04) 0 2px, transparent 2px 40px),
+        linear-gradient(180deg, #0b1a5c, #04082a);
+}
+body.des-plook .dooms-stats .dsp-vr-title,
+body.des-plook .dooms-stats .dsp-vr-head {
+    color: var(--vr-ink);
+    font-family: var(--pl-font);
+    font-style: italic;
+    text-transform: uppercase;
+}
+body.des-plook .dooms-stats .dsp-vr .dsp-subhead { color: #04082a; background: var(--vr-ink); }
+body.des-plook .dooms-stats .dsp-vr-recipe,
+body.des-plook .dooms-stats .dsp-vr-result { border-radius: 0; background: rgba(0, 0, 0, 0.3); border-color: #6fa8ff; }
+body.des-plook .dooms-stats .dsp-vr-res { border: 2px solid #ffe48a; box-shadow: 0 0 22px rgba(255, 228, 138, 0.35); }
+body.des-plook .dooms-stats .dsp-vr-skill.is-on { color: #04082a; background: var(--vr-ink); }
+body.des-plook .dooms-stats .dsp-vr-open { color: #cfe0ff; background: #0b1a5c; border-color: #6fa8ff; }

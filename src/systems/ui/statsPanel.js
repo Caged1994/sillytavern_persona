@@ -82,12 +82,16 @@ import { DIFFICULTIES, resolveDifficulty, degreeLabel, rollText, MAX_BONUS } fro
 import { STATUSES as COMBAT_STATUSES, STATUS_IDS as COMBAT_STATUS_IDS, ATTRIBUTE_IDS as COMBAT_ATTRS } from '../../utils/combatModel.js';
 import { affinityTier } from '../../utils/affinityModel.js';
 import { findSkill, skillCostLabel } from '../../utils/skillModel.js';
+import { MAX_RANK as SOCIAL_MAX_RANK } from '../../utils/socialModel.js';
+import { applyPersonaLook, onLookChange } from './personaLook.js';
 
 const PANEL_ID = 'dooms-stats-panel';
 const POPOUT_NAME = 'dooms-stats-popout';
 
 let selected = null;          // { name, isUser }
 let popoutWin = null;         // Window | null
+// A new accent or preset reaches the pop-out window too.
+onLookChange(() => { if (isPopoutOpen()) applyPersonaLook(popoutWin.document); });
 let listenersBound = false;
 let pendingRender = false;    // a repaint skipped while a value was being typed
 // The "Add item" / "Add condition" form survives repaints (an AI update can
@@ -708,6 +712,7 @@ function socialHtml() {
         <div class="dsp-soc-list">${view.map(s => `
             <div class="dsp-soc-row" title="${escapeHtml(s.title)}">
                 <span class="dsp-soc-row-name" style="--soc:${s.color}">${escapeHtml(s.name)}</span>
+                <button type="button" class="dsp-soc-rank dsp-soc-row-lv" data-social="${s.id}" title="Rank ${s.rank} — click to set the points (${s.points})">${Array.from({ length: SOCIAL_MAX_RANK }, (_, i) => `<i class="${i < s.rank ? 'on' : ''}"></i>`).join('')}<b>${escapeHtml(s.title)}</b></button>
                 <span class="dsp-soc-row-bar"><span style="width:${s.pct}%;background:${s.color}"></span></span>
                 <span class="dsp-soc-row-pts">${s.points}${s.next !== null ? ` / ${s.next}` : ''}</span>
             </div>`).join('')}
@@ -1552,6 +1557,7 @@ function stylesheetLinks() {
     const links = [];
     const css = absoluteUrl(`/${extensionFolderPath}/styles/stats-panel.css`);
     links.push(`<link rel="stylesheet" href="${escapeHtml(css)}">`);
+    links.push(`<link rel="stylesheet" href="${escapeHtml(absoluteUrl(`/${extensionFolderPath}/styles/persona-look.css`))}">`);
     // Font Awesome, from whatever SillyTavern loaded.
     document.querySelectorAll('link[rel="stylesheet"]').forEach(l => {
         const href = l.href || '';
@@ -1591,6 +1597,7 @@ ${stylesheetLinks()}
         doc.close();
         const root = doc.getElementById('dooms-stats-root');
         bindRootListeners(root);
+        try { applyPersonaLook(doc); } catch (e) { /* cosmetic */ }
         // Closing the window just ends the pop-out; reopening from the menu
         // brings the floating panel back.
         win.addEventListener('pagehide', () => {

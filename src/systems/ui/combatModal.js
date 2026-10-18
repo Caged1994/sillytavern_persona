@@ -479,18 +479,18 @@ function shuffleHtml() {
         const d = cardLabel(fight, card);
         const icon = card.kind === 'persona' ? '🎭' : SH.SUITS[card.suit].icon;
         const cls = card.kind === 'persona' ? 'is-persona' : `is-${card.suit}`;
-        return `<div class="dcb-card is-up ${cls}${picked ? ' is-picked' : ''}${dim ? ' is-dim' : ''}">
-            <span class="dcb-card-icon">${icon}</span>
-            <span class="dcb-card-title">${escapeHtml(d.title)}</span>
-            <span class="dcb-card-line">${escapeHtml(d.line)}</span>
-            ${card.fromFight ? '<span class="dcb-card-tag">from the fight</span>' : ''}
+        return `<div class="dcb-tcard is-up ${cls}${picked ? ' is-picked' : ''}${dim ? ' is-dim' : ''}">
+            <span class="dcb-tcard-icon">${icon}</span>
+            <span class="dcb-tcard-title">${escapeHtml(d.title)}</span>
+            <span class="dcb-tcard-line">${escapeHtml(d.line)}</span>
+            ${card.fromFight ? '<span class="dcb-tcard-tag">from the fight</span>' : ''}
         </div>`;
     };
     if (sh.phase === 'show') {
         return `<section class="dcb-shuffle">
             <h3 class="dcb-shuffle-title">SHUFFLE TIME!</h3>
             <p class="dcb-muted">${escapeHtml(sh.reasons.length ? `${Math.round(sh.chance * 100)}% — ${sh.reasons.join(', ')}` : `${Math.round(sh.chance * 100)}% chance`)}. Remember the cards: they will be turned and shuffled.</p>
-            <div class="dcb-cards">${sh.cards.map(c => face(c)).join('')}</div>
+            <div class="dcb-tcards">${sh.cards.map(c => face(c)).join('')}</div>
             <div class="dcb-shuffle-actions"><button type="button" class="dcb-btn is-primary" data-action="shuffle-go">Shuffle</button>
             <button type="button" class="dcb-btn" data-action="shuffle-skip">Pass</button></div>
         </section>`;
@@ -499,14 +499,14 @@ function shuffleHtml() {
         return `<section class="dcb-shuffle">
             <h3 class="dcb-shuffle-title">SHUFFLE TIME!</h3>
             <p class="dcb-muted">Pick a card.</p>
-            <div class="dcb-cards is-shuffling">${sh.order.map((_, i) => `<button type="button" class="dcb-card is-down" data-action="shuffle-pick" data-pos="${i}" style="--i:${i}" aria-label="Card ${i + 1}"><span class="dcb-card-back">✦</span></button>`).join('')}</div>
+            <div class="dcb-tcards is-shuffling">${sh.order.map((_, i) => `<button type="button" class="dcb-tcard is-down" data-action="shuffle-pick" data-pos="${i}" style="--i:${i}" aria-label="Card ${i + 1}"><span class="dcb-tcard-back">✦</span></button>`).join('')}</div>
             <div class="dcb-shuffle-actions"><button type="button" class="dcb-btn" data-action="shuffle-skip">Pass</button></div>
         </section>`;
     }
     const pickedPos = sh.order.findIndex(i => sh.cards[i].id === sh.picked);
     return `<section class="dcb-shuffle is-done">
         <h3 class="dcb-shuffle-title">SHUFFLE TIME</h3>
-        <div class="dcb-cards">${sh.order.map((ci, pos) => face(sh.cards[ci], { picked: pos === pickedPos, dim: pos !== pickedPos })).join('')}</div>
+        <div class="dcb-tcards">${sh.order.map((ci, pos) => face(sh.cards[ci], { picked: pos === pickedPos, dim: pos !== pickedPos })).join('')}</div>
         <p class="dcb-shuffle-result">${sh.text ? escapeHtml(sh.text) : 'You passed on the cards.'}</p>
     </section>`;
 }

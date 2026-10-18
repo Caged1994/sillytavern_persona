@@ -11,6 +11,8 @@
  *   - "hud"      — frosted-glass panel floating at top of chat
  *   - "ticker"   — collapsible bar pinned to top of chat
  */
+import { isLookOn } from '../ui/personaLook.js';
+import { createPersonaHeaderHTML, renderPersonaChat, removePersonaChat } from './personaChat.js';
 import { extensionSettings, lastGeneratedData, committedTrackerData } from '../../core/state.js';
 import { getActiveCharacterColors, saveSettings } from '../../core/persistence.js';
 import { getCustomSceneFields } from '../generation/jsonPromptHelpers.js';
@@ -391,7 +393,7 @@ function sceneHeaderIsCurrent(layout) {
     const $target = findLastAssistantMessage();
     if (!$target || !$target.length) return false;
 
-    if (layout === 'banner') {
+    if (layout === 'banner' && !isLookOn()) {
         const $banner = $('.dooms-info-banner');
         return $banner.length > 0 && $banner.prev()[0] === $target[0];
     }
@@ -564,8 +566,16 @@ function injectSceneTransitions() {
 export function updateChatSceneHeaders() {
     if (!extensionSettings.enabled) {
         removeAllSceneElements();
+        removePersonaChat();
         _lastSceneDataJSON = null;
         return;
+    }
+    // Persona look: day and place cards between replies, what each reply changed under it.
+    const look = isLookOn();
+    if (look) {
+        try { renderPersonaChat(); } catch (e) { console.warn('[Dooms Tracker] Persona chat failed', e); }
+    } else {
+        removePersonaChat();
     }
     // Extract scene data from current state, respecting display toggle settings
     // Without the Info Box, the calendar gives the date, time of day, weather and place.
@@ -591,7 +601,7 @@ export function updateChatSceneHeaders() {
         return;
     }
     // Skip rebuild if data + settings are identical to last render
-    const cacheKey = JSON.stringify({ sceneData, st });
+    const cacheKey = JSON.stringify({ sceneData, st, look });
     // Skip the rebuild only when the data is unchanged AND the existing header
     // is still anchored where this render would put it. Checking mere
     // existence stranded the header on the previous message whenever two
@@ -606,7 +616,7 @@ export function updateChatSceneHeaders() {
     removeSceneHeaderElements();
 
     // Dispatch to the appropriate renderer
-    if (layout === 'banner') {
+    if (layout === 'banner' && !look) {
         const html = createBannerHTML(sceneData);
         if (html) {
             const $target = findLastAssistantMessage();
@@ -656,6 +666,15 @@ export function updateChatSceneHeaders() {
             }
             $('#chat').addClass('dooms-ticker-bottom-active');
         }
+    } else if (look && layout !== 'hud' && !String(layout).startsWith('ticker')) {
+        // Persona look: the scene strip at the top of the last reply.
+        const $target = findLastAssistantMessage();
+        if (!$target) return;
+        const html = createPersonaHeaderHTML(sceneData);
+        if (html) {
+            const $text = $target.find('.mes_text').first();
+            if ($text.length) $text.before(html); else $target.append(html);
+        }
     } else {
         // Classic layouts: grid, stacked, compact
         // Insert inside .mes_block of the last assistant message so it
@@ -672,7 +691,8 @@ export function updateChatSceneHeaders() {
     }
 
     // Inject scene transition cards between messages where location/time changed
-    injectSceneTransitions();
+    // (the Persona look has its own day and place cards).
+    if (look) removeSceneTransitions(); else injectSceneTransitions();
 }
 
 // ─────────────────────────────────────────────

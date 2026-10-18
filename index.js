@@ -35,6 +35,7 @@ import { loadSettings, saveSettings, saveChatData, loadChatData, updateMessageSw
 import { registerAllEvents } from './src/core/events.js';
 import { registerSettingsUIInitializer, ensureSettingsUI } from './src/core/lazyUI.js';
 import { ensureCss, removeCss } from './src/core/cssLoader.js';
+import { applyPersonaLook, setLook, getLook } from './src/systems/ui/personaLook.js';
 import { onIdle } from './src/core/scheduler.js';
 // Generation & Parsing modules
 import {
@@ -291,6 +292,7 @@ async function addExtensionSettings() {
         const wasEnabled = extensionSettings.enabled;
         extensionSettings.enabled = $(this).prop('checked');
         saveSettings();
+        try { applyPersonaLook(); } catch (e) { /* cosmetic */ }
         if (!extensionSettings.enabled && wasEnabled) {
             // Disabling extension - remove UI elements
             clearExtensionPrompts();
@@ -739,6 +741,23 @@ function bindSettingsUI() {
         saveSettings();
         updateGenerationModeUI();
     });
+    // ── Persona look ──
+    const syncPersonaLookUi = () => {
+        const l = getLook();
+        $('#rpg-toggle-persona-look').prop('checked', l.enabled);
+        $('#rpg-persona-look-options').toggle(l.enabled);
+        $('#rpg-persona-look-preset').val(l.preset);
+        $('#rpg-persona-look-accent').val(l.accent);
+        $('#rpg-persona-look-hp').val(l.hp);
+        $('#rpg-persona-look-sp').val(l.sp);
+    };
+    syncPersonaLookUi();
+    $('#rpg-toggle-persona-look').on('change', function () { setLook({ enabled: $(this).prop('checked') }); syncPersonaLookUi(); updateChatSceneHeaders(); });
+    $('#rpg-persona-look-preset').on('change', function () { setLook({ preset: String($(this).val()) }); syncPersonaLookUi(); });
+    $('#rpg-persona-look-accent').on('input', function () { setLook({ accent: String($(this).val()) }); });
+    $('#rpg-persona-look-hp').on('input', function () { setLook({ hp: String($(this).val()) }); });
+    $('#rpg-persona-look-sp').on('input', function () { setLook({ sp: String($(this).val()) }); });
+    $('#rpg-persona-look-reset').on('click', function () { setLook({ accent: '', hp: '', sp: '' }); syncPersonaLookUi(); });
     $('#rpg-toggle-together-fallback').on('change', function () {
         extensionSettings.togetherFallback = $(this).prop('checked');
         saveSettings();
@@ -2315,6 +2334,7 @@ async function initUI() {
     try { applyChatBubbleSettings(); } catch (e) { console.error('[Dooms Tracker] applyChatBubbleSettings() FAILED:', e); }
     try { applyHideStTopBar(); } catch (e) { console.error('[Dooms Tracker] applyHideStTopBar() FAILED:', e); }
     try { applyPerformanceMode(); } catch (e) { console.error('[Dooms Tracker] applyPerformanceMode() FAILED:', e); }
+    try { applyPersonaLook(); } catch (e) { console.error('[Dooms Tracker] applyPersonaLook() FAILED:', e); }
     if (extensionSettings.chatBubbleSettings?.hideStAvatar) {
         document.body.classList.add('dooms-hide-st-avatar');
     }
