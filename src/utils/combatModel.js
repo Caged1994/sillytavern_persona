@@ -50,12 +50,14 @@ import { BOND_IDS, followUpChance, harisenChance } from './bondModel.js';
 // ─── Tuning ─────────────────────────────────────────────────────────────────
 
 export const TUNING = {
-    // Calibrated for the 1–99 Persona scale: a character starts around 10 in
-    // every attribute and gains about 0.6 per attribute per level (3 points
-    // a level over five attributes), so ~40 at level 50 and ~70 at level 99.
+    // Calibrated for the 1–99 Persona scale as the Compendium has it: an
+    // average attribute of ~3 at level 1, gaining ~0.6 a level (3 points over
+    // five attributes), so ~32 at level 50 and ~57 at level 90. Enemies are
+    // built on the same curve (enemyAttr*).
     // HP, damage and healing all grow with level as well as attributes, so a
     // fight between equals takes 4–6 hits at any level.
     hpBase: 30, hpPerEn: 3, hpPerLevel: 6,
+    enemyAttrBase: 2.2, enemyAttrPerLevel: 0.6,
     // Hit and flee chances compare the two sides' Agility as a ratio, so they
     // mean the same at level 1 and at level 99.
     // As in the games, most attacks land: ~90% between equals, magic a bit more.
@@ -84,8 +86,8 @@ export const TUNING = {
     // Enemy strength by category: attribute scale, hit points scale, XP tier, money.
     tiers: {
         minion: { attr: 0.8, hp: 0.5, xp: 'small', money: 3, moneyCap: 20, label: 'Minion' },
-        normal: { attr: 0.95, hp: 1.0, xp: 'medium', money: 8, moneyCap: 60, label: 'Normal' },
-        elite: { attr: 1.15, hp: 1.9, xp: 'large', money: 25, moneyCap: 200, label: 'Elite' },
+        normal: { attr: 0.95, hp: 0.85, xp: 'medium', money: 8, moneyCap: 60, label: 'Normal' },
+        elite: { attr: 1.08, hp: 2.0, xp: 'large', money: 25, moneyCap: 200, label: 'Elite' },
         boss: { attr: 1.4, hp: 3.2, xp: 'epic', money: 80, moneyCap: 800, label: 'Boss' },
     },
     // Each party member after the first adds this much to enemy hit points.
@@ -189,6 +191,11 @@ export function nextRandom(state) {
 export function attrValue(c, id) {
     const v = c?.attrs?.[id];
     return isNum(v) ? v : 10;
+}
+
+/** An enemy's attribute at `level` before its tier: a Compendium Persona's average. */
+export function enemyAttrAt(level) {
+    return TUNING.enemyAttrBase + TUNING.enemyAttrPerLevel * Math.max(1, level || 1);
 }
 
 export function maxHpFor(en, level) {
@@ -376,8 +383,9 @@ export function buildEnemy(spec, { partyLevel = 1, partySize = 1, id }) {
     const delta = clamp(Math.round(Number(spec.levelDelta) || 0), -2, 3);
     // A set level (a dungeon floor's) wins over the party-relative one.
     const level = isNum(spec.level) && spec.level >= 1 ? clamp(Math.round(spec.level), 1, 99) : Math.max(1, partyLevel + delta);
-    // Same growth as a character: ~10 at level 1, ~0.6 per level after.
-    const base = (10 + (level - 1) * 0.6) * tier.attr;
+    // The same growth as the Personas of the Compendium (their average
+    // attribute is ~2.8 at level 1, ~14 at 20, ~32 at 50, ~57 at 90).
+    const base = enemyAttrAt(level) * tier.attr;
     const attrs = {};
     for (const a of ATTRIBUTE_IDS) attrs[a] = Math.round(base);
     const focus = ATTRIBUTE_IDS.includes(String(spec.focus).toLowerCase()) ? String(spec.focus).toLowerCase() : null;

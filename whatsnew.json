@@ -1,5 +1,5 @@
 {
-    "version": "0.3.0",
+    "version": "0.3.1",
     "title": "Persona Stats 0.3",
     "items": [
         {
@@ -13,6 +13,10 @@
         {
             "title": "Together mode",
             "body": "The tracker block has the last word on the reply's format; a reply that comes back without it gets a separate call; a warning when the context is too small."
+        },
+        {
+            "title": "Fairer enemies",
+            "body": "Enemies now grow like the Personas of the Compendium: a level 1 Shadow has the stats of a level 1 Persona, not five times more."
         }
     ]
 }

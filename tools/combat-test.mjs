@@ -82,7 +82,7 @@ function turnOf(s, id) {
     const s1 = share(1), s50 = share(50), s99 = share(99);
     ok(s1 > 0.1 && s1 < 0.3 && s50 > 0.1 && s50 < 0.3 && s99 > 0.1 && s99 < 0.3, `a light hit between equals takes 10–30% HP at any level (${s1.toFixed(2)}, ${s50.toFixed(2)}, ${s99.toFixed(2)})`);
     const e = C.buildEnemy({ name: 'Shadow', tier: 'normal' }, { partyLevel: 50, id: 'e50' });
-    ok(e.attrs.st >= 30 && e.attrs.st <= 45, `a level 50 normal enemy has attributes around 40 (got ${e.attrs.st})`);
+    ok(e.attrs.st >= 30 && e.attrs.st <= 45, `a level 50 normal enemy has attributes around 32 (got ${e.attrs.st})`);
 }
 
 // ─── Damage ─────────────────────────────────────────────────────────────────
@@ -366,7 +366,9 @@ function turnOf(s, id) {
 
 // ─── Balance ────────────────────────────────────────────────────────────────
 function simHero(id) {
-    const c = hero(id, {}, [
+    // A level 1 character as the Compendium's Personas have it (~3 everywhere).
+    const a = Math.round(C.enemyAttrAt(1));
+    const c = hero(id, { attrs: { st: a, ma: a, en: a, ag: a, lu: a } }, [
         act('fire', { type: 'damage', power: 'heavy', stat: 'ma', target: 'enemy', status: 'burn' }, { kind: 'spell', manaCost: 30 }),
         act('pot', { type: 'heal', power: 'medium', stat: 'none', target: 'ally' }, { kind: 'item', qty: 2 }),
     ]);
