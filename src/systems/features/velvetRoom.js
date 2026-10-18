@@ -59,7 +59,7 @@ export function previewFusion(name, isUser, ids) {
     const ctx = context(name, isUser);
     const rank = confidantRank(r.def.arcana);
     const bonus = rank ? F.confidantBonus(rank) : 0;
-    const level = F.resultLevel(r.def, { bonus, userLevel: ctx.userLevel });
+    const level = F.resultLevel(r.def, { bonus });
     const already = rec.list.some(p => !ids.includes(p.id) && P.nameKey(p.name) === P.nameKey(r.def.name));
     const blocks = F.fusionBlocks(r.def, ctx);
     if (already) blocks.push(`${name} already has ${r.def.name}.`);

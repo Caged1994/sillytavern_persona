@@ -185,11 +185,23 @@ export function normalizePersona(raw) {
         learns: normalizeLearns(raw.learns),
         desc: clip(raw.desc, 300),
         source: ['compendium', 'ai', 'user'].includes(raw.source) ? raw.source : 'user',
+        // XP into its current level (a Wild Card's Personas level on their own).
+        xp: clampInt(raw.xp, 0, 10000000) ?? 0,
         ...(raw.awakened ? { awakened: true } : {}),
     };
 }
 
 // ─── Numbers ────────────────────────────────────────────────────────────────
+
+/** Share of the fight's XP a Persona that is not out gets: its best Growth skill (0 without). */
+export function growthShare(persona) {
+    let best = 0;
+    for (const s of persona?.skills || []) {
+        const m = String(s).match(/^\s*growth\s*([123])\s*$/i);
+        if (m) best = Math.max(best, { 1: 0.25, 2: 0.5, 3: 1 }[m[1]]);
+    }
+    return best;
+}
 
 /** Total stat points of a Persona at a level (10 at level 1, +3 a level). */
 export function statTotalAt(level) {

@@ -40,6 +40,8 @@ import {
     levelProgress,
     normalizeAIXp,
     normalizeAILevels,
+    CURVE as XP_CURVE,
+    storyXp,
     resolveTiers,
     clampPerLevel,
     clampPointsPerLevel,
@@ -91,7 +93,7 @@ export function setXpSetting(key, value) {
     else if (key === 'pointsPerLevel') s.xpPointsPerLevel = clampPointsPerLevel(value);
     else if (key === 'questMain' && XP_SIZES.includes(value)) s.xpQuestMain = value;
     else if (key === 'questOptional' && XP_SIZES.includes(value)) s.xpQuestOptional = value;
-    else if (XP_SIZES.includes(key)) s.xpTiers = { ...resolveTiers(s.xpTiers), [key]: value };
+    else if (XP_SIZES.includes(key)) s.xpTiers = { ...resolveTiers(s.xpTiers), [key]: value, curve: XP_CURVE };
     else return;
     if (XP_SIZES.includes(key)) s.xpTiers = resolveTiers(s.xpTiers);
     saveSettings();
@@ -211,9 +213,18 @@ export function getPartyMembers() {
  * Records no undo (manual and quest awards are the user's own doing).
  * Persists and notifies unless `persist` is false (batch callers do it once).
  */
+// With a Persona, the stats grow with the Persona: no points to assign
+// (characterPersonas.js registers the check): fn(name, isUser) → boolean.
+let noPointsCheck = null;
+export function setNoPointsCheck(fn) {
+    noPointsCheck = typeof fn === 'function' ? fn : null;
+}
+
 export function awardXpTo(name, isUser, amount, { reason = '', source = 'user', silent = false, persist = true } = {}) {
     const key = statKey(name, isUser);
-    const { perLevel, pointsPerLevel } = getXpSettings();
+    const { perLevel } = getXpSettings();
+    let { pointsPerLevel } = getXpSettings();
+    try { if (noPointsCheck && noPointsCheck(name, isUser)) pointsPerLevel = 0; } catch (e) { /* points as usual */ }
     const res = awardRecord(readByKey(key), amount, { reason, source, perLevel, pointsPerLevel });
     writeByKey(key, res.record);
     if (res.levelsGained && !silent) {
@@ -241,14 +252,37 @@ export function awardPartyXp(amount, { reason = '', source = 'ai' } = {}) {
     return { members, levelUps: ups };
 }
 
+/**
+ * A story award of `size` (small…epic) to every party member: each gets the
+ * same share of their own level. Returns awardPartyXp's result plus the
+ * amounts given ({ name: xp }).
+ */
+export function awardPartyShare(size, { reason = '', source = 'ai' } = {}) {
+    const { tiers, perLevel } = getXpSettings();
+    const members = getPartyMembers();
+    const ups = [];
+    const amounts = {};
+    for (const m of members) {
+        const amount = storyXp(size, getProgress(m.name, m.isUser).level, tiers, perLevel);
+        amounts[m.name] = amount;
+        const r = awardXpTo(m.name, m.isUser, amount, { reason, source, silent: true, persist: false });
+        if (r.levelsGained) ups.push({ ...m, ...r });
+    }
+    for (const u of ups) {
+        toast('success', `${u.name} reached level ${u.level}${u.pointsGained ? ` — ${u.pointsGained} attribute point${u.pointsGained === 1 ? '' : 's'} to assign` : ''}.`);
+    }
+    if (members.length) changed({ source: source === 'quest' ? 'quest' : 'progress' });
+    return { members, levelUps: ups, amounts };
+}
+
 /** XP for a quest the user marked as completed in the Quests panel. */
 export function awardQuestXp(title, kind = 'optional') {
     if (!isXpEnabled()) return null;
-    const { tiers, questMain, questOptional } = getXpSettings();
+    const { questMain, questOptional } = getXpSettings();
     const size = kind === 'main' ? questMain : questOptional;
-    const amount = tiers[size];
     const name = String(title || '').trim() || 'a quest';
-    const res = awardPartyXp(amount, { reason: `Quest completed: ${name}`, source: 'quest' });
+    const res = awardPartyShare(size, { reason: `Quest completed: ${name}`, source: 'quest' });
+    const amount = Math.max(0, ...Object.values(res.amounts));
     if (res.members.length && !res.levelUps.length) toast('info', `${formatXpAmount(amount)} to the party for "${name}".`, 'Quest completed');
     console.log(`[Dooms Tracker] XP: quest "${name}" completed → ${amount} XP to ${res.members.length} party member(s)`);
     return { amount, ...res };
@@ -479,9 +513,9 @@ export function applyAIProgress(rawXp, rawLevels, messageIndex) {
                 return { key: k !== undefined ? k : key, before: JSON.parse(JSON.stringify(storedRaw(key))) };
             });
             const reason = award.reason || `${award.size[0].toUpperCase()}${award.size.slice(1)} deed`;
-            const res = awardPartyXp(award.amount, { reason, source: 'ai' });
+            const res = awardPartyShare(award.size, { reason, source: 'ai' });
             for (const { key, before } of befores) snapshotChange(snapshots, key, before);
-            result.amount = award.amount;
+            result.amount = Math.max(0, ...Object.values(res.amounts));
             result.members = res.members.length;
         }
     }

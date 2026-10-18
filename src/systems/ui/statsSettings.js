@@ -34,7 +34,7 @@ import {
     currentCardName,
 } from '../features/rpgMode.js';
 import { getXpSettings, setXpSetting, setLevelsEnabled, setXpEnabled } from '../features/characterProgress.js';
-import { XP_SIZES } from '../../utils/xpModel.js';
+import { XP_SIZES, xpNeededAt, enemyXpAt } from '../../utils/xpModel.js';
 import { getManaTiers, setManaTier } from '../features/characterAbilities.js';
 import { setMoneyEnabled, getCurrency, setCurrency } from '../features/characterMoney.js';
 import { setAffinityEnabled } from '../features/characterAffinity.js';
@@ -280,7 +280,8 @@ export function renderXpSettings() {
     const hint = document.getElementById('rpg-xp-curve-hint');
     if (hint) {
         const p = x.perLevel;
-        hint.textContent = `Level × this amount to reach the next one: level 2 at ${p} XP, level 3 at ${p * 3}, level 4 at ${p * 6}…`;
+        const fights = (lv) => Math.round(xpNeededAt(lv, p) / enemyXpAt(lv) * 10) / 10;
+        hint.textContent = `${p}%: a normal enemy of your level is worth ${enemyXpAt(1)} XP at level 1 and ${enemyXpAt(30)} at level 30; a level costs ${fights(1)} fights at level 1, ${fights(4)} at level 4 and ${fights(10)} from level 5 on.`;
     }
 }
 

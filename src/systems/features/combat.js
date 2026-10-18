@@ -44,7 +44,7 @@ import { itemKey } from '../../utils/equipmentModel.js';
 import { formatEffects } from '../../utils/effectsModel.js';
 import * as M from '../../utils/combatModel.js';
 import { findSkill, isCombatSkill, profileFromSkill, skillCost, passiveAffinity, spPointsAt } from '../../utils/skillModel.js';
-import { getActivePersona, isPersonasEnabled, getPersonaRecord, canUsePersona, equipPersona } from './characterPersonas.js';
+import { getActivePersona, isPersonasEnabled, getPersonaRecord, canUsePersona, equipPersona, awardPersonaXp } from './characterPersonas.js';
 import { findInCompendium, getCompendium } from './personaCompendium.js';
 import { normalizeAffinities as normalizePersonaAffinities } from '../../utils/personaModel.js';
 import { buildEncounterSetupPrompt, buildCombatNarrationPrompt } from '../generation/combatPrompts.js';
@@ -631,7 +631,7 @@ export function grantSpoils({ money = 0, items = [] } = {}) {
  * @returns {object} what was done, for the end screen
  */
 export function applyOutcome(state) {
-    const report = { result: state.result, rewards: M.computeRewards(state, { tierXp: getXpSettings().tiers, partyLevel: state.partyLevel || 1 }), party: [], lootAdded: [], moneyAdded: 0, xpGiven: 0, affinity: [] };
+    const report = { result: state.result, rewards: M.computeRewards(state, { partyLevel: state.partyLevel || 1 }), party: [], lootAdded: [], moneyAdded: 0, xpGiven: 0, affinity: [] };
     if (state.applied) return { ...report, already: true };
     state.applied = true;
 
@@ -670,6 +670,12 @@ export function applyOutcome(state) {
         if (r.xp > 0 && isXpEnabled()) {
             awardPartyXp(r.xp, { reason: `Fight: ${r.defeated.map(d => d.name).join(', ')}`.slice(0, 80), source: 'ai' });
             report.xpGiven = r.xp;
+            // A Wild Card's Personas earn it too (the one out, and Growth ones).
+            report.personaUps = [];
+            for (const c of state.combatants) {
+                if (c.side !== 'party') continue;
+                try { report.personaUps.push(...awardPersonaXp(c.name, c.isUser, r.xp)); } catch (e) { console.warn('[Dooms Tracker] Combat: Persona XP failed', e); }
+            }
         }
         const spoils = grantSpoils({ money: r.money, items: r.items });
         report.moneyAdded = spoils.money;

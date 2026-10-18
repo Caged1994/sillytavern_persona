@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- Experience, Persona-style: a level costs about five fights against enemies of your level (2, 3, 3 and 4 for the first four levels), and an enemy's XP grows with its own level and category (minion ½, normal 1, elite 2½, boss 5). Story awards (small / medium / large / epic) are a share of the current level (5 / 15 / 35 / 75%, editable), so they weigh the same at every level. The pace is a percentage in Settings. Records from the old curve keep their level and their progress into it.
+- Personas level on their own for a Wild Card: the one out earns the fight's XP (also from Shuffle Time Wands), the others only with Growth 1/2/3 (25/50/100%); level-ups learn skills and show in the fight summary. Anyone who is not a Wild Card is as strong as their Persona: its level and theirs move together.
+- A Persona can pass its user's level (fusion with Confidant bonus levels, its own XP). The level rule is on obtaining it: fusing, drawing it in Shuffle Time or adding it at its base level needs the user to have reached that base level (an awakening, or one added before that, comes in at the user's level).
+- With a Persona, characters get no attribute points on level-up: their stats grow with the Persona, as in the games.
 - Fights: a Wild Card changes Persona on their turn (free, once a turn, from the new Persona button): its attributes, affinities and skills replace the old one's, HP and SP stay; the Persona out at the end stays equipped.
 - Fix: adding a Persona by hand, the Compendium suggestions can be searched by name in Firefox too (it matched only the "Arcana · Lv" label).
 - Fix: enemies were built on the old Better Stats scale (about 10 in every attribute at level 1) while characters follow their Personas (about 3 at level 1), so even a level 1 minion was out of reach. Enemies now grow like the Compendium's Personas (~3 at level 1, ~14 at 20, ~32 at 50, ~57 at 90); normal enemies have a little less HP and elites trade attributes for HP, keeping the same odds at every level (one normal: easy; two normals or an elite: a real fight alone; a boss: a party's job).

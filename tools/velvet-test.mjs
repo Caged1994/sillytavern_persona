@@ -181,7 +181,7 @@ check('with the Confidant maxed it goes, with bonus levels', !pv.blocks.length &
 f = V.fuse('Mastera', true, ids('Belial', 'Nebiros'));
 check('Alice joins the stock', f.persona?.name === 'Alice' && f.persona.level === g('Alice').level + 5);
 P.setLevel('Mastera', true, 84);
-check('the bonus never takes it past your level', F.resultLevel(g('Alice'), { bonus: 5, userLevel: 84 }) === 84);
+check('the bonus can take it past your level', F.resultLevel(g('Alice'), { bonus: 5 }) === g('Alice').level + 5);
 extensionSettings.velvetRoomEnabled = false;
 check('the Velvet Room can be switched off', !V.canFuse('Mastera', true) && !!V.fuse('Mastera', true, []).error);
 

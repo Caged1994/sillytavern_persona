@@ -288,8 +288,8 @@ export function fusionBlocks(def, ctx = {}) {
 }
 
 /** The level the result comes in at: base + Confidant bonus, never above the user's level. */
-export function resultLevel(def, { bonus = 0, userLevel = null } = {}) {
-    let lvl = Math.min(MAX_LEVEL, (def?.level || 1) + Math.max(0, bonus));
-    if (userLevel != null) lvl = Math.min(lvl, Math.max(def?.level || 1, userLevel));
-    return lvl;
+export function resultLevel(def, { bonus = 0 } = {}) {
+    // The base level plus the Confidant bonus: it may pass its user's level
+    // (only fusing needs the user to have reached the base level).
+    return Math.min(MAX_LEVEL, (def?.level || 1) + Math.max(0, bonus));
 }

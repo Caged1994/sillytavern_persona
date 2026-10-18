@@ -4,7 +4,11 @@
  * A progress record, one per character per campaign:
  *   { level, xp, points, spent: {statId: n}, party, levelSet, log: [entry] }
  *   - xp is the running total; level never drops by itself.
- *   - Going from level L to L+1 costs L × xpPerLevel (100 → lv 2, 200 more → lv 3…).
+ *   - The curve (xpNeededAt) is set by fights, as in the games: a normal
+ *     enemy of your level is worth enemyXpAt(level), and a level costs about
+ *     five of them (2, 3, 3 and 4 for the first four levels, which go
+ *     faster). xpPerLevel is the pace in percent (100 = that; 200 = twice
+ *     as long). Story awards (small…epic) are a share of the current level.
  *   - Each level gained gives pointsPerLevel attribute points to assign.
  *   - levelSet: 'ai' or 'user' once the level was given (NPCs start without).
  *   - levelAsk: true when the AI should give the level again (stats regenerated).
@@ -15,7 +19,16 @@
  */
 
 export const XP_SIZES = ['small', 'medium', 'large', 'epic'];
-export const DEFAULT_XP_TIERS = { small: 10, medium: 25, large: 50, epic: 100 };
+// Story awards, in percent of what the current level costs.
+export const DEFAULT_XP_TIERS = { small: 5, medium: 15, large: 35, epic: 75 };
+export const MAX_TIER_PERCENT = 200;
+// Fights a level costs at your own level: the first four go faster.
+export const FIGHTS_PER_LEVEL = [2, 3, 3, 4];
+export const FIGHTS_LATER = 5;
+// Each enemy category is worth this many normal enemies.
+export const ENEMY_XP_MULT = { small: 0.5, medium: 1, large: 2.5, epic: 5 };
+// The curve this file uses (records from before are moved onto it).
+export const CURVE = 2;
 export const DEFAULT_XP_PER_LEVEL = 100;
 export const DEFAULT_POINTS_PER_LEVEL = 3;
 export const MAX_LEVEL = 100;
@@ -34,21 +47,46 @@ function int(v, fallback = 0) {
     return Number.isFinite(n) ? Math.round(n) : fallback;
 }
 
-/** The size table with the user's amounts (each 1–MAX_XP_AWARD). */
+/** The size table with the user's shares of a level (each 1–200%). */
 export function resolveTiers(custom) {
     const out = { ...DEFAULT_XP_TIERS };
-    if (custom && typeof custom === 'object') {
+    if (custom && typeof custom === 'object' && custom.curve === CURVE) {
         for (const s of XP_SIZES) {
             const n = int(custom[s], NaN);
-            if (Number.isFinite(n) && n > 0) out[s] = Math.min(n, MAX_XP_AWARD);
+            if (Number.isFinite(n) && n > 0) out[s] = Math.min(n, MAX_TIER_PERCENT);
         }
     }
-    return out;
+    return { ...out, curve: CURVE };
 }
 
+/** XP a normal enemy of `level` is worth. */
+export function enemyXpAt(level) {
+    const l = clampLevel(level);
+    return 8 + 6 * l;
+}
+
+/** XP for beating an enemy of `level` in a category (small = minion … epic = boss). */
+export function enemyXp(level, size = 'medium') {
+    return Math.round(enemyXpAt(level) * (ENEMY_XP_MULT[size] ?? 1));
+}
+
+/** What going from `level` to the next costs. */
+export function xpNeededAt(level, perLevel = DEFAULT_XP_PER_LEVEL) {
+    const l = clampLevel(level);
+    const fights = FIGHTS_PER_LEVEL[l - 1] ?? FIGHTS_LATER;
+    return Math.max(1, Math.round(fights * enemyXpAt(l) * perLevel / 100));
+}
+
+/** A story award of `size` for someone at `level`: a share of that level. */
+export function storyXp(size, level, tiers = DEFAULT_XP_TIERS, perLevel = DEFAULT_XP_PER_LEVEL) {
+    const pct = tiers[size] ?? DEFAULT_XP_TIERS[size] ?? 0;
+    return Math.max(1, Math.round(xpNeededAt(level, perLevel) * pct / 100));
+}
+
+/** The pace in percent (100 = a level every ~5 fights at your level). */
 export function clampPerLevel(v) {
     const n = int(v, DEFAULT_XP_PER_LEVEL);
-    return Math.min(Math.max(n, 1), 100000);
+    return Math.min(Math.max(n, 10), 1000);
 }
 
 export function clampPointsPerLevel(v) {
@@ -64,7 +102,9 @@ export function clampLevel(v) {
 /** Total XP needed to be at `level` (level 1 = 0). */
 export function xpToReach(level, perLevel = DEFAULT_XP_PER_LEVEL) {
     const l = clampLevel(level);
-    return perLevel * (l - 1) * l / 2;
+    let total = 0;
+    for (let k = 1; k < l; k++) total += xpNeededAt(k, perLevel);
+    return total;
 }
 
 /** The level a running total of XP is worth. */
@@ -84,9 +124,18 @@ export function normalizeRecord(raw) {
             if (n > 0) spent[k] = n;
         }
     }
+    const level = clampLevel(r.level ?? 1);
+    let xp = Math.max(0, int(r.xp, 0));
+    // A record from the old curve (L × 100 a level): same level, same share of it.
+    if (raw && typeof raw === 'object' && r.curve !== CURVE && (xp > 0 || level > 1)) {
+        const oldStart = DEFAULT_XP_PER_LEVEL * (level - 1) * level / 2;
+        const share = Math.min(Math.max((xp - oldStart) / (level * DEFAULT_XP_PER_LEVEL), 0), 0.99);
+        xp = xpToReach(level) + Math.floor(share * xpNeededAt(level));
+    }
     return {
-        level: clampLevel(r.level ?? 1),
-        xp: Math.max(0, int(r.xp, 0)),
+        level,
+        xp,
+        curve: CURVE,
         points: Math.max(0, int(r.points, 0)),
         spent,
         party: r.party === true,
@@ -100,7 +149,7 @@ export function normalizeRecord(raw) {
 export function levelProgress(record, perLevel = DEFAULT_XP_PER_LEVEL) {
     const r = normalizeRecord(record);
     const start = xpToReach(r.level, perLevel);
-    const needed = r.level * perLevel;
+    const needed = xpNeededAt(r.level, perLevel);
     const into = Math.min(Math.max(r.xp - start, 0), needed);
     return { level: r.level, xp: r.xp, into, needed, pct: r.level >= MAX_LEVEL ? 100 : Math.round(into / needed * 100) };
 }
@@ -264,8 +313,8 @@ export function buildXpPrompt({ party = [], known = [], needLevels = [], tiers =
             ? `EXPERIENCE — the party (${who}) shares XP.\n`
             : `EXPERIENCE — the party (${who}) earns experience together; every member gets the same XP.\n`;
         s += compact
-            ? `Only for a real accomplishment in THIS reply (fight won, problem solved, quest completed, key discovery), ${where} ONE award: "xp": {"size": "medium", "reason": "Drove off the bandits"}. Sizes: small (${t.small}), medium (${t.medium}), large (${t.large}, major victory / side quest), epic (${t.epic}, main quest / legendary feat).\n`
-            : `When THIS reply contains a real accomplishment by the party (a fight won, a problem solved, a quest completed, an important discovery, a hard social victory), ${where} ONE award: "xp": {"size": "medium", "reason": "Drove off the bandits"}.\nSizes: small (${t.small}) minor success · medium (${t.medium}) notable deed · large (${t.large}) major victory or side quest completed · epic (${t.epic}) main quest completed or legendary feat.\n`;
+            ? `Only for a real accomplishment in THIS reply (fight won, problem solved, quest completed, key discovery), ${where} ONE award: "xp": {"size": "medium", "reason": "Drove off the bandits"}. Sizes (share of a level): small (${t.small}%), medium (${t.medium}%), large (${t.large}%, major victory / side quest), epic (${t.epic}%, main quest / legendary feat). Fights in the fight window give their own XP: do not award it again.\n`
+            : `When THIS reply contains a real accomplishment by the party (a fight won, a problem solved, a quest completed, an important discovery, a hard social victory), ${where} ONE award: "xp": {"size": "medium", "reason": "Drove off the bandits"}.\nSizes (share of a level): small (${t.small}%) minor success · medium (${t.medium}%) notable deed · large (${t.large}%) major victory or side quest completed · epic (${t.epic}%) main quest completed or legendary feat. Fights played in the fight window give their own XP: do not award it again.\n`;
         s += compact
             ? 'Most replies earn nothing: leave "xp" out.'
             : 'Most replies earn nothing — leave "xp" out then. Never award XP for ordinary actions, conversation or travel, and never more than one award per reply.';
@@ -275,7 +324,7 @@ export function buildXpPrompt({ party = [], known = [], needLevels = [], tiers =
         const ref = player ? ` For comparison, ${player.name} is level ${player.level}.` : '';
         parts.push(
             `LEVELS — give these characters a level fitting who they are, in ${standalone && !(awards && party.length) ? 'ONE JSON code block at the start of your reply' : 'the same JSON object'}: "levels": {${needLevels.map(n => `"${n}": 3`).join(', ')}}. `
-            + `1 = ordinary commoner, 3 = trained guard, 5 = seasoned adventurer, 10 = veteran hero, 15+ = legendary.${ref}`,
+            + `On the 1–99 scale: 1–5 ordinary people, 10–20 trained fighters or new Persona users, 25–40 seasoned ones, 50–70 veterans, 80+ legendary.${ref}`,
         );
     }
     if (known.length) {

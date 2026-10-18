@@ -1,26 +1,22 @@
 {
-    "version": "0.3.3",
-    "title": "Persona Stats 0.3",
+    "version": "0.4.0",
+    "title": "Persona Stats 0.4",
     "items": [
         {
-            "title": "Persona look",
-            "body": "Persona 4 style for the stats panel, fights, Shuffle Time and dungeons. Yellow, blue or red, or your own accent, HP and SP colours (Settings → Theme)."
+            "title": "Experience, Persona-style",
+            "body": "A level every ~5 fights against enemies of your level (the first ones faster); enemies give XP by their own level; story awards are a share of your level."
         },
         {
-            "title": "The chat, Persona style",
-            "body": "A date strip on the last reply, a card when the day changes, a banner for a new place, and what each reply raised: social stats and bonds."
-        },
-        {
-            "title": "Together mode",
-            "body": "The tracker block has the last word on the reply's format; a reply that comes back without it gets a separate call; a warning when the context is too small."
-        },
-        {
-            "title": "Fairer enemies",
-            "body": "Enemies now grow like the Personas of the Compendium: a level 1 Shadow has the stats of a level 1 Persona, not five times more."
+            "title": "Personas grow on their own",
+            "body": "A Wild Card's Persona earns the fight's XP and can pass your level; the others only with Growth. Teammates move together with their Persona."
         },
         {
             "title": "Change Persona in battle",
-            "body": "A Wild Card can switch Persona on their turn — free, once a turn — with its own stats, affinities and skills."
+            "body": "A Wild Card can switch Persona on their turn — free, once a turn."
+        },
+        {
+            "title": "Persona look",
+            "body": "Persona 4 style for the stats panel, fights, Shuffle Time, dungeons and the chat, in yellow, blue, red or your own colours."
         }
     ]
 }

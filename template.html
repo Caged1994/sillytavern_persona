@@ -1466,27 +1466,27 @@
                     </div>
                     <div class="rpg-setting-row rpg-setting-row-wrap">
                         <div class="rpg-setting-label-group">
-                            <span class="rpg-setting-label">XP per deed</span>
-                            <span class="rpg-setting-hint">The AI only names the size of the deed; these are the amounts.</span>
+                            <span class="rpg-setting-label">XP per deed (% of a level)</span>
+                            <span class="rpg-setting-hint">The AI only names the size of the deed; each is this share of what the current level costs, so it weighs the same at level 3 and at level 60. Fights give their own XP.</span>
                         </div>
                         <div class="rpg-xp-tiers">
-                        <label class="rpg-xp-tier"><span>Small</span><input type="number" id="rpg-xp-small" class="rpg-accordion-select" min="1" max="100000" step="1" /></label>
-                        <label class="rpg-xp-tier"><span>Medium</span><input type="number" id="rpg-xp-medium" class="rpg-accordion-select" min="1" max="100000" step="1" /></label>
-                        <label class="rpg-xp-tier"><span>Large</span><input type="number" id="rpg-xp-large" class="rpg-accordion-select" min="1" max="100000" step="1" /></label>
-                        <label class="rpg-xp-tier"><span>Epic</span><input type="number" id="rpg-xp-epic" class="rpg-accordion-select" min="1" max="100000" step="1" /></label>
+                        <label class="rpg-xp-tier"><span>Small</span><input type="number" id="rpg-xp-small" class="rpg-accordion-select" min="1" max="200" step="1" /></label>
+                        <label class="rpg-xp-tier"><span>Medium</span><input type="number" id="rpg-xp-medium" class="rpg-accordion-select" min="1" max="200" step="1" /></label>
+                        <label class="rpg-xp-tier"><span>Large</span><input type="number" id="rpg-xp-large" class="rpg-accordion-select" min="1" max="200" step="1" /></label>
+                        <label class="rpg-xp-tier"><span>Epic</span><input type="number" id="rpg-xp-epic" class="rpg-accordion-select" min="1" max="200" step="1" /></label>
                         </div>
                     </div>
                     <div class="rpg-setting-row">
                         <div class="rpg-setting-label-group">
-                            <span class="rpg-setting-label">XP per level</span>
-                            <span class="rpg-setting-hint" id="rpg-xp-curve-hint">Level × this amount to reach the next level.</span>
+                            <span class="rpg-setting-label">Level pace (%)</span>
+                            <span class="rpg-setting-hint" id="rpg-xp-curve-hint">100 = a level every ~5 fights against enemies of your level (the first levels faster).</span>
                         </div>
-                        <input type="number" id="rpg-xp-per-level" class="rpg-accordion-select" min="1" max="100000" step="10" style="width:6em;" />
+                        <input type="number" id="rpg-xp-per-level" class="rpg-accordion-select" min="10" max="1000" step="10" style="width:6em;" />
                     </div>
                     <div class="rpg-setting-row">
                         <div class="rpg-setting-label-group">
                             <span class="rpg-setting-label">Attribute points per level</span>
-                            <span class="rpg-setting-hint">Assigned with the + buttons on the Attributes tab of the Stats panel.</span>
+                            <span class="rpg-setting-hint">Assigned with the + buttons on the Attributes tab of the Stats panel. Not for characters with a Persona: their stats grow with it.</span>
                         </div>
                         <input type="number" id="rpg-xp-points" class="rpg-accordion-select" min="0" max="50" step="1" style="width:5em;" />
                     </div>

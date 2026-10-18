@@ -31,7 +31,8 @@ import { saveSettings, saveChatData } from '../../core/persistence.js';
 import { isRpgModeActive } from './rpgMode.js';
 import { chatStore, saveChatScope, CHAT_SCOPE } from './chatScope.js';
 import { statKey, getStatCharacters, getPersonaName, notifyStatsChanged, setAttributeSource } from './characterStats.js';
-import { setLevelHook, getProgress, isProgressEnabled } from './characterProgress.js';
+import { setLevelHook, setNoPointsCheck, setLevel as setCharacterLevel, getProgress, isProgressEnabled, getXpSettings } from './characterProgress.js';
+import { xpNeededAt } from '../../utils/xpModel.js';
 import { resolveTarget } from './characterEquipment.js';
 import { getAbilities, addAbility, removeAbility, isAbilitiesEnabled } from './characterAbilities.js';
 import { getCompendium, findInCompendium } from './personaCompendium.js';
@@ -100,15 +101,18 @@ function characterLevel(name, isUser) {
     try { return isProgressEnabled() ? getProgress(name, isUser).level || 1 : 1; } catch (e) { return 1; }
 }
 
-/** The highest Persona level a character can use, or null when Levels are off. */
+/**
+ * The character's own level, or null when Levels are off. A Persona can be
+ * obtained (fused, drawn, added at its base level) only when this has
+ * reached the Persona's base level; once owned it can grow past it.
+ */
 export function personaLevelCap(name, isUser) {
     try { return isProgressEnabled() ? getProgress(name, isUser).level || 1 : null; } catch (e) { return null; }
 }
 
-/** Whether the character's level is high enough for this Persona. */
+/** Whether the character can use this Persona: any Persona they own (the level rule is checked when it is obtained). */
 export function canUsePersona(name, isUser, persona) {
-    const cap = personaLevelCap(name, isUser);
-    return cap === null || !persona || persona.level <= cap;
+    return !!persona;
 }
 
 function changed(name, isUser, { sync = true } = {}) {
@@ -158,6 +162,7 @@ export function makePersonaFor(name, isUser, desc, { lowerToCap = false, atUserL
     if (p && atUserLevel && cap !== null && p.level !== cap) p = P.setPersonaLevel(p, cap).persona;
     // Above the character's level: brought down to it (when asked to).
     if (p && lowerToCap && cap !== null && p.level > cap) p = P.setPersonaLevel(p, cap).persona;
+    if (p) p.xp = 0;
     return p;
 }
 
@@ -180,12 +185,14 @@ function addTo(rec, persona) {
 /** Adds a Persona by name (Compendium) or description. Returns { persona } or { error }. */
 export function addPersona(name, isUser, desc) {
     const d = { source: 'user', ...(typeof desc === 'string' ? { name: desc } : desc) };
-    // Without a level typed in, it comes in at its user's level (as an awakening does).
-    const persona = makePersonaFor(name, isUser, d, { atUserLevel: !d.level });
-    if (!persona) return { error: 'Give the Persona a name.' };
-    // A level typed above the user's: brought down to it (never above its user).
+    // Its base level (the Compendium's) once the character has reached it,
+    // or any level typed in; before that it comes in at the character's
+    // level, as an awakening does.
     const cap = personaLevelCap(name, isUser);
-    if (cap !== null && persona.level > cap) Object.assign(persona, P.setPersonaLevel(persona, cap).persona);
+    const base = findInCompendium(d.name)?.level ?? null;
+    const reachable = cap === null || base === null || base <= cap;
+    const persona = makePersonaFor(name, isUser, d, { atUserLevel: !reachable || (!d.level && base === null) });
+    if (!persona) return { error: 'Give the Persona a name.' };
     const key = statKey(name, isUser);
     const rec = readKey(key);
     const res = addTo(rec, persona);
@@ -198,6 +205,10 @@ export function addPersona(name, isUser, desc) {
         return { error: 'It could not be saved in this chat. Send a message first (a new chat is not saved until then), then try again.' };
     }
     changed(name, isUser);
+    // Not a Wild Card: the character is as strong as their (only) Persona.
+    if (!rec.wildCard && cap !== null && persona.level !== cap) {
+        try { setCharacterLevel(name, isUser, persona.level); } catch (e) { /* levels off */ }
+    }
     return res;
 }
 
@@ -219,7 +230,6 @@ export function equipPersona(name, isUser, id) {
     const rec = readKey(key);
     const p = rec.list.find(x => x.id === id);
     if (!p || rec.active === id) return false;
-    if (!canUsePersona(name, isUser, p)) return { error: `${p.name} is level ${p.level}: ${name} must reach level ${p.level} first.` };
     rec.active = id;
     writeKey(key, rec);
     changed(name, isUser);
@@ -274,9 +284,13 @@ export function replaceWithFusion(name, isUser, parentIds, persona) {
 }
 
 export function setPersonaLevel(name, isUser, id, level) {
-    const cap = personaLevelCap(name, isUser);
-    const to = cap === null ? level : Math.min(level, cap);
-    return editPersona(name, isUser, id, (p) => (to === p.level ? null : P.setPersonaLevel(p, to).persona));
+    const res = editPersona(name, isUser, id, (p) => (level === p.level ? null : { ...P.setPersonaLevel(p, level).persona, xp: 0 }));
+    // Not a Wild Card: the character is as strong as their Persona.
+    const rec = readKey(statKey(name, isUser));
+    if (res && !rec.wildCard && rec.active === id && isProgressEnabled() && getProgress(name, isUser).level !== res.level) {
+        try { setCharacterLevel(name, isUser, res.level); } catch (e) { /* levels off */ }
+    }
+    return res;
 }
 
 export function setPersonaStat(name, isUser, id, statId, value) {
@@ -344,13 +358,15 @@ setAttributeSource({
     },
 });
 
-// The equipped Persona grows (or shrinks) with its owner's level.
+// Anyone who is not a Wild Card is as strong as their Persona: its level
+// follows theirs. A Wild Card's Personas level on their own (awardPersonaXp).
 setLevelHook((key, from, to) => {
     if (!isPersonasEnabled()) return;
     const rec = readKey(key);
+    if (rec.wildCard) return;
     const i = rec.list.findIndex(p => p.id === rec.active);
-    if (i === -1) return;
-    const { persona, learned } = P.setPersonaLevel(rec.list[i], rec.list[i].level + (to - from));
+    if (i === -1 || rec.list[i].level === to) return;
+    const { persona, learned } = P.setPersonaLevel(rec.list[i], to);
     rec.list[i] = persona;
     writeKey(key, rec);
     if (learned.length) {
@@ -360,6 +376,55 @@ setLevelHook((key, from, to) => {
     const name = rest.join(':');
     syncSkills(name, ns === 'user');
 });
+
+// With a Persona, the stats grow with it: no attribute points on level-up.
+setNoPointsCheck((name, isUser) => isPersonasEnabled() && !!getActivePersona(name, isUser));
+
+/**
+ * Battle XP for a Wild Card's Personas: the one out gets it all, the others
+ * only with a Growth skill (25 / 50 / 100%). Each levels on its own (and may
+ * pass its user). Returns [{ name, levels, learned }].
+ */
+export function awardPersonaXp(name, isUser, amount) {
+    if (!isPersonasEnabled() || !(amount > 0)) return [];
+    const key = statKey(name, isUser);
+    const rec = readKey(key);
+    if (!rec.wildCard || !rec.list.length) return [];
+    const { perLevel } = getXpSettings();
+    const out = [];
+    rec.list = rec.list.map(raw => {
+        let p = P.normalizePersona(raw);
+        const share = p.id === rec.active ? 1 : P.growthShare(p);
+        if (!share) return p;
+        let xp = p.xp + Math.round(amount * share);
+        let level = p.level;
+        while (level < P.MAX_LEVEL && xp >= xpNeededAt(level, perLevel)) { xp -= xpNeededAt(level, perLevel); level++; }
+        if (level >= P.MAX_LEVEL) xp = 0;
+        const learned = [];
+        if (level !== p.level) {
+            const r = P.setPersonaLevel(p, level);
+            p = r.persona;
+            learned.push(...r.learned);
+            out.push({ name: p.name, from: raw.level, level, learned });
+        }
+        p.xp = xp;
+        return p;
+    });
+    writeKey(key, rec);
+    for (const u of out) {
+        try { globalThis.toastr?.success(`${u.name} reached level ${u.level}${u.learned.length ? ` and learned ${u.learned.join(', ')}` : ''}.`, 'Persona', { timeOut: 5000 }); } catch (e) { /* no toasts */ }
+    }
+    changed(name, isUser);
+    return out;
+}
+
+/** { level, into, needed, pct } of a Persona's own XP (a Wild Card's). */
+export function personaXpInfo(persona) {
+    const { perLevel } = getXpSettings();
+    const needed = xpNeededAt(persona.level, perLevel);
+    const into = Math.min(persona.xp || 0, needed);
+    return { level: persona.level, into, needed, pct: persona.level >= P.MAX_LEVEL ? 100 : Math.round(into / needed * 100) };
+}
 
 // ─── Prompt ─────────────────────────────────────────────────────────────────
 

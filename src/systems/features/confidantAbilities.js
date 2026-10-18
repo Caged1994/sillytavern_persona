@@ -9,7 +9,7 @@
  */
 import { getBond, isConfidantsEnabled } from './characterConfidants.js';
 import { isPartyMember } from './characterProgress.js';
-import { getActivePersona, replacePersona, isPersonasEnabled, personaLevelCap } from './characterPersonas.js';
+import { getActivePersona, replacePersona, isPersonasEnabled } from './characterPersonas.js';
 import { findInCompendium } from './personaCompendium.js';
 import * as B from '../../utils/bondModel.js';
 import * as P from '../../utils/personaModel.js';
@@ -65,9 +65,6 @@ export function awakenPersona(name) {
     let next;
     if (info.known) {
         next = P.personaFromCompendium(findInCompendium(info.into), { level: old.level });
-        // Never above its user's level.
-        const cap = personaLevelCap(name, false);
-        if (cap !== null && next.level > cap) next = P.setPersonaLevel(next, Math.max(old.level, cap)).persona;
         for (const s of old.skills) {
             if (next.skills.length >= P.MAX_SKILLS) break;
             if (!next.skills.some(x => P.nameKey(x) === P.nameKey(s))) next.skills.push(s);

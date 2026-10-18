@@ -21,7 +21,7 @@ import { repairJSON } from '../../utils/jsonRepair.js';
 import { isRpgModeActive } from './rpgMode.js';
 import { chatStore, saveChatScope } from './chatScope.js';
 import { getStatSheet, getCurrentStatValues, setCurrentStatValue, getPersonaName, notifyStatsChanged } from './characterStats.js';
-import { awardPartyXp, getXpSettings, isXpEnabled } from './characterProgress.js';
+import { awardPartyShare, isXpEnabled } from './characterProgress.js';
 import { rollCheckFor, getCheckAttributes } from './characterChecks.js';
 import { activeStats } from '../../utils/statsModel.js';
 import { resolveDifficulty, successChance } from '../../utils/checkModel.js';
@@ -179,9 +179,8 @@ export function healParty(state, health, mana) {
 
 function giveXp(state, size, reason) {
     if (!isXpEnabled()) return 0;
-    const amount = getXpSettings().tiers[size] || 0;
-    if (amount <= 0) return 0;
-    awardPartyXp(amount, { reason: `Dungeon: ${reason}`.slice(0, 80), source: 'ai' });
+    const res = awardPartyShare(size, { reason: `Dungeon: ${reason}`.slice(0, 80), source: 'ai' });
+    const amount = Math.max(0, ...Object.values(res.amounts || {}));
     state.stats.xp += amount;
     return amount;
 }

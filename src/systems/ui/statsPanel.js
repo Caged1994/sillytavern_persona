@@ -59,7 +59,7 @@ import {
 } from '../features/characterConfidants.js';
 import { arcanaNumber, MAX_RANK as CONF_MAX } from '../../utils/confidantModel.js';
 import {
-    isPersonasEnabled, getPersonaRecord, getActivePersona, addPersona, equipPersona, removePersona, personaLevelCap,
+    isPersonasEnabled, getPersonaRecord, getActivePersona, addPersona, equipPersona, removePersona, personaLevelCap, personaXpInfo,
     setPersonaLevel, setPersonaStat, cyclePersonaAffinity, addPersonaSkill, removePersonaSkill, setWildCard,
 } from '../features/characterPersonas.js';
 import { getBondAbilities, awakeningInfo, awakenPersona } from '../features/confidantAbilities.js';
@@ -83,6 +83,7 @@ import { STATUSES as COMBAT_STATUSES, STATUS_IDS as COMBAT_STATUS_IDS, ATTRIBUTE
 import { affinityTier } from '../../utils/affinityModel.js';
 import { findSkill, skillCostLabel } from '../../utils/skillModel.js';
 import { MAX_RANK as SOCIAL_MAX_RANK } from '../../utils/socialModel.js';
+import { growthShare as P_GROWTH } from '../../utils/personaModel.js';
 import { applyPersonaLook, onLookChange } from './personaLook.js';
 
 const PANEL_ID = 'dooms-stats-panel';
@@ -301,8 +302,6 @@ function affinityGridHtml(p) {
 
 function personaDetailHtml(p, rec) {
     const isActive = rec.active === p.id;
-    const cap = personaLevelCap(selected.name, selected.isUser);
-    const tooHigh = cap !== null && p.level > cap;
     const next = p.learns.filter(l => l.level > p.level).slice(0, 3);
     return `<div class="dsp-pr-detail" data-persona-id="${escapeHtml(p.id)}">
         <div class="dsp-pr-head">
@@ -313,13 +312,19 @@ function personaDetailHtml(p, rec) {
             <div class="dsp-pr-level">
                 <button type="button" class="dsp-icon-btn" data-pr-level="-1" title="One level down"><i class="fa-solid fa-minus"></i></button>
                 <span>Lv <b>${p.level}</b></span>
-                <button type="button" class="dsp-icon-btn" data-pr-level="1" ${cap !== null && p.level >= cap ? `disabled title="A Persona cannot go above ${escapeHtml(selected.name)}'s level (${cap})"` : 'title="One level up (+3 stat points)"'}><i class="fa-solid fa-plus"></i></button>
+                <button type="button" class="dsp-icon-btn" data-pr-level="1" title="One level up (+3 stat points)"><i class="fa-solid fa-plus"></i></button>
             </div>
         </div>
+        ${rec.wildCard && isXpEnabled() ? (() => {
+            const x = personaXpInfo(p);
+            const growth = !isActive && P_GROWTH(p);
+            return `<div class="dsp-pr-xp" title="${escapeHtml(isActive ? 'Out: earns all the XP of the fights' : growth ? `In reserve: earns ${Math.round(growth * 100)}% of the fights' XP (Growth)` : 'In reserve: earns XP only with a Growth skill')}">
+                <span class="dsp-xpbar"><span style="width:${x.pct}%"></span></span>
+                <span class="dsp-pr-xp-nums">${x.level >= 99 ? 'max level' : `${x.into} / ${x.needed} XP`}${isActive ? '' : growth ? ` · Growth ${Math.round(growth * 100)}%` : ' · no XP in reserve'}</span>
+            </div>`;
+        })() : ''}
         <div class="dsp-pr-actions">
-            ${isActive ? '<span class="dsp-pr-eq">Equipped</span>' : (rec.wildCard ? (tooHigh
-                ? `<button type="button" class="dsp-text-btn" disabled title="${escapeHtml(selected.name)} must reach level ${p.level} first"><i class="fa-solid fa-lock"></i> Needs Lv ${p.level}</button>`
-                : '<button type="button" class="dsp-text-btn is-primary" data-action="pr-equip"><i class="fa-solid fa-masks-theater"></i> Equip</button>') : '')}
+            ${isActive ? '<span class="dsp-pr-eq">Equipped</span>' : (rec.wildCard ? '<button type="button" class="dsp-text-btn is-primary" data-action="pr-equip"><i class="fa-solid fa-masks-theater"></i> Equip</button>' : '')}
             <span class="dsp-spacer"></span>
             <button type="button" class="dsp-text-btn" data-action="pr-remove" title="Remove this Persona"><i class="fa-solid fa-trash"></i> Remove</button>
         </div>
@@ -365,13 +370,13 @@ function personaHtml() {
             <div class="dsp-item-form-row">
                 <input type="text" class="dsp-pr-in-name" data-pr-field="name" list="dsp-pr-compendium" value="${escapeHtml(personaForm.name)}" placeholder="Name${comp.length ? ' (from the Compendium or new)' : ''}" maxlength="40" aria-label="Persona name">
                 <datalist id="dsp-pr-compendium">${comp.map(p => `<option value="${escapeHtml(p.name)}">${escapeHtml(`${p.name} — ${p.arcana} · Lv ${p.level}`)}</option>`).join('')}</datalist>
-                <input type="number" class="dsp-pr-in-level" data-pr-field="level" value="${escapeHtml(personaForm.level)}" placeholder="Lv" min="1" max="${capNow ?? 99}" aria-label="Level" title="Level (empty: the Compendium's, or the character's)">
+                <input type="number" class="dsp-pr-in-level" data-pr-field="level" value="${escapeHtml(personaForm.level)}" placeholder="Lv" min="1" max="99" aria-label="Level" title="Level (empty: the Compendium's base level, or the character's)">
             </div>
             ${personaForm.name.trim() && !known ? `<div class="dsp-item-form-row">
                 <select data-pr-field="arcana" aria-label="Arcana"><option value="">Arcana…</option>${ARCANA.map(a => `<option${a === personaForm.arcana ? ' selected' : ''}>${a}</option>`).join('')}</select>
                 <select data-pr-field="focus" aria-label="Strongest stat"><option value="">Even stats</option>${P_STATS.map(id => `<option value="${id}"${id === personaForm.focus ? ' selected' : ''}>Leans on ${P_LABELS[id]}</option>`).join('')}</select>
             </div>` : ''}
-            ${known ? `<p class="dsp-section-hint">From the Compendium: ${escapeHtml(known.arcana)} · Lv ${known.level}${capNow !== null && (!personaForm.level ? known.level !== capNow : Number(personaForm.level) > capNow) ? ` — comes in at ${escapeHtml(selected.name)}'s level (${capNow})` : ''}</p>` : (personaForm.name.trim() ? `<p class="dsp-section-hint">Not in the Compendium: the extension sets its stats from the level${capNow !== null ? ` (up to ${capNow})` : ''}.</p>` : '')}
+            ${known ? `<p class="dsp-section-hint">From the Compendium: ${escapeHtml(known.arcana)} · Lv ${known.level}${capNow !== null && known.level > capNow ? ` — ${escapeHtml(selected.name)} has not reached its base level yet: it comes in at ${escapeHtml(selected.name)}'s level (${capNow})` : ''}</p>` : (personaForm.name.trim() ? `<p class="dsp-section-hint">Not in the Compendium: the extension sets its stats from the level.</p>` : '')}
             <div class="dsp-item-form-row">
                 <span class="dsp-item-error" role="alert">${escapeHtml(personaForm.error)}</span>
                 <button type="button" class="dsp-text-btn is-primary" data-action="pr-add">Add</button>
@@ -1008,7 +1013,7 @@ function xpHtml(prog) {
                     ${party && xpOn ? `
                     <div class="dsp-xpbar is-big"><span style="width:${info.pct}%"></span></div>
                     <div class="dsp-xp-nums"><span>${info.into} / ${info.needed} XP</span><span>${info.level >= MAX_LEVEL ? 'max level' : `to level ${info.level + 1}`}</span></div>
-                    <div class="dsp-xp-nums is-dim"><span>${info.xp} XP in total</span><span>${perLevel} × level per level</span></div>`
+                    <div class="dsp-xp-nums is-dim"><span>${info.xp} XP in total</span><span>pace ${perLevel}%</span></div>`
                     : `<div class="dsp-xp-nums is-dim"><span>${xpOn ? 'Not in the party: earns no XP.' : 'Experience is off in Settings.'}</span></div>`}
                 </div>
                 <div class="dsp-xp-level">

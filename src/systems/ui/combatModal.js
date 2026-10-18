@@ -533,6 +533,7 @@ function endHtml() {
     const cur = getCurrency();
     const rewards = [];
     if (r.xpGiven) rewards.push(`<li><i class="fa-solid fa-star"></i> ${r.xpGiven} XP to the whole party</li>`);
+    for (const u of r.personaUps || []) rewards.push(`<li><i class="fa-solid fa-masks-theater"></i> ${escapeHtml(u.name)} reached level ${u.level}${u.learned?.length ? ` and learned ${escapeHtml(u.learned.join(', '))}` : ''}</li>`);
     if (r.moneyAdded) rewards.push(`<li><i class="fa-solid fa-coins"></i> ${r.moneyAdded}${cur ? ' ' + escapeHtml(cur.symbol || cur.name) : ''} found</li>`);
     for (const it of r.lootAdded || []) rewards.push(`<li><i class="fa-solid fa-box-open"></i> ${escapeHtml(it)}</li>`);
     for (const a of r.affinity || []) rewards.push(`<li><i class="fa-solid fa-heart"></i> ${escapeHtml(a.name)} ${a.delta > 0 ? 'likes you more' : 'is a little cooler toward you'}</li>`);

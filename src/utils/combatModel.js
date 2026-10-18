@@ -46,6 +46,7 @@
  *     and costs (SP, or HP for Phys skills).
  */
 import { BOND_IDS, followUpChance, harisenChance } from './bondModel.js';
+import { enemyXp } from './xpModel.js';
 
 // ─── Tuning ─────────────────────────────────────────────────────────────────
 
@@ -1426,16 +1427,18 @@ export function partyOutcome(state) {
 
 /**
  * XP, money and loot for the enemies that fell (nothing unless the party won).
- * `tierXp` is the XP table ({ small, medium, large, epic }); `partyLevel` the
+ * XP comes from each enemy's level and category (xpModel.enemyXp); `partyLevel` the
  * party's average level.
  */
-export function computeRewards(state, { tierXp = { small: 10, medium: 25, large: 50, epic: 100 }, partyLevel = 1 } = {}) {
+export function computeRewards(state, { partyLevel = 1 } = {}) {
     const out = { xp: 0, money: 0, items: [], defeated: [] };
     if (state.result !== 'victory') return out;
     for (const e of state.combatants.filter(c => c.side === 'enemy' && c.down)) {
         const tier = TUNING.tiers[e.tier] || TUNING.tiers.normal;
         const factor = clamp(e.level / Math.max(1, partyLevel), 0.5, 2);
-        const xp = Math.round((tierXp[tier.xp] ?? 0) * factor);
+        // XP grows with the enemy's own level (xpModel.js): about a fifth of
+        // a level for a normal enemy of yours, more for elites and bosses.
+        const xp = enemyXp(e.level, tier.xp);
         out.xp += xp;
         const asked = isNum(e.loot?.money) ? e.loot.money : null;
         const money = asked !== null ? clamp(Math.round(asked * 100) / 100, 0, tier.moneyCap) : Math.round(tier.money * factor);

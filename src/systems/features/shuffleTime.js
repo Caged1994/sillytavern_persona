@@ -13,7 +13,7 @@ import { isCombatEnabled, grantSpoils, setItemGear } from './combat.js';
 import { awardPartyXp, isXpEnabled } from './characterProgress.js';
 import { isMoneyEnabled, getCurrency } from './characterMoney.js';
 import { isEquipmentEnabled } from './characterEquipment.js';
-import { getPersonaRecord, addPersona, personaLevelCap, isPersonasEnabled } from './characterPersonas.js';
+import { getPersonaRecord, addPersona, personaLevelCap, isPersonasEnabled, awardPersonaXp } from './characterPersonas.js';
 import { getCompendium } from './personaCompendium.js';
 import { activeStats } from '../../utils/statsModel.js';
 import { MAX_STOCK } from '../../utils/personaModel.js';
@@ -115,7 +115,10 @@ export function takeCard(state, position, report = null) {
         text = got.money ? `${player} found ${got.money}${getCurrency() ? ' ' + (getCurrency().symbol || getCurrency().name) : ''} more` : 'a few coins, gone';
     } else if (card.suit === 'wands') {
         const xp = S.wandXp(card, rewards.xp || 0);
-        if (isXpEnabled()) awardPartyXp(xp, { reason: 'Shuffle Time — Wands', source: 'ai' });
+        if (isXpEnabled()) {
+            awardPartyXp(xp, { reason: 'Shuffle Time — Wands', source: 'ai' });
+            for (const c of state.combatants.filter(x => x.side === 'party')) awardPersonaXp(c.name, c.isUser, xp);
+        }
         text = `the party gained ${xp} extra XP`;
     } else if (card.suit === 'swords') {
         const got = grantSpoils({ items: [card.weapon] });

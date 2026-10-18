@@ -334,13 +334,14 @@ function turnOf(s, id) {
     };
     const s = mk(); s.result = 'victory';
     const r = C.computeRewards(s, { partyLevel: 1 });
-    ok(r.xp === 25 + 100, `XP follows the categories (${r.xp})`);
+    ok(r.xp === 14 + 70, `XP follows the categories: a level 1 normal 14, a boss five times that (${r.xp})`);
     ok(r.money <= C.TUNING.tiers.normal.money * 2 + C.TUNING.tiers.boss.moneyCap, 'loot money is capped');
     eq(r.items, ['Dragon scale'], 'loot items are cleaned and de-duplicated');
     s.result = 'fled';
     eq(C.computeRewards(s, {}).xp, 0, 'fleeing earns nothing');
     s.result = 'victory';
-    ok(C.computeRewards(s, { partyLevel: 10 }).xp < r.xp, 'weak enemies give less XP than their category');
+    ok(C.computeRewards(s, { partyLevel: 10 }).xp === r.xp, 'XP comes from the enemies\' level, not the party\'s');
+    { const t = fight([hero('a2'), foe('f10', { tier: 'normal', hp: 0, level: 10 })]); t.result = 'victory'; ok(C.computeRewards(t, {}).xp === 68, 'a stronger enemy gives more XP'); }
     ok(C.summarizeForNarration(s).enemies.length === 2, 'the narration summary lists the enemies');
 }
 {

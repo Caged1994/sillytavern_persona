@@ -84,16 +84,20 @@ for (const [n, u] of [['Mastera', true], ['Elena', false], ['Bram', false]]) {
 }
 
 // ── 1. The curve and the AI's values ──
-check('level 2 at 100 XP, level 3 at 300, level 4 at 600', X.xpToReach(2) === 100 && X.xpToReach(3) === 300 && X.xpToReach(4) === 600);
-check('XP total → level', X.levelForXp(99) === 1 && X.levelForXp(100) === 2 && X.levelForXp(299) === 2 && X.levelForXp(300) === 3);
-check('a custom step changes the curve', X.levelForXp(150, 50) === 3);
+check('the first levels go faster (2, 3, 3, 4 fights), then about five fights a level', X.xpToReach(2) === 28 && X.xpToReach(3) === 88 && X.xpToReach(4) === 166 && X.xpNeededAt(5) === 5 * X.enemyXpAt(5) && X.xpNeededAt(40) === 5 * X.enemyXpAt(40));
+check('XP total → level', X.levelForXp(27) === 1 && X.levelForXp(28) === 2 && X.levelForXp(87) === 2 && X.levelForXp(88) === 3);
+check('the pace changes the curve', X.levelForXp(88, 50) === 4);
+check('an enemy\'s XP grows with its level and category', X.enemyXp(30, 'medium') > X.enemyXp(10, 'medium') && X.enemyXp(10, 'epic') === 5 * X.enemyXp(10, 'medium'));
+check('a story award is a share of the level', X.storyXp('large', 20) === Math.round(X.xpNeededAt(20) * 0.35));
+const oldRec = X.normalizeRecord({ level: 5, xp: 1000 + 250 });
+check('a record from the old curve keeps its level and its share of it', oldRec.level === 5 && oldRec.curve === 2 && oldRec.xp === X.xpToReach(5) + Math.floor(0.5 * X.xpNeededAt(5)));
 const ax = (v) => JSON.stringify(X.normalizeAIXp(v));
-check('object award', ax({ size: 'large', reason: 'Beat the ogre' }) === '{"size":"large","amount":50,"reason":"Beat the ogre"}');
-check('"size: reason" text', ax('medium: Drove off the bandits') === '{"size":"medium","amount":25,"reason":"Drove off the bandits"}');
+check('object award', ax({ size: 'large', reason: 'Beat the ogre' }) === '{"size":"large","amount":35,"reason":"Beat the ogre"}');
+check('"size: reason" text', ax('medium: Drove off the bandits') === '{"size":"medium","amount":15,"reason":"Drove off the bandits"}');
 check('synonyms', X.normalizeAIXp({ tier: 'minor' }).size === 'small' && X.normalizeAIXp('legendary').size === 'epic');
-check('a number maps to the closest size', X.normalizeAIXp(30).size === 'medium' && X.normalizeAIXp({ amount: 90, reason: 'x' }).size === 'epic');
+check('a number maps to the closest size', X.normalizeAIXp(14).size === 'medium' && X.normalizeAIXp({ amount: 90, reason: 'x' }).size === 'epic');
 check('a list keeps only the biggest award', X.normalizeAIXp([{ size: 'small' }, { size: 'large', reason: 'big' }]).reason === 'big');
-check('the user\'s amounts are used', X.normalizeAIXp('small', { small: 7 }).amount === 7);
+check('the user\'s amounts are used', X.normalizeAIXp('small', { small: 7, curve: 2 }).amount === 7 && X.normalizeAIXp('small', { small: 70 }).amount === 5);
 check('junk gives no award', X.normalizeAIXp('nothing happened') === null && X.normalizeAIXp({}) === null);
 check('levels in several shapes', JSON.stringify(X.normalizeAILevels({ A: 4, B: 'Lv 7', C: { level: 2 }, D: 'x' })) === '[{"name":"A","level":4},{"name":"B","level":7},{"name":"C","level":2}]');
 
@@ -102,30 +106,30 @@ check('the persona starts at level 1', P.getProgress('Mastera', true).level === 
 check('only the persona is in the party at first', P.getPartyMembers().length === 1);
 P.setPartyMember('Elena', true);
 check('an NPC can join the party', P.isPartyMember('Elena') && P.getPartyMembers().map(m => m.name).join() === 'Mastera,Elena');
-P.awardPartyXp(60, { reason: 'Fight', source: 'ai' });
-check('each member gets the same XP', P.getProgress('Mastera', true).xp === 60 && P.getProgress('Elena').xp === 60);
+P.awardPartyXp(20, { reason: 'Fight', source: 'ai' });
+check('each member gets the same XP', P.getProgress('Mastera', true).xp === 20 && P.getProgress('Elena').xp === 20);
 check('NPCs outside the party get nothing', P.getProgress('Bram').xp === 0);
 toasts.length = 0;
-P.awardPartyXp(50, { reason: 'Puzzle', source: 'ai' });
+P.awardPartyXp(10, { reason: 'Puzzle', source: 'ai' });
 let m = P.getProgress('Mastera', true);
-check('level up at 100 XP with 3 points', m.level === 2 && m.points === 3, JSON.stringify(m));
+check('level up at 28 XP with 3 points', m.level === 2 && m.points === 3, JSON.stringify(m));
 check('a level-up toast per member', toasts.length === 2 && /reached level 2/.test(toasts[0]));
 check('the log keeps the award and the level reached', m.log.length === 2 && m.log[1].reason === 'Puzzle' && m.log[1].level === 2);
-check('XP into the level', JSON.stringify(P.getLevelInfo('Mastera', true)) === JSON.stringify({ level: 2, xp: 110, into: 10, needed: 200, pct: 5 }));
+check('XP into the level', JSON.stringify(P.getLevelInfo('Mastera', true)) === JSON.stringify({ level: 2, xp: 30, into: 2, needed: 60, pct: 3 }));
 P.awardXpTo('Mastera', true, 500, { reason: 'Big', source: 'user' });
 m = P.getProgress('Mastera', true);
-check('several levels at once', m.level === 4 && m.points === 9, JSON.stringify(m));
+check('several levels at once', m.level === 6 && m.points === 15, JSON.stringify(m));
 P.removeLogEntry('Mastera', true, m.log[m.log.length - 1].id);
 m = P.getProgress('Mastera', true);
-check('deleting a log entry takes its XP back, the level stays', m.xp === 110 && m.level === 4);
+check('deleting a log entry takes its XP back, the level stays', m.xp === 30 && m.level === 6);
 
 // ── 3. Attribute points ──
 const str0 = S.getCurrentStatValues('Mastera', true).st;
 check('spending a point raises the attribute', P.spendPoint('Mastera', true, 'st') && S.getCurrentStatValues('Mastera', true).st === str0 + 1);
 P.spendPoint('Mastera', true, 'st');
 m = P.getProgress('Mastera', true);
-check('points and spending are tracked', m.points === 7 && m.spent.st === 2);
-check('a point can be taken back', P.refundPoint('Mastera', true, 'st') && S.getCurrentStatValues('Mastera', true).st === str0 + 1 && P.getProgress('Mastera', true).points === 8);
+check('points and spending are tracked', m.points === 13 && m.spent.st === 2);
+check('a point can be taken back', P.refundPoint('Mastera', true, 'st') && S.getCurrentStatValues('Mastera', true).st === str0 + 1 && P.getProgress('Mastera', true).points === 14);
 check('states take no points', P.spendPoint('Mastera', true, 'health') === false);
 check('no refund without a spent point', P.refundPoint('Mastera', true, 'ag') === false);
 P.setUnspentPoints('Mastera', true, 0);
@@ -134,11 +138,11 @@ check('without points nothing is spent', P.spendPoint('Mastera', true, 'ag') ===
 // ── 4. Prompt: XP rules and NPC levels ──
 let instr = pb.generateTrackerInstructions(false, false);
 check('the XP rules are sent', instr.includes('EXPERIENCE') && instr.includes('"xp": {"size": "medium"'));
-check('sizes carry the user\'s amounts', instr.includes('small (10)') && instr.includes('epic (100,'));
-check('the party is named with levels', instr.includes('Mastera (player character) Lv 4') && instr.includes('Elena Lv 2'));
+check('sizes carry the user\'s shares', instr.includes('small (5%)') && instr.includes('epic (75%,'));
+check('the party is named with levels', instr.includes('Mastera (player character) Lv 6') && instr.includes('Elena Lv 2'));
 check('a new NPC is asked for a level', /LEVELS — .*"Bram": 3/.test(instr), instr.slice(instr.indexOf('LEVELS'), instr.indexOf('LEVELS') + 200));
 check('party members are not asked for a level', !/"levels": \{[^}]*Elena/.test(instr));
-check('separate-mode context has the levels', pb.generateContextualSummary().includes('Levels: Mastera Lv 4 (party), Elena Lv 2 (party)'));
+check('separate-mode context has the levels', pb.generateContextualSummary().includes('Levels: Mastera Lv 6 (party), Elena Lv 2 (party)'));
 
 // ── 5. AI round-trip + undo ──
 const reply = '```json\n{"infoBox":{"location":{"value":"Inn"}},"xp":{"size":"large","reason":"Saved the village"},"levels":{"Bram":6}}\n```\nStory';
@@ -149,7 +153,7 @@ check('a bare xp object is not a parsing failure', !parseResponse('{"xp":{"size"
 chat.push({ is_user: true, mes: 'go' }, { is_user: false, mes: reply });
 const before = JSON.stringify(extensionSettings.characterProgress);
 const res = P.applyAIProgress(parsed.xp, parsed.levels, chat.length - 1);
-check('award goes to the whole party', res.amount === 50 && res.members === 2, JSON.stringify(res));
+check('award goes to the whole party, a share of each one\'s level', res.amount === X.storyXp('large', 6) && res.members === 2 && P.getProgress('Elena').xp === 30 + X.storyXp('large', 2), JSON.stringify(res));
 check('Bram got his level', P.getProgress('Bram').level === 6 && P.getProgress('Bram').levelSet === 'ai' && P.getProgress('Bram').xp === 0 + X.xpToReach(6));
 check('Bram is not asked again', !P.needsLevel('Bram'));
 P.requestLevelGeneration('Bram');
@@ -169,17 +173,19 @@ check('nothing for a reply that is not the one replaced', P.revertAIProgressForR
 
 // ── 6. Quests ──
 const xp0 = P.getProgress('Elena').xp;
+const lv0 = P.getProgress('Elena').level;
 const q = P.awardQuestXp('Find the sword', 'main');
-check('a completed main quest gives epic XP to the party', q.amount === 100 && P.getProgress('Elena').xp === xp0 + 100);
+check('a completed main quest gives epic XP to the party', q.amount > 0 && P.getProgress('Elena').xp === xp0 + X.storyXp('epic', lv0));
 check('the log names the quest', P.getProgress('Elena').log.at(-1).reason === 'Quest completed: Find the sword' && P.getProgress('Elena').log.at(-1).source === 'quest');
 P.setXpSetting('questOptional', 'small');
-check('quest sizes are configurable', P.awardQuestXp('Herbs', 'optional').amount === 10);
+const mLv = P.getProgress('Mastera', true).level;
+check('quest sizes are configurable', P.awardQuestXp('Herbs', 'optional').amount === X.storyXp('small', mLv));
 
 // ── 7. Settings ──
 P.setXpSetting('small', 15);
 P.setXpSetting('perLevel', 50);
 check('custom amounts and curve', P.getXpSettings().tiers.small === 15 && P.getXpSettings().perLevel === 50);
-check('the curve applies to levels', P.getLevelInfo('Mastera', true).needed === 4 * 50);
+check('the pace applies to levels', P.getLevelInfo('Mastera', true).needed === X.xpNeededAt(P.getProgress('Mastera', true).level, 50));
 P.setXpSetting('perLevel', 100);
 P.setXpEnabled(false);
 instr = pb.generateTrackerInstructions(false, false);
@@ -192,9 +198,9 @@ P.setXpEnabled(true);
 otherChat();
 check('another chat starts fresh', P.getProgress('Mastera', true).level === 1 && !P.isPartyMember('Elena'));
 P.awardPartyXp(100, { reason: 'c1' });
-check('it levels on its own', P.getProgress('Mastera', true).level === 2);
+check('it levels on its own', P.getProgress('Mastera', true).level === 3);
 backToChat();
-check('the first chat is untouched', P.getProgress('Mastera', true).level === 4);
+check('the first chat is untouched', P.getProgress('Mastera', true).level === 6);
 
 // ── 9. RPG mode ──
 check('on by default', R.isRpgModeActive() && R.rpgModeSource() === 'default');

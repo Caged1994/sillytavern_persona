@@ -1885,3 +1885,8 @@ input.dsp-xp-big { width: 3em; font-size: 20px; text-align: center; }
 
 /* Rank pips in the social stats list: the Persona look shows them. */
 .dsp-soc-row-lv { display: none; }
+
+/* A Wild Card's Persona: its own XP toward the next level. */
+.dsp-pr-xp { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 8px; }
+.dsp-pr-xp .dsp-xpbar { height: 5px; }
+.dsp-pr-xp-nums { font-size: 11px; color: var(--dsp-muted); }

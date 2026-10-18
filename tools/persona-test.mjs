@@ -101,6 +101,7 @@ chat.push({ is_user: true, mes: 'a' }, { is_user: false, mes: 'b' });
 const last = () => chat.length - 1;
 
 
+const XM = await import(`${DES}/src/utils/xpModel.js`);
 const PM = await import(`${DES}/src/utils/personaModel.js`);
 const CM = await import(`${DES}/src/utils/combatModel.js`);
 const SK = await import(`${DES}/src/utils/skillModel.js`);
@@ -141,10 +142,11 @@ S.setCurrentStatValue('Mastera', true, 'st', 5);
 check('editing St edits the Persona', Pe.getActivePersona('Mastera', true).stats.st === 5);
 check('...not the Compendium', ars.stats.st === 2);
 const bic0 = Pe.addPersona('Mastera', true, { name: 'Bicorn', arcana: 'Hermit', focus: 'st', level: 6 });
-check('a Persona asked above the character\'s level comes in at the character\'s level', bic0.persona?.level === P.getProgress('Mastera', true).level);
+check('a Persona not in the Compendium comes in at the level typed, even above its user', bic0.persona?.level === 6);
 Pe.removePersona('Mastera', true, bic0.persona?.id);
+const lvArs = Pe.getActivePersona('Mastera', true).level;
 P.setLevel('Mastera', true, 7);
-check('...the equipped one levels with the character', Pe.getActivePersona('Mastera', true).level === 7);
+check('a Wild Card\'s Persona does not follow the character\'s level', Pe.getActivePersona('Mastera', true).level === lvArs);
 r = Pe.addPersona('Mastera', true, { name: 'Bicorn', arcana: 'Hermit', focus: 'st', level: 6 });
 check('a Persona not in the Compendium is made from the level', r.persona?.level === 6 && Object.values(r.persona.stats).reduce((a, b) => a + b, 0) === PM.statTotalAt(6));
 check('a Wild Card keeps the first one equipped', Pe.getActivePersona('Mastera', true).name === 'Arsène' && Pe.getPersonas('Mastera', true).length === 2);
@@ -156,21 +158,35 @@ check('an NPC is not a Wild Card', Pe.getPersonaRecord('Elena', false).wildCard 
 Pe.addPersona('Elena', false, { name: 'Carmen', arcana: 'Lovers', focus: 'ma' });
 Pe.addPersona('Elena', false, { name: 'Hecate', arcana: 'Lovers', focus: 'ma' });
 check('for anyone else a new Persona replaces the old (evolution)', Pe.getPersonas('Elena', false).map(p => p.name).join() === 'Hecate');
+P.setLevel('Elena', false, 9);
+check('not a Wild Card: the Persona follows the character\'s level', Pe.getActivePersona('Elena', false).level === 9);
+Pe.setPersonaLevel('Elena', false, Pe.getActivePersona('Elena', false).id, 12);
+check('...and the character follows the Persona\'s', P.getProgress('Elena', false).level === 12);
 
-// ── 3. Levels follow the owner ──
+// ── 3. Levels: a Wild Card's Personas earn their own XP ──
 Pe.equipPersona('Mastera', true, Pe.getPersonas('Mastera', true).find(p => p.name === 'Arsène').id);
 const before = Pe.getActivePersona('Mastera', true);
-const lvBefore = P.getProgress('Mastera', true).level;
 P.awardXpTo('Mastera', true, 2000, { silent: true });
+check('story XP levels the character, not the Persona', Pe.getActivePersona('Mastera', true).level === before.level && P.getProgress('Mastera', true).level > 7);
+check('with a Persona the character gets no attribute points', P.getProgress('Mastera', true).points === 0);
+const ups = Pe.awardPersonaXp('Mastera', true, 2000);
 const after = Pe.getActivePersona('Mastera', true);
-const gained = P.getProgress('Mastera', true).level - lvBefore;
-check('a character level-up levels the equipped Persona', gained > 0 && after.level === before.level + gained, `levels ${gained}, persona ${before.level} → ${after.level}`);
+const gained = after.level - before.level;
+check('fight XP levels the Persona that is out', gained > 0 && ups.some(u => u.name === 'Arsène'), JSON.stringify(ups));
 check('...with 3 points a level', Object.values(after.stats).reduce((a, b) => a + b, 0) === Object.values(before.stats).reduce((a, b) => a + b, 0) + 3 * gained);
 check('...and learns its skills', after.skills.includes('Rakukaja'));
+check('...keeping the XP left over', after.xp > 0 && after.xp < XM.xpNeededAt(after.level));
 check('the other Personas stay where they are', Pe.getPersonas('Mastera', true).find(p => p.name === 'Bicorn').level === 6);
+{
+    const b0 = Pe.getPersonas('Mastera', true).find(p => p.name === 'Bicorn');
+    Pe.addPersonaSkill('Mastera', true, b0.id, 'Growth 2');
+    Pe.awardPersonaXp('Mastera', true, 40);
+    check('a Persona in reserve with Growth 2 gets half', Pe.getPersonas('Mastera', true).find(p => p.name === 'Bicorn').xp === 20);
+    Pe.removePersonaSkill('Mastera', true, b0.id, 'Growth 2');
+}
 const bic = Pe.getPersonas('Mastera', true).find(p => p.name === 'Bicorn');
 Pe.setPersonaLevel('Mastera', true, bic.id, 99);
-check('a Persona cannot be raised above its user', Pe.getPersonas('Mastera', true).find(p => p.name === 'Bicorn').level === P.getProgress('Mastera', true).level);
+check('a Persona can be raised above its user', Pe.getPersonas('Mastera', true).find(p => p.name === 'Bicorn').level === 99);
 Pe.setPersonaLevel('Mastera', true, bic.id, 6);
 Comp.setCompendiumForTests([ars, { ...ars, name: 'Satanael', level: 95, stats: { st: 60, ma: 60, en: 60, ag: 60, lu: 60 } }]);
 const satHand = Pe.addPersona('Mastera', true, 'Satanael');
