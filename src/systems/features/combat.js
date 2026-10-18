@@ -44,7 +44,7 @@ import { itemKey } from '../../utils/equipmentModel.js';
 import { formatEffects } from '../../utils/effectsModel.js';
 import * as M from '../../utils/combatModel.js';
 import { findSkill, isCombatSkill, profileFromSkill, skillCost, passiveAffinity, spPointsAt } from '../../utils/skillModel.js';
-import { getActivePersona, isPersonasEnabled } from './characterPersonas.js';
+import { getActivePersona, isPersonasEnabled, getPersonaRecord, canUsePersona, equipPersona } from './characterPersonas.js';
 import { findInCompendium, getCompendium } from './personaCompendium.js';
 import { normalizeAffinities as normalizePersonaAffinities } from '../../utils/personaModel.js';
 import { buildEncounterSetupPrompt, buildCombatNarrationPrompt } from '../generation/combatPrompts.js';
@@ -250,14 +250,46 @@ export function buildPartyMember(name, isUser, id = combatId('p', name)) {
     const affinities = persona ? { ...persona.affinities } : {};
     const rank = { '': 1, wk: 0, rs: 2, nu: 3, dr: 4, rp: 5 };
 
+    // A Wild Card can switch between the Personas they may use (once a turn):
+    // each comes with its own attributes, affinities and skills.
+    const rec = persona && isPersonasEnabled() ? getPersonaRecord(name, isUser) : null;
+    const usable = rec?.wildCard ? rec.list.filter(p => p.id === persona.id || canUsePersona(name, isUser, p)) : [];
+    const switching = usable.length > 1;
+    const better = (map, pa) => { if (pa && (rank[pa.val] ?? 0) > (rank[map[pa.el] || ''] ?? 1)) map[pa.el] = pa.val; };
+    const sharedPassives = [];
+
     if (isAbilitiesEnabled()) {
         for (const a of getAbilities(name, isUser)) {
+            // With switching, the Persona's own skills come with its set below.
+            if (switching && a.fromPersona) continue;
             const pa = passiveAffinity(findSkill(a.name));
-            if (pa && (rank[pa.val] ?? 0) > (rank[affinities[pa.el] || ''] ?? 1)) affinities[pa.el] = pa.val;
+            better(affinities, pa);
+            if (pa && !a.fromPersona) sharedPassives.push(pa);
             const r = abilityAction(owner, a, hasMana ? tiers : null, level);
             if (!r.labelled) unlabelled.push({ owner, name, isUser, kind: a.type === 'spell' ? 'spell' : 'ability', ref: a.name, desc: a.desc, cost: a.cost });
             if (r.action) actions.push(r.action);
         }
+    }
+    let personaSets = null;
+    if (switching) {
+        personaSets = usable.map(p => {
+            const set = { id: p.id, name: p.name, arcana: p.arcana, level: p.level, attrs: {}, affinities: { ...p.affinities }, actions: [] };
+            // The same bonuses (gear, conditions) on top of this Persona's stats.
+            for (const id of Object.keys(attrs)) {
+                set.attrs[id] = Math.max(1, Math.round(attrs[id] - (persona.stats?.[id] || 0) + (p.stats?.[id] || 0)));
+            }
+            for (const pa of sharedPassives) better(set.affinities, pa);
+            for (const skill of p.skills || []) {
+                better(set.affinities, passiveAffinity(findSkill(skill)));
+                const r = abilityAction(owner, { id: `${p.id}:${String(skill).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`, name: skill, type: 'spell' }, hasMana ? tiers : null, level);
+                if (r.action) set.actions.push({ ...r.action, fromPersona: true });
+            }
+            return set;
+        });
+        const mine = personaSets.find(x => x.id === persona.id);
+        for (const k of Object.keys(affinities)) delete affinities[k];
+        Object.assign(affinities, mine.affinities);
+        actions.push(...mine.actions);
     }
     if (isEquipmentEnabled()) {
         for (const it of getEquipment(name, isUser)) {
@@ -283,6 +315,8 @@ export function buildPartyMember(name, isUser, id = combatId('p', name)) {
         armor, atkBonus, actions, affinities,
         spMax: hasMana ? spPointsAt(level) : null,
         persona: persona ? persona.name : undefined,
+        personas: personaSets || undefined,
+        personaId: persona ? persona.id : undefined,
         bond: combatBond(name, isUser) || undefined,
     });
     return { combatant, unlabelled };
@@ -602,6 +636,11 @@ export function applyOutcome(state) {
     state.applied = true;
 
     const outcomes = M.partyOutcome(state);
+    // The Persona out at the end of the fight stays equipped.
+    for (const c of state.combatants) {
+        if (c.side !== 'party' || !c.personas || !c.personaId || c.personaId === c.personaStart) continue;
+        try { equipPersona(c.name, c.isUser, c.personaId); } catch (e) { console.warn('[Dooms Tracker] Combat: re-equipping the Persona failed', e); }
+    }
     for (const o of outcomes) {
         const sheet = activeStats(getStatSheet(o.name, o.isUser));
         const row = { name: o.name, isUser: o.isUser, healthPct: o.healthPct, down: o.down };

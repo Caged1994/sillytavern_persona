@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Fights: a Wild Card changes Persona on their turn (free, once a turn, from the new Persona button): its attributes, affinities and skills replace the old one's, HP and SP stay; the Persona out at the end stays equipped.
 - Fix: adding a Persona by hand, the Compendium suggestions can be searched by name in Firefox too (it matched only the "Arcana · Lv" label).
 - Fix: enemies were built on the old Better Stats scale (about 10 in every attribute at level 1) while characters follow their Personas (about 3 at level 1), so even a level 1 minion was out of reach. Enemies now grow like the Compendium's Personas (~3 at level 1, ~14 at 20, ~32 at 50, ~57 at 90); normal enemies have a little less HP and elites trade attributes for HP, keeping the same odds at every level (one normal: easy; two normals or an elite: a real fight alone; a boss: a party's job).
 - Persona look (on by default, Settings → Theme): Persona 4 style for the Stats panel, fights, Shuffle Time, dungeons and the chat — black, one accent, heavy slanted italics, TV-static title bars. Presets Yellow (P4) / Blue (P3) / Red (P5) plus your own accent, HP and SP colours; the pop-out follows. The Velvet Room stays blue.

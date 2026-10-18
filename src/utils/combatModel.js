@@ -358,6 +358,17 @@ export function makeCombatant(spec) {
         known: {},
     };
     if (spec.persona) c.persona = String(spec.persona);
+    // Wild Card: the Personas to switch between ({ id, name, arcana, level, attrs, affinities, actions }).
+    if (Array.isArray(spec.personas) && spec.personas.length > 1) {
+        c.personas = spec.personas.map(p => ({
+            id: String(p.id), name: String(p.name), arcana: p.arcana || '', level: p.level || level,
+            attrs: { ...attrs, ...(p.attrs || {}) }, affinities: normalizeAffinityMap(p.affinities),
+            actions: (p.actions || []).filter(a => a && a.id).map(a => ({ ...a, fromPersona: true })),
+        }));
+        c.personaId = spec.personaId ? String(spec.personaId) : c.personas[0].id;
+        c.personaStart = c.personaId;
+        c.switched = false;
+    }
     // Confidant abilities of a teammate (bondModel.js): { rank, abilities: [ids] }.
     if (spec.bond && Array.isArray(spec.bond.abilities)) {
         c.bond = { rank: Math.round(spec.bond.rank) || 0, abilities: spec.bond.abilities.filter(x => BOND_IDS.includes(x)), ranks: { ...(spec.bond.ranks || {}) } };
@@ -458,6 +469,34 @@ export function currentActor(state) {
     if (state.phase !== 'active') return null;
     if (state.extra && state.extra.actor) return getCombatant(state, state.extra.actor);
     return getCombatant(state, state.order[state.turn]);
+}
+
+/** Whether `c` (the current actor) can change Persona now: a Wild Card, once a turn. */
+export function canSwitchPersona(state, c) {
+    if (!c || !c.personas || c.personas.length < 2 || c.down) return false;
+    const actor = currentActor(state);
+    return !!actor && actor.id === c.id && !c.switched;
+}
+
+/**
+ * Changes the actor's Persona (a free action, once a turn): its attributes,
+ * affinities and skills replace the old one's; HP and SP stay.
+ * @returns {{ ok: boolean, reason?: string }}
+ */
+export function switchPersona(state, actorId, personaId) {
+    const c = getCombatant(state, actorId);
+    if (!canSwitchPersona(state, c)) return { ok: false, reason: c?.switched ? 'already changed this turn' : 'cannot change Persona now' };
+    const p = c.personas.find(x => x.id === String(personaId));
+    if (!p) return { ok: false, reason: 'no such Persona' };
+    if (p.id === c.personaId) return { ok: false, reason: 'already out' };
+    c.attrs = { ...p.attrs };
+    c.affinities = { ...p.affinities };
+    c.actions = [...c.actions.filter(a => !a.fromPersona), ...p.actions.map(a => ({ ...a }))];
+    c.persona = p.name;
+    c.personaId = p.id;
+    c.switched = true;
+    push(state, [], { type: 'use', actor: c.id, text: `${c.name} summons ${p.name}${p.arcana ? ` (${p.arcana})` : ''}!` });
+    return { ok: true };
 }
 
 /** Whether the current actor is in a 1 More (an extra action). */
@@ -1186,6 +1225,7 @@ function beginTurn(state, events) {
         const actor = currentActor(state);
         if (!actor || actor.down) { stepIndex(state, events); continue; }
         actor.guard = false;
+        actor.switched = false;
         for (const id of Object.keys(actor.cooldowns)) {
             if (actor.cooldowns[id] > 0) actor.cooldowns[id]--;
             if (actor.cooldowns[id] <= 0) delete actor.cooldowns[id];

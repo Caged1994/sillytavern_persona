@@ -1,5 +1,5 @@
 {
-    "version": "0.3.2",
+    "version": "0.3.3",
     "title": "Persona Stats 0.3",
     "items": [
         {
@@ -17,6 +17,10 @@
         {
             "title": "Fairer enemies",
             "body": "Enemies now grow like the Personas of the Compendium: a level 1 Shadow has the stats of a level 1 Persona, not five times more."
+        },
+        {
+            "title": "Change Persona in battle",
+            "body": "A Wild Card can switch Persona on their turn — free, once a turn — with its own stats, affinities and skills."
         }
     ]
 }

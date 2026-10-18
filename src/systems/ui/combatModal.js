@@ -351,6 +351,20 @@ function actionsHtml(actor) {
     }
     const abilities = actor.actions.filter(a => a.kind === 'spell' || a.kind === 'ability');
     const items = actor.actions.filter(a => a.kind === 'item');
+    const canSwitch = M.canSwitchPersona(fight, actor);
+    if (ui.menu === 'personas' && canSwitch) {
+        return `<div class="dcb-actions">
+            <p class="dcb-hint"><i class="fa-solid fa-masks-theater"></i> Change Persona — free, once a turn</p>
+            <div class="dcb-act-list">${actor.personas.map(p => {
+                const out = p.id === actor.personaId;
+                const weak = Object.entries(p.affinities || {}).filter(([, v]) => v === 'wk').map(([k]) => ELEMENT_NAMES[k] || k);
+                return `<button type="button" class="dcb-act dcb-persona-pick${out ? ' is-out' : ''}" data-action="switch-persona" data-id="${escapeHtml(p.id)}" ${out ? 'disabled' : ''}
+                    title="${escapeHtml(`${p.name} — ${p.arcana}, Lv ${p.level}. Skills: ${p.actions.map(a => a.label).join(', ') || 'none'}${weak.length ? `. Weak to ${weak.join(', ')}` : ''}`)}">
+                    <span class="dcb-act-icon">🎭</span><span class="dcb-act-name">${escapeHtml(p.name)}</span>
+                    <span class="dcb-chip">${escapeHtml(p.arcana || '')} · Lv ${p.level}</span>${out ? '<span class="dcb-chip">out</span>' : ''}</button>`;
+            }).join('')}</div>
+            <button type="button" class="dcb-btn" data-action="menu" data-menu="main"><i class="fa-solid fa-arrow-left"></i> Back</button></div>`;
+    }
     if (ui.menu === 'abilities' || ui.menu === 'items') {
         const list = ui.menu === 'abilities' ? abilities : items;
         return `<div class="dcb-actions">
@@ -372,6 +386,7 @@ function actionsHtml(actor) {
         <div class="dcb-act-main">
             ${basic ? actionButton(actor, basic) : ''}
             <button type="button" class="dcb-act" data-action="menu" data-menu="abilities" ${abilities.length ? '' : 'disabled'}><span class="dcb-act-icon">🔮</span><span class="dcb-act-name">Spells &amp; skills</span><span class="dcb-chip">${abilities.length}</span></button>
+            ${actor.personas ? `<button type="button" class="dcb-act" data-action="menu" data-menu="personas" ${canSwitch ? '' : 'disabled'} title="${canSwitch ? 'Change Persona (free, once a turn)' : 'Already changed this turn'}"><span class="dcb-act-icon">🎭</span><span class="dcb-act-name">Persona</span><span class="dcb-chip">${escapeHtml(actor.persona || '')}</span></button>` : ''}
             <button type="button" class="dcb-act" data-action="menu" data-menu="items" ${items.length ? '' : 'disabled'}><span class="dcb-act-icon">🎒</span><span class="dcb-act-name">Items</span><span class="dcb-chip">${items.length}</span></button>
             <button type="button" class="dcb-act" data-action="defend" title="Take half damage until your next turn"><span class="dcb-act-icon">🛡️</span><span class="dcb-act-name">Defend</span></button>
             <button type="button" class="dcb-act" data-action="flee" title="Chance to escape the whole party"><span class="dcb-act-icon">🏃</span><span class="dcb-act-name">Flee</span><span class="dcb-chip">${flee}%</span></button>
@@ -644,6 +659,12 @@ async function fightAction(action, el) {
     if (!actor || actor.side !== 'party') return;
     if (action === 'menu') { ui.menu = el.dataset.menu; render(); return; }
     if (action === 'cancel-target') { ui.pending = null; render(); return; }
+    if (action === 'switch-persona') {
+        const r = M.switchPersona(fight, actor.id, el.dataset.id);
+        if (r.ok) { ui.menu = 'main'; saveLiveEncounter(fight); }
+        render();
+        return;
+    }
     if (action === 'defend') { M.defend(fight, actor.id); return endTurn(); }
     if (action === 'allout') { M.allOutAttack(fight); return endTurn(); }
     if (action === 'baton') {

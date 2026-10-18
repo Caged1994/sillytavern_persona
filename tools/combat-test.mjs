@@ -432,5 +432,33 @@ ok(C.guessProfile('ability', 'Power strike', '', {}).type === 'damage', 'guess: 
     ok(r.physical > r.magic && r.magic > 0 && r.physical < 1, 'damageReduction: physical > magic, both in (0,1)');
 }
 
+// ── Wild Card: changing Persona in the fight ──
+{
+    const zio = act('z', { type: 'damage', power: 'light', stat: 'ma', target: 'enemy' });
+    const agi = act('a', { type: 'damage', power: 'light', stat: 'ma', target: 'enemy' });
+    const personas = [
+        { id: 'iz', name: 'Izanagi', arcana: 'Fool', level: 5, attrs: { st: 5, ma: 3 }, affinities: { wind: 'wk' }, actions: [zio] },
+        { id: 'px', name: 'Pyro Jack', arcana: 'Magician', level: 4, attrs: { st: 2, ma: 7 }, affinities: { ice: 'wk', fire: 'nu' }, actions: [agi] },
+    ];
+    const w = hero('w', { personas, personaId: 'iz', persona: 'Izanagi', attrs: { st: 5, ma: 3 } }, [{ ...zio, fromPersona: true }]);
+    const d = foe('d');
+    const s = fight([w, d]);
+    turnOf(s, 'w');
+    ok(C.canSwitchPersona(s, w), 'a Wild Card can change Persona on their turn');
+    eq(C.switchPersona(s, 'w', 'iz').ok, false, 'not to the one already out');
+    const before = w.hp;
+    ok(C.switchPersona(s, 'w', 'px').ok, 'changes Persona');
+    ok(w.persona === 'Pyro Jack' && w.attrs.ma === 7 && w.affinities.fire === 'nu' && w.affinities.wind === '' , 'takes its stats and affinities');
+    ok(w.actions.some(a => a.id === 'a') && !w.actions.some(a => a.id === 'z') && w.actions.some(a => a.id === 'basic'), 'its skills replace the old ones; the basic attack stays');
+    ok(w.hp === before && C.currentActor(s).id === 'w', 'free: HP the same and still their turn');
+    ok(!C.canSwitchPersona(s, w) && !C.switchPersona(s, 'w', 'iz').ok, 'once a turn');
+    C.performAction(s, 'w', 'a', 'd');
+    C.advance(s);
+    while (C.currentActor(s) && C.currentActor(s).id !== 'w' && s.phase === 'active') { C.runEnemyTurn(s); if (s.phase === 'active') C.advance(s); }
+    if (s.phase === 'active') ok(C.canSwitchPersona(s, w), 'again on the next turn');
+    ok(!C.canSwitchPersona(s, hero('solo')), 'one Persona: nothing to change');
+    ok(!C.canSwitchPersona(s, d), 'not on someone else\'s turn');
+}
+
 console.log(`combat model: ${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
