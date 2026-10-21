@@ -87,6 +87,8 @@ import { growthShare as P_GROWTH } from '../../utils/personaModel.js';
 import { applyPersonaLook, onLookChange } from './personaLook.js';
 import { freeTimeNow, getPendingFreeTime, pickActivity, pickHangout, cancelFreeTime } from '../features/freeTime.js';
 import * as FT from '../../utils/activityModel.js';
+import { isMapEnabled, getPlaces, mapNow, goTo, cancelTravel, getPendingTravel } from '../features/map.js';
+import * as PM from '../../utils/placeModel.js';
 
 const PANEL_ID = 'dooms-stats-panel';
 const POPOUT_NAME = 'dooms-stats-popout';
@@ -112,6 +114,7 @@ const SECTIONS = [
     { id: 'social', label: 'Social', icon: 'fa-star' },
     { id: 'confidants', label: 'Confidants', icon: 'fa-people-arrows' },
     { id: 'calendar', label: 'Calendar', icon: 'fa-calendar-days' },
+    { id: 'map', label: 'Map', icon: 'fa-map-location-dot' },
     { id: 'equipment', label: 'Equipment', icon: 'fa-shield-halved' },
     { id: 'abilities', label: 'Abilities', icon: 'fa-wand-sparkles' },
     { id: 'memories', label: 'Memories', icon: 'fa-brain' },
@@ -423,6 +426,84 @@ function freeTimeHtml() {
         <div class="dsp-ft-grid">${ft.activities.map(act).join('')}</div>
         ${ft.people.length ? `<div class="dsp-ft-grid">${ft.people.map(who).join('')}</div>` : ''}
     </div>`;
+}
+
+// ─── Map ────────────────────────────────────────────────────────────────────
+
+const mapView = { sel: null };
+let mapError = '';
+
+/** A smooth SVG path through points (percent coordinates). */
+function smoothPath(points, closed = false) {
+    const p = points;
+    if (p.length < 2) return '';
+    const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const f = (n) => Math.round(n * 100) / 100;
+    if (closed) {
+        const start = mid(p[p.length - 1], p[0]);
+        let d = `M${f(start[0])} ${f(start[1])}`;
+        for (let i = 0; i < p.length; i++) { const m = mid(p[i], p[(i + 1) % p.length]); d += ` Q${f(p[i][0])} ${f(p[i][1])} ${f(m[0])} ${f(m[1])}`; }
+        return d + ' Z';
+    }
+    let d = `M${f(p[0][0])} ${f(p[0][1])}`;
+    for (let i = 1; i < p.length - 1; i++) { const m = mid(p[i], p[i + 1]); d += ` Q${f(p[i][0])} ${f(p[i][1])} ${f(m[0])} ${f(m[1])}`; }
+    return d + ` L${f(p[p.length - 1][0])} ${f(p[p.length - 1][1])}`;
+}
+
+function mapHtml() {
+    const m = mapNow();
+    if (!m) {
+        return `<section class="dsp-section dsp-map"><div class="dsp-items-empty">${getCalNow() ? 'No places yet. Add lorebook entries titled "Place:".' : 'No date yet: the map opens with the calendar.'}</div></section>`;
+    }
+    const sel = m.places.find(p => p.id === mapView.sel) || m.here || m.places[0];
+    const pend = getPendingTravel();
+    const byId = Object.fromEntries(m.places.map(p => [p.id, p]));
+    const now = m.now;
+    const todayW = getCalDay(now.date)?.weather || '';
+    const near = m.here ? new Set(PM.neighborsOf(getPlaces(), m.here.id).map(p => p.id)) : new Set();
+    const water = (m.decor?.water || []).map(w => w.kind === 'river'
+        ? `<path class="dsp-map-river" d="${smoothPath(w.points)}" vector-effect="non-scaling-stroke"/>`
+        : `<path class="dsp-map-lake" d="${smoothPath(w.points, true)}" vector-effect="non-scaling-stroke"/>`).join('');
+    const waterLabels = (m.decor?.water || []).filter(w => w.label).map(w => `<span class="dsp-map-wlabel" style="left:${w.labelAt[0]}%;top:${w.labelAt[1]}%">${escapeHtml(w.label)}</span>`).join('');
+    const edges = m.edges.map(([a, b]) => {
+        const A = byId[a]; const B = byId[b];
+        if (!A || !B) return '';
+        const hot = m.here && (a === m.here.id || b === m.here.id);
+        return `<line class="dsp-map-edge${hot ? ' is-hot' : ''}" x1="${A.pos[0]}" y1="${A.pos[1]}" x2="${B.pos[0]}" y2="${B.pos[1]}" vector-effect="non-scaling-stroke"/>`;
+    }).join('');
+    const node = (p) => {
+        const badge = p.alert ? '<span class="dsp-map-dot is-alert" title="A dungeon is open here">!</span>' : (p.people.length ? `<span class="dsp-map-dot" title="${escapeHtml(p.people.map(x => x.name).join(', '))}">${p.people.length}</span>` : '');
+        return `<button type="button" class="dsp-map-node${p.here ? ' is-here' : ''}${sel && sel.id === p.id ? ' is-sel' : ''}${p.open ? '' : ' is-closed'}${p.alert ? ' is-alert' : ''}${near.has(p.id) ? ' is-near' : ''}" style="left:${p.pos[0]}%;top:${p.pos[1]}%" data-map-place="${escapeHtml(p.id)}" title="${escapeHtml(`${p.name} — ${PM.hoursText(p)}${p.open ? '' : ' (closed now)'}`)}">
+            <span class="dsp-map-ico">${escapeHtml(p.icon)}</span><span class="dsp-map-lbl">${escapeHtml(p.short)}</span>${badge}</button>`;
+    };
+    const you = m.here ? `<span class="dsp-map-you" style="left:${m.here.pos[0]}%;top:${m.here.pos[1]}%">YOU</span>` : '';
+    const chip = (t, title = '') => `<span class="dsp-map-chip"${title ? ` title="${escapeHtml(title)}"` : ''}>${t}</span>`;
+    let go;
+    if (pend && sel && pend.id === sel.id) go = `<div class="dsp-map-go is-pending">In the chat box — send it to go there <button type="button" class="dsp-text-btn" data-action="map-cancel"><i class="fa-solid fa-xmark"></i> Cancel</button></div>`;
+    else if (sel.here) go = '<div class="dsp-map-go is-off">YOU ARE HERE</div>';
+    else if (!sel.open) go = '<div class="dsp-map-go is-off">CLOSED NOW</div>';
+    else go = `<button type="button" class="dsp-map-go" data-action="map-go" data-id="${escapeHtml(sel.id)}">GO HERE</button>`;
+    return `<section class="dsp-section dsp-map">
+        <div class="dsp-cal-now">
+            <div class="dsp-cal-date"><span class="dsp-cal-md">${escapeHtml(CK.formatShort(now.date).split(' ')[0])}</span><span class="dsp-cal-wd">${escapeHtml(CK.WEEKDAY_SHORT[CK.weekday(now.date)])}</span></div>
+            <div class="dsp-cal-slot"><span class="dsp-cal-slot-name">${CK.SLOTS.find(s => s.id === now.slot).icon} ${escapeHtml(CK.slotName(now.slot))}</span>
+                <span class="dsp-cal-long">${todayW ? `${escapeHtml(todayW)} · ` : ''}${getCalPlace() ? `📍 ${escapeHtml(getCalPlace())}` : 'Somewhere in town'}</span></div>
+        </div>
+        <div class="dsp-map-board">
+            <svg class="dsp-map-svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">${water}${edges}</svg>
+            ${waterLabels}${m.places.map(node).join('')}${you}
+        </div>
+        <div class="dsp-map-legend"><span><i class="is-here"></i>you are here</span><span><i class="is-person"></i>someone is there</span><span><i class="is-alert"></i>dungeon open</span><span><i class="is-closed"></i>closed now</span></div>
+        ${mapError ? `<span class="dsp-item-error" role="alert">${escapeHtml(mapError)}</span>` : ''}
+        <div class="dsp-map-detail">
+            <h3><span>${escapeHtml(sel.name)}</span><small>${escapeHtml(PM.hoursText(sel))}</small></h3>
+            ${sel.desc ? `<div class="dsp-map-row is-desc">${escapeHtml(sel.desc)}</div>` : ''}
+            ${sel.people.length ? `<div class="dsp-map-row"><span class="dsp-map-k">Here now</span>${sel.people.map(x => chip(`${escapeHtml(x.name)} · ${escapeHtml(x.arcana)}`, `Rank ${x.rank}`)).join('')}</div>` : ''}
+            ${sel.activities.length ? `<div class="dsp-map-row"><span class="dsp-map-k">Activities</span>${sel.activities.map(a => chip(`${escapeHtml(a.name)}${FT.describeEffects(a.fx) ? ` · ${escapeHtml(FT.describeEffects(a.fx))}` : ''}`)).join('')}</div>` : ''}
+            ${sel.alert ? `<div class="dsp-map-row"><span class="dsp-map-k">Dungeon</span>${chip(escapeHtml(sel.sites.join(', ')))}</div>` : ''}
+            ${go}
+        </div>
+    </section>`;
 }
 
 function calendarHtml() {
@@ -940,6 +1021,7 @@ function buildHtml({ popout }) {
     if (selected.isUser && isSocialEnabled()) sections.push({ id: 'social' });
     if (selected.isUser && isConfidantsEnabled()) sections.push({ id: 'confidants', count: getBonds().length, dot: getPending().length > 0 });
     if (selected.isUser && isCalendarEnabled()) sections.push({ id: 'calendar', count: getUpcoming(7).length });
+    if (selected.isUser && isMapEnabled() && getPlaces().length) sections.push({ id: 'map' });
     if (isEquipmentEnabled()) sections.push({ id: 'equipment', count: getEquipment(selected.name, selected.isUser).length });
     if (isAbilitiesEnabled()) sections.push({ id: 'abilities', count: getAbilities(selected.name, selected.isUser).length });
     if (!selected.isUser && isMemoriesEnabled()) sections.push({ id: 'memories', count: getMemories(selected.name).length });
@@ -983,6 +1065,8 @@ function buildHtml({ popout }) {
         content = confidantsHtml();
     } else if (section === 'calendar') {
         content = calendarHtml();
+    } else if (section === 'map') {
+        content = mapHtml();
     } else if (section === 'equipment') {
         content = equipmentHtml();
     } else if (section === 'abilities') {
@@ -1871,6 +1955,10 @@ function bindRootListeners(root) {
         const ftHang = e.target.closest('[data-ft-hang]')?.getAttribute('data-ft-hang');
         if (ftHang) { const r = pickHangout(ftHang); ftError = r.error || ''; renderAll(); return; }
         if (action === 'ft-cancel') { cancelFreeTime(); ftError = ''; renderAll(); return; }
+        const mapPlace = e.target.closest('[data-map-place]')?.getAttribute('data-map-place');
+        if (mapPlace) { mapView.sel = mapPlace; mapError = ''; renderAll(); return; }
+        if (action === 'map-go') { const r = goTo(e.target.closest('[data-id]')?.getAttribute('data-id')); mapError = r.error || ''; renderAll(); return; }
+        if (action === 'map-cancel') { cancelTravel(); mapError = ''; renderAll(); return; }
         const calMonth = e.target.closest('[data-cal-month]')?.getAttribute('data-cal-month');
         if (calMonth) {
             let m = calView.m + Number(calMonth);

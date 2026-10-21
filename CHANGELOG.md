@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- Map tab: the places of the story as a schema, from lorebook entries titled "Place:" (Short / Icon / Position / Connects / When / Hours / Alias / Dungeon / Text / Description lines; places without a Position are laid out by themselves, a "Map:" entry adds rivers and lakes). It shows where you are, who is around (the "Where:" lines of Confidants, in their time), the activities that can be done there, what is closed now and where a dungeon is open. "Go here" writes a line in the chat box and the calendar's place moves when it is sent (edit it or erase it to cancel); travel is free. The AI is told where you are and where you can go. Switch in Settings → Calendar → Map.
+- Base stats, Persona stats and affinities are locked: a lock button opens them for hand editing (HP/SP and level points work as before).
+- Fix: descriptive abilities with nothing that sounds like an attack (Wild Card, Analysis…) are no longer guessed as physical attacks in a fight.
 - Free time (Calendar tab): every time of day can be spent on an activity or with a Confidant. Picking one writes a line in the chat box you can edit; when it is sent the effects are applied (social stat points, money, HP/SP back; bond points), the calendar moves on one time of day, the AI is told to narrate it without awarding it again, and the chat notes what it gave. Erase the line and write something else, and nothing happens. Activities come from lorebook entries titled "Activity:" (Where / When / Weather / Effect / Rain / Text), else a generic set (study, read, part-time job, work out, help out, go out, hobby, rest); rain adds bonuses. Confidant entries can say "When:" and "Where:".
 - Confidant hangouts give 3 bond points, 6 with a Persona of their Arcana in the stock ("a stronger bond").
 - Worn out (P5): after an Otherworld visit the next time of day is only for resting; the AI is told.

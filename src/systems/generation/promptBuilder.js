@@ -28,6 +28,7 @@ import { buildConfidantPromptForGeneration, buildConfidantContextSummary } from 
 import { buildCalendarPromptForGeneration, buildCalendarContextSummary, isCalendarEnabled, getNow, infoBoxCarriesScene } from '../features/calendar.js';
 import { isRpgModeActive } from '../features/rpgMode.js';
 import { buildFreeTimePromptForGeneration } from '../features/freeTime.js';
+import { buildMapPromptForGeneration } from '../features/map.js';
 import { formatLong } from '../../utils/calendarModel.js';
 import { buildOtherworldPromptForGeneration, buildOtherworldContextSummary } from '../features/otherworld.js';
 import { buildChecksPromptForGeneration, buildChecksContextSummary } from '../features/characterChecks.js';
@@ -371,6 +372,8 @@ export function generateTrackerInstructions(includeHtmlPrompt = true, includeCon
         if (calendarSection) instructions += '\n\n' + calendarSection;
         const freeTimeSection = buildFreeTimePromptForGeneration();
         if (freeTimeSection) instructions += '\n\n' + freeTimeSection;
+        const mapSection = buildMapPromptForGeneration();
+        if (mapSection) instructions += '\n\n' + mapSection;
         // The Otherworld: labyrinths and domains.
         const otherworldSection = buildOtherworldPromptForGeneration({ compact });
         if (otherworldSection) instructions += '\n\n' + otherworldSection;
@@ -407,7 +410,7 @@ export function generateTrackerInstructions(includeHtmlPrompt = true, includeCon
         const calendarSection = buildCalendarPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection && !personaSection && !confidantSection });
         const otherworldSection = buildOtherworldPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection && !personaSection && !confidantSection && !calendarSection });
         const checksSection = buildChecksPromptForGeneration({ compact, standalone: !earlier && !moneySection && !affinitySection && !socialSection && !personaSection && !confidantSection && !calendarSection && !otherworldSection });
-        const all = [statsSection, memoriesSection, equipmentSection, conditionsSection, abilitiesSection, progressSection, moneySection, affinitySection, socialSection, personaSection, confidantSection, calendarSection, buildFreeTimePromptForGeneration(), otherworldSection, checksSection].filter(Boolean);
+        const all = [statsSection, memoriesSection, equipmentSection, conditionsSection, abilitiesSection, progressSection, moneySection, affinitySection, socialSection, personaSection, confidantSection, calendarSection, buildFreeTimePromptForGeneration(), buildMapPromptForGeneration(), otherworldSection, checksSection].filter(Boolean);
         if (all.length) {
             // The same opening the tracker block has: without the Info Box,
             // Present Characters and Quests nothing else says it up front.
@@ -887,6 +890,8 @@ export function generateContextualSummary() {
         if (calendar) summary += calendar + '\n';
         const worn = buildFreeTimePromptForGeneration();
         if (worn) summary += worn + '\n';
+        const mapNote = buildMapPromptForGeneration();
+        if (mapNote) summary += mapNote + '\n';
         const otherworld = buildOtherworldContextSummary();
         if (otherworld) summary += otherworld + '\n';
         const checks = buildChecksContextSummary();

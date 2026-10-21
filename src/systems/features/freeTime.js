@@ -103,9 +103,10 @@ function arcanaMatch(player, arcana) {
 /**
  * What can be done now: { now, tired, activities: [{ ...activity, effects }],
  * people: [{ name, arcana, rank, points, match, where }] } — or null without a date.
+ * `force`: also when the Free time switch is off (the map shows who is around).
  */
-export function freeTimeNow() {
-    if (!isFreeTimeEnabled()) return null;
+export function freeTimeNow({ force = false } = {}) {
+    if (!force && !isFreeTimeEnabled()) return null;
     const m = moment();
     if (!m) return null;
     const player = getPersonaName();

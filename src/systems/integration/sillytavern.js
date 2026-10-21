@@ -3,6 +3,7 @@
  * Handles all event listeners and integration with SillyTavern's event system
  */
 import { onFreeTimeMessageSent } from '../features/freeTime.js';
+import { onMapMessageSent } from '../features/map.js';
 import { getContext } from '../../../../../../extensions.js';
 import { chat, user_avatar, setExtensionPrompt, extension_prompt_types, saveChatDebounced } from '../../../../../../../script.js';
 // Core modules
@@ -137,6 +138,8 @@ export function onMessageSent() {
     if (!extensionSettings.enabled) return;
     // Free time: the picked activity is applied when its line is sent.
     try { onFreeTimeMessageSent(); } catch (e) { console.warn('[Dooms Tracker] Free time failed', e); }
+    // Map: a picked trip moves the scene's place when its line is sent.
+    try { onMapMessageSent(); } catch (e) { console.warn('[Dooms Tracker] Map failed', e); }
     // Set flag FIRST — before the placeholder check — so separate/external
     // mode's auto-update in onMessageReceived always knows a generation was
     // requested by the user.  The flag must be set regardless of whether the

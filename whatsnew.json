@@ -1,7 +1,11 @@
 {
-    "version": "0.5.2",
-    "title": "Persona Stats 0.5.2",
+    "version": "0.6.0",
+    "title": "Persona Stats 0.6",
     "items": [
+        {
+            "title": "Map",
+            "body": "A Map tab with the places of the story (lorebook entries titled \"Place:\"): where you are, who is around, what can be done, what is closed now and where a dungeon is open. Go here writes a line in the chat box and the scene moves when you send it; travel is free."
+        },
         {
             "title": "Traits are not attacks",
             "body": "Descriptive abilities (like Wild Card) no longer show up as physical attacks in a fight; only skills that sound like an attack do, or ones the AI labels."

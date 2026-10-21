@@ -773,3 +773,27 @@ body.des-plook .dooms-stats .dsp-ft-act.is-on { border-left-color: var(--pl-acc)
 body.des-plook .dooms-stats .dsp-ft-name { font-style: italic; font-weight: 900; text-transform: uppercase; }
 body.des-plook .dooms-stats .dsp-ft-act.is-person .dsp-ft-fx { color: var(--pl-acc); }
 body.des-plook .dooms-stats .dsp-ft-pending { border-radius: 0; background: #000; border-left: 4px solid var(--pl-acc); }
+
+/* ─── Map tab (Persona look) ──────────────────────────────────────────────── */
+body.des-plook .dooms-stats .dsp-map-board { border: 2px solid #222; border-radius: 0; background:
+    linear-gradient(#161a20 1px, transparent 1px) 0 0 / 22px 22px,
+    linear-gradient(90deg, #161a20 1px, transparent 1px) 0 0 / 22px 22px, #0d0f12; }
+body.des-plook .dooms-stats .dsp-map-edge { stroke: #3a3a3a; }
+body.des-plook .dooms-stats .dsp-map-edge.is-hot { stroke: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-map-node { border-radius: 0; transform: translate(-50%, -50%) skewX(-12deg); background: #171717; border: 2px solid #333; color: #ddd; font-weight: 800; font-style: italic; font-size: 10.5px; }
+body.des-plook .dooms-stats .dsp-map-node > * { display: inline-block; transform: skewX(12deg); }
+body.des-plook .dooms-stats .dsp-map-node.is-sel { border-color: var(--pl-acc); box-shadow: 0 0 0 2px #000, 0 0 0 4px var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-map-node.is-here { background: var(--pl-acc); color: var(--pl-on-acc); border-color: #000; }
+body.des-plook .dooms-stats .dsp-map-node.is-alert { border-color: #ff2a3d; background: #3a0710; color: #fff; }
+body.des-plook .dooms-stats .dsp-map-node.is-closed { opacity: 0.35; }
+body.des-plook .dooms-stats .dsp-map-dot { background: var(--pl-acc); color: #000; }
+body.des-plook .dooms-stats .dsp-map-node.is-here .dsp-map-dot { background: #000; color: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-map-dot.is-alert { background: #ff2a3d; color: #fff; }
+body.des-plook .dooms-stats .dsp-map-you { background: #000; color: var(--pl-acc); border-color: var(--pl-acc); font-style: italic; }
+body.des-plook .dooms-stats .dsp-map-legend i.is-here { background: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-map-detail { border-left: 6px solid var(--pl-acc); border-radius: 0; background: #111; }
+body.des-plook .dooms-stats .dsp-map-detail h3 { background: #000; color: var(--pl-acc); font-style: italic; font-weight: 900; text-transform: uppercase; }
+body.des-plook .dooms-stats .dsp-map-chip { background: #222; border-left-color: var(--pl-acc); }
+body.des-plook .dooms-stats .dsp-map-go { border-radius: 0; background: var(--pl-acc); color: var(--pl-on-acc); font-style: italic; clip-path: polygon(4% 0, 100% 0, 96% 100%, 0 100%); }
+body.des-plook .dooms-stats .dsp-map-go.is-off { background: #333; color: #999; }
+body.des-plook .dooms-stats .dsp-map-go.is-pending { background: #000; color: #ddd; clip-path: none; border: 0; border-left: 4px solid var(--pl-acc); font-style: normal; }
